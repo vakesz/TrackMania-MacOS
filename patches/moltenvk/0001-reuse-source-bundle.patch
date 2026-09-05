@@ -1,0 +1,16 @@
+Subject: Preserve bundled dependency source when rebuilding a source release.
+
+--- a/fetchDependencies
++++ b/fetchDependencies
+@@ -241,6 +241,11 @@
+ 	echo "$1 repo: $2"
+ 	echo "$1 revision: $3"
+ 
++	# The source release already supplies the pinned dependency contents.
++	if [ "${MACTMNF_BUNDLED_SOURCES:-0}" = 1 ] && [ -d "$1" ] && [ ! -e "$1/.git" ]; then
++		return
++	fi
++
+ 	if [ -d $1 -a -d $1/.git ]; then
+ 		cd $1
+ 		git cat-file -e $3 || git fetch --all

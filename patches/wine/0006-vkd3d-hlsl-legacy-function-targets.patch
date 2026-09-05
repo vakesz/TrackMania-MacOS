@@ -1,0 +1,579 @@
+Subject: vkd3d-shader: Support legacy HLSL function target qualifiers.
+
+D3DX SDKs through 36 accept target-qualified overloads such as vs_1_1 and
+ps_2_0. Keep their declarations distinct and select the matching target,
+then the stage-wide qualifier, then an unqualified fallback. Type overload
+ranking takes precedence. Preserve errors for qualifiers outside functions
+and for modern compiler versions. Reset the current function after parsing
+it so global initializers use the compilation target.
+
+Based on Wine 36b6a2cf679. Native SDKs 30 and 36 establish the expected
+success/failure and executable shader output. SDKs 37 and 43 verify the
+modern behavior. Run make smoke-shaders in MacTMNF for both architectures.
+
+diff --git a/libs/vkd3d/include/vkd3d_shader.h b/libs/vkd3d/include/vkd3d_shader.h
+index dcfdd16c503..86b106d0246 100644
+--- a/libs/vkd3d/include/vkd3d_shader.h
++++ b/libs/vkd3d/include/vkd3d_shader.h
+@@ -253,6 +253,9 @@ enum vkd3d_shader_compile_option_backward_compatibility
+      */
+     VKD3D_SHADER_COMPILE_OPTION_BACKCOMPAT_ALLOW_HALF_GLOBALS = 0x00000008,
+ 
++    /** Allow legacy HLSL functions qualified by a target profile. */
++    VKD3D_SHADER_COMPILE_OPTION_BACKCOMPAT_TARGET_FUNCTIONS = 0x00000010,
++
+     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_COMPILE_OPTION_BACKWARD_COMPATIBILITY),
+ };
+ 
+diff --git a/libs/vkd3d/libs/vkd3d-shader/hlsl.c b/libs/vkd3d/libs/vkd3d-shader/hlsl.c
+index ac2b569ccfe..9b49fd7dd21 100644
+--- a/libs/vkd3d/libs/vkd3d-shader/hlsl.c
++++ b/libs/vkd3d/libs/vkd3d-shader/hlsl.c
+@@ -3321,7 +3321,7 @@ static bool func_decl_matches(const struct hlsl_ir_function_decl *decl,
+ }
+ 
+ struct hlsl_ir_function_decl *hlsl_get_func_decl(struct hlsl_ctx *ctx, const char *name,
+-        const struct hlsl_func_parameters *parameters)
++        const struct hlsl_func_parameters *parameters, const char *profile)
+ {
+     struct hlsl_ir_function_decl *decl;
+     struct hlsl_ir_function *func;
+@@ -3331,13 +3331,29 @@ struct hlsl_ir_function_decl *hlsl_get_func_decl(struct hlsl_ctx *ctx, const cha
+ 
+     LIST_FOR_EACH_ENTRY(decl, &func->overloads, struct hlsl_ir_function_decl, entry)
+     {
+-        if (func_decl_matches(decl, parameters))
++        if (((!decl->profile && !profile)
++                || (decl->profile && profile && !strcmp(decl->profile, profile)))
++                && func_decl_matches(decl, parameters))
+             return decl;
+     }
+ 
+     return NULL;
+ }
+ 
++unsigned int hlsl_function_profile_score(const struct hlsl_ir_function_decl *decl, const char *profile)
++{
++    if (!decl->profile)
++        return 1;
++    if (!strcmp(decl->profile, profile))
++        return 3;
++    /* The legacy compiler also accepts the stage-wide "vs" and "ps" qualifiers.
++     * Partial versions such as "ps_2" do not match "ps_2_0". */
++    if ((!strcmp(decl->profile, "vs") || !strcmp(decl->profile, "ps"))
++            && !strncmp(decl->profile, profile, 2) && profile[2] == '_')
++        return 2;
++    return 0;
++}
++
+ static void hlsl_dump_type(struct vkd3d_string_buffer *buffer, const struct hlsl_type *type)
+ {
+     static const char *const base_types[] =
+@@ -4703,6 +4719,7 @@ static void free_function_decl(struct hlsl_ir_function_decl *decl)
+ 
+     hlsl_func_parameters_cleanup(&decl->parameters);
+     hlsl_block_cleanup(&decl->body);
++    vkd3d_free(decl->profile);
+     vkd3d_free(decl);
+ }
+ 
+@@ -5418,11 +5435,15 @@ int hlsl_parse(const struct vkd3d_shader_compile_info *compile_info,
+     {
+         LIST_FOR_EACH_ENTRY(decl, &func->overloads, struct hlsl_ir_function_decl, entry)
+         {
++            unsigned int score = hlsl_function_profile_score(decl, profile->name);
++
++            if (!score || (entry_func && score < hlsl_function_profile_score(entry_func, profile->name)))
++                continue;
+             if (!decl->has_body)
+                 continue;
+             if (decl->storage_modifiers & HLSL_STORAGE_STATIC)
+                 continue;
+-            if (entry_func)
++            if (entry_func && score == hlsl_function_profile_score(entry_func, profile->name))
+             {
+                 /* Depending on d3dcompiler version, either the first or last is
+                  * selected. */
+diff --git a/libs/vkd3d/libs/vkd3d-shader/hlsl.h b/libs/vkd3d/libs/vkd3d-shader/hlsl.h
+index 7d7a626e6ce..e1c44892e7d 100644
+--- a/libs/vkd3d/libs/vkd3d-shader/hlsl.h
++++ b/libs/vkd3d/libs/vkd3d-shader/hlsl.h
+@@ -650,6 +650,9 @@ struct hlsl_ir_function_decl
+     /* Function to which this declaration corresponds. */
+     struct hlsl_ir_function *func;
+ 
++    /* Optional target qualifier used by legacy HLSL function overloads. */
++    char *profile;
++
+     struct hlsl_func_parameters parameters;
+ 
+     struct hlsl_block body;
+@@ -1707,7 +1710,8 @@ void hlsl_free_var(struct hlsl_ir_var *decl);
+ struct hlsl_ir_function *hlsl_get_function(struct hlsl_ctx *ctx, const char *name);
+ struct hlsl_ir_function_decl *hlsl_get_first_func_decl(struct hlsl_ctx *ctx, const char *name);
+ struct hlsl_ir_function_decl *hlsl_get_func_decl(struct hlsl_ctx *ctx, const char *name,
+-        const struct hlsl_func_parameters *parameters);
++        const struct hlsl_func_parameters *parameters, const char *profile);
++unsigned int hlsl_function_profile_score(const struct hlsl_ir_function_decl *decl, const char *profile);
+ const struct hlsl_profile_info *hlsl_get_target_info(const char *target);
+ struct hlsl_type *hlsl_get_type(struct hlsl_scope *scope, const char *name, bool recursive, bool case_insensitive);
+ struct hlsl_ir_var *hlsl_get_var(struct hlsl_scope *scope, const char *name);
+diff --git a/libs/vkd3d/libs/vkd3d-shader/hlsl.y b/libs/vkd3d/libs/vkd3d-shader/hlsl.y
+index 0f9a5ac89fb..2c7f7906758 100644
+--- a/libs/vkd3d/libs/vkd3d-shader/hlsl.y
++++ b/libs/vkd3d/libs/vkd3d-shader/hlsl.y
+@@ -34,6 +34,12 @@ struct parse_fields
+     size_t count, capacity;
+ };
+ 
++struct parse_modifiers
++{
++    uint32_t modifiers;
++    char *profile;
++};
++
+ struct parse_initializer
+ {
+     struct hlsl_ir_node **args;
+@@ -433,6 +439,19 @@ static void add_explicit_conversion(struct hlsl_ctx *ctx, struct hlsl_block *blo
+     add_cast(ctx, block, instr, dst_type, loc);
+ }
+ 
++static uint32_t variable_modifiers(struct hlsl_ctx *ctx, struct parse_modifiers *modifiers,
++        const struct vkd3d_shader_location *loc)
++{
++    if (modifiers->profile)
++    {
++        hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_UNKNOWN_MODIFIER,
++                "Unknown modifier %s.", debugstr_a(modifiers->profile));
++        vkd3d_free(modifiers->profile);
++        modifiers->profile = NULL;
++    }
++    return modifiers->modifiers;
++}
++
+ static uint32_t add_modifiers(struct hlsl_ctx *ctx, uint32_t modifiers, uint32_t mod,
+         const struct vkd3d_shader_location *loc)
+ {
+@@ -2995,6 +3014,8 @@ static struct hlsl_ir_function_decl *find_function_call(struct hlsl_ctx *ctx,
+     struct vkd3d_string_buffer *s;
+     struct hlsl_ir_function *func;
+     struct rb_entry *entry;
++    const char *profile = ctx->profile->name;
++    unsigned int score;
+     int compare;
+     size_t i;
+     struct
+@@ -3007,14 +3028,22 @@ static struct hlsl_ir_function_decl *find_function_call(struct hlsl_ctx *ctx,
+         return NULL;
+     func = RB_ENTRY_VALUE(entry, struct hlsl_ir_function, entry);
+ 
++    if (ctx->cur_function && ctx->cur_function->profile
++            && strcmp(ctx->cur_function->profile, "vs") && strcmp(ctx->cur_function->profile, "ps"))
++        profile = ctx->cur_function->profile;
++
+     LIST_FOR_EACH_ENTRY(decl, &func->overloads, struct hlsl_ir_function_decl, entry)
+     {
++        if (!(score = hlsl_function_profile_score(decl, profile)))
++            continue;
+         if (!func_is_compatible_match(ctx, decl, is_compile, args))
+             continue;
+ 
+         if (candidates.count)
+         {
+             compare = function_compare(decl, candidates.candidates[0], args);
++            if (!compare)
++                compare = vkd3d_u32_compare(score, hlsl_function_profile_score(candidates.candidates[0], profile));
+ 
+             /* The candidate is worse; skip it. */
+             if (compare < 0)
+@@ -7048,7 +7077,7 @@ static void validate_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim,
+     FLOAT floatval;
+     bool boolval;
+     char *name;
+-    uint32_t modifiers;
++    struct parse_modifiers modifiers;
+     struct hlsl_block *block;
+     struct list *list;
+     struct parse_fields fields;
+@@ -7293,6 +7322,7 @@ static void validate_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim,
+ %type <intval> array
+ 
+ %type <modifiers> var_modifiers
++%destructor { vkd3d_free($$.profile); } <modifiers>
+ 
+ %type <name> any_identifier
+ %type <name> var_identifier
+@@ -7471,7 +7501,7 @@ buffer_declaration:
+             if ($4.semantic.name)
+                 hlsl_error(ctx, &@4, VKD3D_SHADER_ERROR_HLSL_INVALID_SEMANTIC, "Semantics are not allowed on buffers.");
+ 
+-            if (!(ctx->cur_buffer = hlsl_new_buffer(ctx, $2, $3, $1, &$4.reg_reservation, $5, &@3)))
++            if (!(ctx->cur_buffer = hlsl_new_buffer(ctx, $2, $3, variable_modifiers(ctx, &$1, &@1), &$4.reg_reservation, $5, &@3)))
+                 YYABORT;
+         }
+ 
+@@ -7523,7 +7553,7 @@ struct_declaration_without_vars:
+                 hlsl_error(ctx, &@2, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX,
+                     "Anonymous struct type must declare a variable.");
+ 
+-            if ($1)
++            if (variable_modifiers(ctx, &$1, &@1))
+                 hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_INVALID_MODIFIER,
+                         "Modifiers are not allowed on struct type declarations.");
+         }
+@@ -7641,7 +7671,7 @@ field:
+       var_modifiers field_type variables_def ';'
+         {
+             struct hlsl_type *type;
+-            uint32_t modifiers = $1;
++            uint32_t modifiers = variable_modifiers(ctx, &$1, &@1);
+ 
+             if (!(type = apply_type_modifiers(ctx, $2, &modifiers, true, &@1)))
+                 YYABORT;
+@@ -7774,6 +7804,7 @@ func_declaration:
+                 }
+             }
+             hlsl_pop_scope(ctx);
++            ctx->cur_function = NULL;
+ 
+             if (!$1.first)
+                 parse_function_cleanup(&$1);
+@@ -7781,6 +7812,7 @@ func_declaration:
+     | func_prototype ';'
+         {
+             hlsl_pop_scope(ctx);
++            ctx->cur_function = NULL;
+             if (!$1.first)
+                 parse_function_cleanup(&$1);
+         }
+@@ -7789,10 +7821,13 @@ func_prototype_no_attrs:
+     /* var_modifiers is necessary to avoid shift/reduce conflicts. */
+       var_modifiers type var_identifier '(' parameters ')' colon_attributes
+         {
+-            uint32_t modifiers = $1;
++            uint32_t modifiers = $1.modifiers;
+             struct hlsl_ir_var *var;
+             struct hlsl_type *type;
+ 
++            if (!ctx->compile_info.target_functions || hlsl_version_ge(ctx, 4, 0))
++                variable_modifiers(ctx, &$1, &@1);
++
+             /* Functions are unconditionally inlined. */
+             modifiers &= ~HLSL_MODIFIER_INLINE;
+ 
+@@ -7820,7 +7855,7 @@ func_prototype_no_attrs:
+                 hlsl_error(ctx, &@5, VKD3D_SHADER_ERROR_HLSL_INVALID_RESERVATION,
+                         "packoffset() is not allowed on functions.");
+ 
+-            if (($$.decl = hlsl_get_func_decl(ctx, $3, &$5)))
++            if (($$.decl = hlsl_get_func_decl(ctx, $3, &$5, $1.profile)))
+             {
+                 const struct hlsl_func_parameters *params = &$$.decl->parameters;
+                 size_t i;
+@@ -7840,6 +7875,8 @@ func_prototype_no_attrs:
+                 }
+ 
+                 vkd3d_free($3);
++                vkd3d_free($1.profile);
++                $1.profile = NULL;
+ 
+                 /* We implement function invocation by copying to input
+                  * parameters, emitting a HLSL_IR_CALL instruction, then copying
+@@ -7902,6 +7939,8 @@ func_prototype_no_attrs:
+                 if (!($$.decl = hlsl_new_func_decl(ctx, modifiers, type, &$5, &$7.semantic, &@3)))
+                     YYABORT;
+ 
++                $$.decl->profile = $1.profile;
++                $1.profile = NULL;
+                 hlsl_add_function(ctx, $3, $$.decl);
+ 
+                 $$.first = true;
+@@ -8209,11 +8248,12 @@ parameter:
+ parameter_decl:
+       var_modifiers type_no_void any_identifier arrays colon_attributes
+         {
+-            uint32_t prim_modifiers = $1 & HLSL_PRIMITIVE_MODIFIERS_MASK;
+-            uint32_t modifiers = $1 & ~HLSL_PRIMITIVE_MODIFIERS_MASK;
++            uint32_t modifiers = variable_modifiers(ctx, &$1, &@1);
++            uint32_t prim_modifiers = modifiers & HLSL_PRIMITIVE_MODIFIERS_MASK;
+             struct hlsl_type *type;
+             unsigned int i;
+ 
++            modifiers &= ~HLSL_PRIMITIVE_MODIFIERS_MASK;
+             if (!(type = apply_type_modifiers(ctx, $2, &modifiers, true, &@1)))
+                 YYABORT;
+ 
+@@ -8388,7 +8428,7 @@ so_type:
+ resource_format:
+       var_modifiers type
+         {
+-            uint32_t modifiers = $1;
++            uint32_t modifiers = variable_modifiers(ctx, &$1, &@1);
+ 
+             if (!($$ = apply_type_modifiers(ctx, $2, &modifiers, true, &@1)))
+                 YYABORT;
+@@ -8692,7 +8732,7 @@ typedef_type:
+ typedef:
+       KW_TYPEDEF var_modifiers typedef_type type_specs ';'
+         {
+-            uint32_t modifiers = $2;
++            uint32_t modifiers = variable_modifiers(ctx, &$2, &@2);
+             struct hlsl_type *type;
+ 
+             if (!(type = apply_type_modifiers(ctx, $3, &modifiers, false, &@2)))
+@@ -8974,7 +9014,7 @@ variable_def:
+ variable_def_typed:
+       var_modifiers struct_spec variable_def
+         {
+-            uint32_t modifiers = $1;
++            uint32_t modifiers = variable_modifiers(ctx, &$1, &@1);
+             struct hlsl_type *type;
+ 
+             if (!(type = apply_type_modifiers(ctx, $2, &modifiers, true, &@1)))
+@@ -8989,7 +9029,7 @@ variable_def_typed:
+         }
+     | var_modifiers type variable_def
+         {
+-            uint32_t modifiers = $1;
++            uint32_t modifiers = variable_modifiers(ctx, &$1, &@1);
+             struct hlsl_type *type;
+ 
+             if (!(type = apply_type_modifiers(ctx, $2, &modifiers, true, &@1)))
+@@ -9053,119 +9093,149 @@ arrays:
+ var_modifiers:
+       %empty
+         {
+-            $$ = 0;
++            memset(&$$, 0, sizeof($$));
+         }
+     | KW_EXTERN var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_STORAGE_EXTERN, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_STORAGE_EXTERN, &@1);
+         }
+     | KW_NOINTERPOLATION var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_STORAGE_NOINTERPOLATION, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_STORAGE_NOINTERPOLATION, &@1);
+         }
+     | KW_CENTROID var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_STORAGE_CENTROID, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_STORAGE_CENTROID, &@1);
+         }
+     | KW_LINEAR var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_STORAGE_LINEAR, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_STORAGE_LINEAR, &@1);
+         }
+     | KW_NOPERSPECTIVE var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_STORAGE_NOPERSPECTIVE, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_STORAGE_NOPERSPECTIVE, &@1);
+         }
+     | KW_SHARED var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_STORAGE_SHARED, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_STORAGE_SHARED, &@1);
+         }
+     | KW_GROUPSHARED var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_STORAGE_GROUPSHARED, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_STORAGE_GROUPSHARED, &@1);
+         }
+     | KW_STATIC var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_STORAGE_STATIC, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_STORAGE_STATIC, &@1);
+         }
+     | KW_UNIFORM var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_STORAGE_UNIFORM, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_STORAGE_UNIFORM, &@1);
+         }
+     | KW_VOLATILE var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_MODIFIER_VOLATILE, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_MODIFIER_VOLATILE, &@1);
+         }
+     | KW_CONST var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_MODIFIER_CONST, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_MODIFIER_CONST, &@1);
+         }
+     | KW_ROW_MAJOR var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_MODIFIER_ROW_MAJOR, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_MODIFIER_ROW_MAJOR, &@1);
+         }
+     | KW_COLUMN_MAJOR var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_MODIFIER_COLUMN_MAJOR, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_MODIFIER_COLUMN_MAJOR, &@1);
+         }
+     | KW_IN var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_STORAGE_IN, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_STORAGE_IN, &@1);
+         }
+     | KW_OUT var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_STORAGE_OUT, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_STORAGE_OUT, &@1);
+         }
+     | KW_INOUT var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_STORAGE_IN | HLSL_STORAGE_OUT, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_STORAGE_IN | HLSL_STORAGE_OUT, &@1);
+         }
+     | KW_INLINE var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_MODIFIER_INLINE, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_MODIFIER_INLINE, &@1);
+         }
+     | KW_EXPORT var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_STORAGE_EXPORT, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_STORAGE_EXPORT, &@1);
+         }
+     | KW_UNORM var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_MODIFIER_UNORM, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_MODIFIER_UNORM, &@1);
+         }
+     | KW_SNORM var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_MODIFIER_SNORM, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_MODIFIER_SNORM, &@1);
+         }
+     | KW_LINE var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_PRIMITIVE_LINE, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_PRIMITIVE_LINE, &@1);
+         }
+     | KW_LINEADJ var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_PRIMITIVE_LINEADJ, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_PRIMITIVE_LINEADJ, &@1);
+         }
+     | KW_POINT var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_PRIMITIVE_POINT, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_PRIMITIVE_POINT, &@1);
+         }
+     | KW_TRIANGLE var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_PRIMITIVE_TRIANGLE, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_PRIMITIVE_TRIANGLE, &@1);
+         }
+     | KW_TRIANGLEADJ var_modifiers
+         {
+-            $$ = add_modifiers(ctx, $2, HLSL_PRIMITIVE_TRIANGLEADJ, &@1);
++            $$ = $2;
++            $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_PRIMITIVE_TRIANGLEADJ, &@1);
+         }
+     | var_identifier var_modifiers
+         {
+             $$ = $2;
+ 
+             if (!strcmp($1, "precise"))
+-                $$ = add_modifiers(ctx, $2, HLSL_MODIFIER_PRECISE, &@1);
++                $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_MODIFIER_PRECISE, &@1);
+             else if (!strcmp($1, "single"))
+-                $$ = add_modifiers(ctx, $2, HLSL_MODIFIER_SINGLE, &@1);
++                $$.modifiers = add_modifiers(ctx, $2.modifiers, HLSL_MODIFIER_SINGLE, &@1);
++            else if ($$.profile)
++                hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_INVALID_MODIFIER,
++                        "Multiple function target qualifiers.");
+             else
+-                hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_UNKNOWN_MODIFIER,
+-                        "Unknown modifier %s.", debugstr_a($1));
++            {
++                $$.profile = $1;
++                $1 = NULL;
++            }
+             vkd3d_free($1);
+         }
+ 
+@@ -9747,7 +9817,7 @@ postfix_expr:
+     /* var_modifiers is necessary to avoid shift/reduce conflicts. */
+     | var_modifiers type '(' initializer_expr_list ')'
+         {
+-            if ($1)
++            if (variable_modifiers(ctx, &$1, &@1))
+                 hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_INVALID_MODIFIER,
+                         "Modifiers are not allowed on constructors.");
+ 
+@@ -9818,7 +9888,7 @@ unary_expr:
+     /* var_modifiers is necessary to avoid shift/reduce conflicts. */
+     | '(' var_modifiers type arrays ')' unary_expr
+         {
+-            if ($2)
++            if (variable_modifiers(ctx, &$2, &@2))
+                 hlsl_error(ctx, &@2, VKD3D_SHADER_ERROR_HLSL_INVALID_MODIFIER,
+                         "Modifiers are not allowed on casts.");
+ 
+diff --git a/libs/vkd3d/libs/vkd3d-shader/vkd3d_shader_private.h b/libs/vkd3d/libs/vkd3d-shader/vkd3d_shader_private.h
+index 7a57fb9fc44..b77f2c8c129 100644
+--- a/libs/vkd3d/libs/vkd3d-shader/vkd3d_shader_private.h
++++ b/libs/vkd3d/libs/vkd3d-shader/vkd3d_shader_private.h
+@@ -1706,6 +1706,7 @@ struct vsir_compile_info
+     uint32_t double_as_float_alias : 1;
+     uint32_t const_global_uniforms : 1;
+     uint32_t allow_half_globals : 1;
++    uint32_t target_functions : 1;
+     uint32_t fragment_origin_lower_left : 1;
+     uint32_t feature_int64 : 1;
+     uint32_t feature_float64 : 1;
+diff --git a/libs/vkd3d/libs/vkd3d-utils/vkd3d_utils_main.c b/libs/vkd3d/libs/vkd3d-utils/vkd3d_utils_main.c
+index 7852e34815f..5da6ab84070 100644
+--- a/libs/vkd3d/libs/vkd3d-utils/vkd3d_utils_main.c
++++ b/libs/vkd3d/libs/vkd3d-utils/vkd3d_utils_main.c
+@@ -478,6 +478,9 @@ HRESULT WINAPI D3DCompile2VKD3D(const void *data, SIZE_T data_size, const char *
+     else if (compiler_version >= 37)
+         option->value = VKD3D_SHADER_COMPILE_OPTION_CONST_GLOBAL_UNIFORMS;
+ 
++    if (compiler_version <= 36)
++        option->value |= VKD3D_SHADER_COMPILE_OPTION_BACKCOMPAT_TARGET_FUNCTIONS;
++
+     if (effect_flags & D3DCOMPILE_EFFECT_CHILD_EFFECT)
+     {
+         option = &options[compile_info.option_count++];
+diff --git a/libs/vkd3d/libs/vkd3d-shader/ir.c b/libs/vkd3d/libs/vkd3d-shader/ir.c
+index c8f8b8b7478..4145e44d3fc 100644
+--- a/libs/vkd3d/libs/vkd3d-shader/ir.c
++++ b/libs/vkd3d/libs/vkd3d-shader/ir.c
+@@ -890,6 +890,8 @@ done:
+         vsir->const_global_uniforms = true;
+     if (compatibility_flags & VKD3D_SHADER_COMPILE_OPTION_BACKCOMPAT_ALLOW_HALF_GLOBALS)
+         vsir->allow_half_globals = true;
++    if (compatibility_flags & VKD3D_SHADER_COMPILE_OPTION_BACKCOMPAT_TARGET_FUNCTIONS)
++        vsir->target_functions = true;
+ 
+     if (features & VKD3D_SHADER_COMPILE_OPTION_FEATURE_INT64)
+         vsir->feature_int64 = true;

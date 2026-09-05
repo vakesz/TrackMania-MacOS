@@ -1,0 +1,89 @@
+Subject: d3dx9: Honor the legacy compiler flag in D3DXCompileShader.
+
+D3DXSHADER_USE_LEGACY_D3DX9_31_DLL selects SDK 31 compilation semantics.
+The modded TMNF launch redirects SDK 30 calls to SDK 43 and supplies this
+flag. Ignoring it rejects the game's legacy function target qualifiers.
+Use vkd3d's existing compiler-version entry point and remove the D3DX-only
+flag before compiling. Ordinary calls retain their SDK-specific behavior.
+
+Based on Wine 36b6a2cf679. Native D3DX43 passes all 34 profile cases with
+the legacy flag; Wine before this change fails 24 of them. Run
+make smoke-shaders in MacTMNF for the legacy and modern paths.
+
+diff --git a/dlls/d3dx9_36/shader.c b/dlls/d3dx9_36/shader.c
+index c82478ad0c9..602beca9939 100644
+--- a/dlls/d3dx9_36/shader.c
++++ b/dlls/d3dx9_36/shader.c
+@@ -447,6 +447,7 @@ HRESULT WINAPI D3DXCompileShader(const char *data, UINT length, const D3DXMACRO
+         ID3DXInclude *include, const char *function, const char *profile, DWORD flags,
+         ID3DXBuffer **shader, ID3DXBuffer **error_msgs, ID3DXConstantTable **constant_table)
+ {
++    unsigned int compiler_version = D3DX_SDK_VERSION;
+     HRESULT hr;
+ 
+     TRACE("data %s, length %u, defines %p, include %p, function %s, profile %s, "
+@@ -454,19 +455,28 @@ HRESULT WINAPI D3DXCompileShader(const char *data, UINT length, const D3DXMACRO
+             debugstr_a(data), length, defines, include, debugstr_a(function), debugstr_a(profile),
+             flags, shader, error_msgs, constant_table);
+ 
+-    if (D3DX_SDK_VERSION <= 36)
++    if (flags & D3DXSHADER_USE_LEGACY_D3DX9_31_DLL)
++    {
++        if (compiler_version > 31)
++            compiler_version = 31;
++        flags &= ~D3DXSHADER_USE_LEGACY_D3DX9_31_DLL;
++    }
++    if (compiler_version <= 36)
+         flags |= D3DCOMPILE_ENABLE_BACKWARDS_COMPATIBILITY;
+ 
+-#if D3DX_SDK_VERSION < 42
+-    if (shader)
+-        *shader = NULL;
++    if (compiler_version < 42)
++    {
++        if (shader)
++            *shader = NULL;
+ 
+-    hr = vkd3d_D3DCompile2VKD3D(data, length, NULL, (D3D_SHADER_MACRO *)defines, (ID3DInclude *)include,
+-            function, profile, flags, 0, 0, NULL, 0, (ID3DBlob **)shader, (ID3DBlob **)error_msgs, D3DX_SDK_VERSION);
+-#else
+-    hr = D3DCompile(data, length, NULL, (D3D_SHADER_MACRO *)defines, (ID3DInclude *)include,
+-                    function, profile, flags, 0, (ID3DBlob **)shader, (ID3DBlob **)error_msgs);
+-#endif
++        hr = vkd3d_D3DCompile2VKD3D(data, length, NULL, (D3D_SHADER_MACRO *)defines, (ID3DInclude *)include,
++                function, profile, flags, 0, 0, NULL, 0, (ID3DBlob **)shader, (ID3DBlob **)error_msgs, compiler_version);
++    }
++    else
++    {
++        hr = D3DCompile(data, length, NULL, (D3D_SHADER_MACRO *)defines, (ID3DInclude *)include,
++                function, profile, flags, 0, (ID3DBlob **)shader, (ID3DBlob **)error_msgs);
++    }
+ 
+     if (SUCCEEDED(hr) && constant_table)
+     {
+diff --git a/dlls/d3dx9_42/Makefile.in b/dlls/d3dx9_42/Makefile.in
+index 8f865315e61..ebf4f1b5052 100644
+--- a/dlls/d3dx9_42/Makefile.in
++++ b/dlls/d3dx9_42/Makefile.in
+@@ -1,7 +1,7 @@
+ EXTRADEFS = -DD3DX_SDK_VERSION=42
+ MODULE    = d3dx9_42.dll
+ IMPORTLIB = d3dx9_42
+-IMPORTS   = d3d9 d3dcompiler_42 dxguid d3dxof ole32 gdi32 user32
++IMPORTS   = d3d9 d3dcompiler_42 dxguid d3dxof ole32 gdi32 user32 wined3d
+ PARENTSRC = ../d3dx9_36
+ DELAYIMPORTS = windowscodecs
+ 
+diff --git a/dlls/d3dx9_43/Makefile.in b/dlls/d3dx9_43/Makefile.in
+index b9984e5f4fc..7ec52c0ec1e 100644
+--- a/dlls/d3dx9_43/Makefile.in
++++ b/dlls/d3dx9_43/Makefile.in
+@@ -1,7 +1,7 @@
+ EXTRADEFS = -DD3DX_SDK_VERSION=43
+ MODULE    = d3dx9_43.dll
+ IMPORTLIB = d3dx9_43
+-IMPORTS   = d3d9 d3dcompiler_43 dxguid d3dxof ole32 gdi32 user32
++IMPORTS   = d3d9 d3dcompiler_43 dxguid d3dxof ole32 gdi32 user32 wined3d
+ PARENTSRC = ../d3dx9_36
+ DELAYIMPORTS = windowscodecs
+ 

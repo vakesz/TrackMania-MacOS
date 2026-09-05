@@ -1,0 +1,10 @@
+{
+  "width": 1280,
+  "height": 720,
+  "shader_quality": 2,
+  "anisotropy": 0,
+  "post_processing": false,
+  "water_geometry": false,
+  "thread_count": 4,
+  "max_opponents": 6
+}

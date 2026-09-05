@@ -1,0 +1,15 @@
+name: Check scripts
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install validation tools
+        run: brew install shellcheck python@3.14
+      - name: Validate
+        run: make check

@@ -1,0 +1,191 @@
+Subject: ntdll, server: Avoid Darwin server round trips for empty alertable yields.
+
+TMNF repeatedly calls SleepEx(0, TRUE). Publish APC readiness through a
+server-owned pipe and test it locally with select(), preserving yielding.
+Pending APCs, finite waits, descriptor errors and unsupported descriptor
+numbers retain the normal server path. The existing alert-fd request and
+client descriptor lifetime are reused; there is no protocol change.
+
+The pipe tracks both user and system APC queues, including cancellation.
+Only the server consumes its notification byte. Closing a failed pipe
+makes the client fall back on EOF instead of overlooking pending work.
+Set WINEDARWINFASTWAIT=0 in the client environment to compare the old path.
+
+Based on Wine dfa96293478. Regression and timing probe:
+  WINEDARWINFASTWAIT=0 make smoke-sync
+  WINEDARWINFASTWAIT=1 make smoke-sync
+
+diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
+index 0127a053013..453c0b5c797 100644
+--- a/dlls/ntdll/unix/sync.c
++++ b/dlls/ntdll/unix/sync.c
+@@ -2420,6 +2420,31 @@ NTSTATUS WINAPI NtDelayExecution( BOOLEAN alertable, const LARGE_INTEGER *timeou
+ {
+     unsigned int status = STATUS_SUCCESS;
+ 
++    /* A zero-time alertable wait only needs the server if an APC is pending.
++     * Darwin exposes an APC notification pipe through get_inproc_alert_fd();
++     * the server owns its contents, so test readability without consuming the byte. */
++#ifdef __APPLE__
++    if (alertable && timeout && !timeout->QuadPart)
++    {
++        const char *fast_wait = getenv( "WINEDARWINFASTWAIT" );
++        if (!fast_wait || strcmp( fast_wait, "0" ))
++        {
++            int fd = get_inproc_alert_fd();
++            if (fd >= 0 && fd < FD_SETSIZE)
++            {
++                fd_set read_fds;
++                struct timeval tv = {0};
++
++                FD_ZERO( &read_fds );
++                FD_SET( fd, &read_fds );
++                NtYieldExecution();
++                if (!select( fd + 1, &read_fds, NULL, NULL, &tv )) return STATUS_SUCCESS;
++                /* Readiness, EOF, and errors all use the ordinary APC path. */
++            }
++        }
++    }
++#endif
++
+     /* if alertable, we need to query the server */
+     if (alertable)
+     {
+diff --git a/server/thread.c b/server/thread.c
+index bdf48c4bf8f..4896a510c13 100644
+--- a/server/thread.c
++++ b/server/thread.c
+@@ -348,6 +348,10 @@ static inline void init_thread_structure( struct thread *thread )
+ 
+     thread->sync            = NULL;
+     thread->alert_sync      = NULL;
++#ifdef __APPLE__
++    thread->alert_pipe[0] = thread->alert_pipe[1] = -1;
++    thread->alert_pipe_signaled = 0;
++#endif
+     thread->unix_pid        = -1;  /* not known yet */
+     thread->unix_tid        = -1;  /* not known yet */
+     thread->context         = NULL;
+@@ -570,6 +574,11 @@ static void cleanup_thread( struct thread *thread )
+     }
+     clear_apc_queue( &thread->system_apc );
+     clear_apc_queue( &thread->user_apc );
++#ifdef __APPLE__
++    if (thread->alert_pipe[0] != -1) close( thread->alert_pipe[0] );
++    if (thread->alert_pipe[1] != -1) close( thread->alert_pipe[1] );
++    thread->alert_pipe[0] = thread->alert_pipe[1] = -1;
++#endif
+     free( thread->req_data );
+     free( thread->reply_data );
+     if (thread->request_fd) release_object( thread->request_fd );
+@@ -1380,6 +1389,32 @@ static inline int is_in_apc_wait( struct thread *thread )
+     return (is_thread_suspended( thread ) || (thread->wait && (thread->wait->flags & SELECT_INTERRUPTIBLE)));
+ }
+ 
++/* Keep a single byte readable while either APC queue is nonempty. Only the
++ * server reads/writes the pipe; clients only poll it. On failure close the
++ * writer so POLLHUP makes clients fall back to server-side waits. */
++static void update_apc_notification( struct thread *thread )
++{
++#ifdef __APPLE__
++    int pending = !list_empty( &thread->user_apc ) || !list_empty( &thread->system_apc );
++    char byte = 0;
++    ssize_t ret;
++
++    if (thread->alert_pipe[0] == -1 || pending == thread->alert_pipe_signaled) return;
++    do
++    {
++        if (pending) ret = write( thread->alert_pipe[1], &byte, 1 );
++        else ret = read( thread->alert_pipe[0], &byte, 1 );
++    } while (ret == -1 && errno == EINTR);
++    if (ret == 1) thread->alert_pipe_signaled = pending;
++    else
++    {
++        close( thread->alert_pipe[0] );
++        close( thread->alert_pipe[1] );
++        thread->alert_pipe[0] = thread->alert_pipe[1] = -1;
++    }
++#endif
++}
++
+ /* queue an existing APC to a given thread */
+ static int queue_apc( struct process *process, struct thread *thread, struct thread_apc *apc )
+ {
+@@ -1432,6 +1467,7 @@ static int queue_apc( struct process *process, struct thread *thread, struct thr
+ 
+     grab_object( apc );
+     list_add_tail( queue, &apc->entry );
++    update_apc_notification( thread );
+     if (!list_prev( queue, &apc->entry ))  /* first one */
+     {
+         if (apc->call.type == APC_USER && thread->alert_sync)
+@@ -1466,6 +1502,7 @@ void thread_cancel_apc( struct thread *thread, struct object *owner, enum apc_ty
+     {
+         if (apc->owner != owner) continue;
+         list_remove( &apc->entry );
++        update_apc_notification( thread );
+         apc->executed = 1;
+         signal_sync( apc->sync );
+         release_object( apc );
+@@ -1485,6 +1522,7 @@ static struct thread_apc *thread_dequeue_apc( struct thread *thread, int system
+     {
+         apc = LIST_ENTRY( ptr, struct thread_apc, entry );
+         list_remove( ptr );
++        update_apc_notification( thread );
+         if (list_empty( &thread->user_apc ) && thread->alert_sync)
+             reset_inproc_sync( thread->alert_sync );
+     }
+@@ -2379,7 +2417,37 @@ DECL_HANDLER(get_inproc_alert_fd)
+ {
+     int fd;
+ 
+-    if ((fd = get_inproc_sync_fd( current->alert_sync )) < 0) set_error( STATUS_INVALID_PARAMETER );
++    fd = get_inproc_sync_fd( current->alert_sync );
++#ifdef __APPLE__
++    if (fd < 0)
++    {
++        if (current->alert_pipe[0] == -1)
++        {
++            int fds[2];
++            if (pipe( fds ) == -1)
++            {
++                file_set_error();
++                return;
++            }
++            if (fcntl( fds[0], F_SETFD, FD_CLOEXEC ) == -1 ||
++                fcntl( fds[1], F_SETFD, FD_CLOEXEC ) == -1 ||
++                fcntl( fds[0], F_SETFL, O_NONBLOCK ) == -1 ||
++                fcntl( fds[1], F_SETFL, O_NONBLOCK ) == -1)
++            {
++                file_set_error();
++                close( fds[0] );
++                close( fds[1] );
++                return;
++            }
++            current->alert_pipe[0] = fds[0];
++            current->alert_pipe[1] = fds[1];
++            current->alert_pipe_signaled = 0;
++            update_apc_notification( current );
++        }
++        fd = current->alert_pipe[0];
++    }
++#endif
++    if (fd < 0) set_error( STATUS_INVALID_PARAMETER );
+     else
+     {
+         reply->handle = get_thread_id( current ) | 1; /* arbitrary token */
+diff --git a/server/thread.h b/server/thread.h
+index 96c643c64f1..d52cb247e45 100644
+--- a/server/thread.h
++++ b/server/thread.h
+@@ -52,6 +52,10 @@ struct thread
+     struct object          obj;           /* object header */
+     struct object         *sync;          /* sync object for wait/signal */
+     struct inproc_sync    *alert_sync;    /* inproc sync for user apc alerts */
++#ifdef __APPLE__
++    int                    alert_pipe[2]; /* server-owned pending APC notification */
++    int                    alert_pipe_signaled;
++#endif
+     struct list            entry;         /* entry in system-wide thread list */
+     struct list            proc_entry;    /* entry in per-process thread list */
+     struct list            desktop_entry; /* entry in per-desktop thread list */

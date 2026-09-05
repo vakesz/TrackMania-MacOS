@@ -1,0 +1,123 @@
+diff --git a/dlls/winmm/time.c b/dlls/winmm/time.c
+index e03bbac34c6..e2b8bace5a2 100644
+--- a/dlls/winmm/time.c
++++ b/dlls/winmm/time.c
+@@ -46,6 +46,15 @@ typedef struct tagWINE_TIMERENTRY {
+ static WINE_TIMERENTRY timers[16];
+ static UINT timers_created;
+ 
++static CRITICAL_SECTION TIME_cs;
++static CRITICAL_SECTION_DEBUG timer_critsect_debug =
++{
++    0, 0, &TIME_cs,
++    { &timer_critsect_debug.ProcessLocksList, &timer_critsect_debug.ProcessLocksList },
++      0, 0, { (DWORD_PTR)(__FILE__ ": TIME_cs") }
++};
++static CRITICAL_SECTION TIME_cs = { &timer_critsect_debug, -1, 0, 0, 0, 0 };
++
+ static CRITICAL_SECTION TIME_cbcrst;
+ static CRITICAL_SECTION_DEBUG critsect_debug =
+ {
+@@ -156,11 +165,11 @@ static int TIME_MMSysTimeCallback(void)
+                 LPTIMECALLBACK func = timer->lpFunc;
+ 
+                 if (flags & TIME_KILL_SYNCHRONOUS) EnterCriticalSection(&TIME_cbcrst);
+-                LeaveCriticalSection(&WINMM_cs);
++                LeaveCriticalSection(&TIME_cs);
+ 
+                 func(id, 0, user, 0, 0);
+ 
+-                EnterCriticalSection(&WINMM_cs);
++                EnterCriticalSection(&TIME_cs);
+                 if (flags & TIME_KILL_SYNCHRONOUS) LeaveCriticalSection(&TIME_cbcrst);
+                 if (id != timer->wTimerID) timer = NULL;
+             }
+@@ -182,7 +191,7 @@ static DWORD CALLBACK TIME_MMSysTimeThread(LPVOID arg)
+ 
+     TRACE("Starting main winmm thread\n");
+ 
+-    EnterCriticalSection(&WINMM_cs);
++    EnterCriticalSection(&TIME_cs);
+     while (1)
+     {
+         sleep_time = TIME_MMSysTimeCallback();
+@@ -192,7 +201,7 @@ static DWORD CALLBACK TIME_MMSysTimeThread(LPVOID arg)
+         if (sleep_time == 0)
+             continue;
+ 
+-        ret = SleepConditionVariableCS(&TIME_cv, &WINMM_cs, sleep_time);
++        ret = SleepConditionVariableCS(&TIME_cv, &TIME_cs, sleep_time);
+         if (!ret && GetLastError() != ERROR_TIMEOUT)
+         {
+             ERR("Unexpected error in poll: %s(%d)\n", strerror(errno), errno);
+@@ -201,7 +210,7 @@ static DWORD CALLBACK TIME_MMSysTimeThread(LPVOID arg)
+     }
+     CloseHandle(TIME_hMMTimer);
+     TIME_hMMTimer = NULL;
+-    LeaveCriticalSection(&WINMM_cs);
++    LeaveCriticalSection(&TIME_cs);
+     TRACE("Exiting main winmm thread\n");
+     FreeLibraryAndExitThread(arg, 0);
+     return 0;
+@@ -226,11 +235,12 @@ static void TIME_MMTimeStart(void)
+ void	TIME_MMTimeStop(void)
+ {
+     if (TIME_hMMTimer) {
+-        EnterCriticalSection(&WINMM_cs);
++        EnterCriticalSection(&TIME_cs);
+         if (TIME_hMMTimer) {
+             ERR("Timer still active?!\n");
+             CloseHandle(TIME_hMMTimer);
+         }
++        LeaveCriticalSection(&TIME_cs);
+         DeleteCriticalSection(&TIME_cbcrst);
+     }
+ }
+@@ -249,13 +259,13 @@ MMRESULT WINAPI timeSetEvent(UINT wDelay, UINT wResol, LPTIMECALLBACK lpFunc,
+     if (wDelay < MMSYSTIME_MININTERVAL || wDelay > MMSYSTIME_MAXINTERVAL)
+ 	return 0;
+ 
+-    EnterCriticalSection(&WINMM_cs);
++    EnterCriticalSection(&TIME_cs);
+ 
+     for (i = 0; i < ARRAY_SIZE(timers); i++)
+         if (!timers[i].wTimerID) break;
+     if (i == ARRAY_SIZE(timers))
+     {
+-        LeaveCriticalSection(&WINMM_cs);
++        LeaveCriticalSection(&TIME_cs);
+         return 0;
+     }
+ 
+@@ -275,7 +285,7 @@ MMRESULT WINAPI timeSetEvent(UINT wDelay, UINT wResol, LPTIMECALLBACK lpFunc,
+ 
+     TIME_MMTimeStart();
+ 
+-    LeaveCriticalSection(&WINMM_cs);
++    LeaveCriticalSection(&TIME_cs);
+ 
+     /* Wake the service thread in case there is work to be done */
+     WakeConditionVariable(&TIME_cv);
+@@ -294,19 +304,19 @@ MMRESULT WINAPI timeKillEvent(UINT wID)
+     WORD flags;
+ 
+     TRACE("(%u)\n", wID);
+-    EnterCriticalSection(&WINMM_cs);
++    EnterCriticalSection(&TIME_cs);
+ 
+     timer = &timers[wID % ARRAY_SIZE(timers)];
+     if (timer->wTimerID != wID)
+     {
+-        LeaveCriticalSection(&WINMM_cs);
++        LeaveCriticalSection(&TIME_cs);
+         WARN("wID=%u is not a valid timer ID\n", wID);
+         return TIMERR_NOCANDO;
+     }
+ 
+     timer->wTimerID = 0;
+     flags = timer->wFlags;
+-    LeaveCriticalSection(&WINMM_cs);
++    LeaveCriticalSection(&TIME_cs);
+ 
+     if (flags & TIME_KILL_SYNCHRONOUS)
+     {

@@ -1,0 +1,70 @@
+# Runtime fixes
+
+All active patches live under `patches/`. The build applies them in filename
+order to the exact revisions in `config/sources.json`.
+
+| Patch | Purpose | Regression coverage |
+| --- | --- | --- |
+| Wine 0001 | Lower legacy `texm3x3` instructions in the shader compiler | Shader probes |
+| Wine 0002 | Separate the multimedia timer lock to avoid contention and startup deadlocks | Audio playback and timer-dependent waits |
+| Wine 0005 | Avoid a wineserver round trip for empty alertable yields on Darwin while preserving APC delivery | 32-bit and 64-bit alertable-wait probes |
+| Wine 0006 | Accept legacy HLSL function targets used by TMNF materials | Shader probes |
+| Wine 0007 | Honor the legacy D3DX compiler flag | Shader probes and visual material check |
+| Wine 0008 | Start x87sidecar through a cooperative per-process handshake | 32-bit and 64-bit precision probes |
+| D9VK 0001 and 0002 | Build this MoltenVK-compatible fork with current MinGW headers | Source build |
+| MoltenVK 0001 | Reuse the dependency sources supplied in a source release | Source archive preparation |
+| x87sidecar 0001 | Honor x87 precision-control and rounding modes, including 24-bit arithmetic | Arithmetic, host-state and translation-mode probes |
+
+The filename gaps are intentional. Rejected experiments are not part of the
+runtime or source releases.
+
+## Settings that matter
+
+`config/dxvk.conf` enables asynchronous shader compilation, dynamic-buffer
+caching, direct buffer mapping and device-local constants. The frame queue is
+one frame, with no forced presentation interval. Shader caches persist in the
+Wine prefix. Diagnostics are off during ordinary play.
+
+The launcher uses Wine's patched `d3dx9_30` and `d3dx9_43` compilers, including
+when CoreMod redirects shader compilation from one to the other. Microsoft's
+legacy DirectX installer can replace Wine DLLs, so installation restores the
+Wine-owned files afterwards.
+
+CoreAudio is enabled. The audio probes check both device enumeration and actual
+DirectSound playback progress for stereo and positional sound. x87sidecar runs
+with FMA contraction and fast rounding disabled. It uses cooperative attachment;
+no system Rosetta files, privileged service or debugger entitlement is needed.
+
+The original graphics launcher receives a known Nvidia PCI identity for that
+executable only. This avoids its old adapter-probing crash. The game keeps its
+actual renderer identity.
+
+`config/game-settings.json` describes the initial graphics preset.
+`tools/game_profile.py` generates only display and opponent chunks in a GBX
+SystemConfig file, with no player profile, account or network fields. Existing
+profiles are never replaced. The chunk formats are documented by
+[GBX.NET](https://github.com/BigBang1112/gbx-net/tree/master/Src/GBX.NET/Engines/System).
+
+## Troubleshooting
+
+Start with `make doctor`. The app logs are in
+`~/Library/Logs/MacTMNF/play.log` and `configure.log`.
+
+- If settings need changing, close the game and open **TrackMania Settings**.
+- If a macOS update makes x87sidecar's compatibility probe fail, rebuild or use
+  `MACTMNF_X87=off make play` temporarily. Stock Rosetta can be substantially
+  slower on this game's math workload.
+- If sound is missing, check the game's audio settings and macOS output device.
+  Run `./tools/smoke-audio.sh` from a source checkout to test Wine playback.
+- If textures are wrong after installing other DLLs, rerun `make install`.
+  Keep the bundled D9VK and patched Wine D3DX compilers together.
+- For frame-time observation, use `DXVK_HUD=fps,frametimes make play`. Compare
+  warmed laps on the same track and resolution. Loading time and menu FPS are
+  not race benchmarks.
+- Avoid verbose Wine traces and MoltenVK performance logging during ordinary
+  play. Earlier diagnostic runs reduced menu performance severely.
+
+The local investigation established correct textures and audible game sound.
+The user reported smoother gameplay with the patched translator. The probes
+verify arithmetic and API behavior; they are not whole-game FPS benchmarks.
+Performance also depends on the Mac, Rosetta build, track and graphics settings.

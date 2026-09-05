@@ -1,0 +1,275 @@
+diff --git a/libs/vkd3d/libs/vkd3d-shader/ir.c b/libs/vkd3d/libs/vkd3d-shader/ir.c
+index c8f8b8b7478..fbe9b3f1372 100644
+--- a/libs/vkd3d/libs/vkd3d-shader/ir.c
++++ b/libs/vkd3d/libs/vkd3d-shader/ir.c
+@@ -3487,6 +3487,219 @@ static enum vkd3d_result vsir_program_lower_texbem(struct vsir_program *program,
+     return VKD3D_OK;
+ }
+ 
++static enum vkd3d_result vsir_program_lower_texm3x3pad(struct vsir_program *program,
++        struct vkd3d_shader_instruction *ins, unsigned int row, unsigned int *tmp_idx,
++        unsigned int *texcoord_idx_out)
++{
++    struct vsir_src_operand src = ins->src[0];
++    unsigned int texcoord_idx = ins->dst[0].reg.idx[0].offset;
++    struct vsir_src_operand *srcs;
++
++    /* texm3x3pad tN, SRC
++     *      ->
++     * dp3 rTMP.row, tN, SRC */
++
++    if (*tmp_idx == ~0u)
++        *tmp_idx = program->temp_count++;
++    *texcoord_idx_out = texcoord_idx;
++
++    if (!(srcs = vsir_program_get_src_operands(program, 2)))
++        return VKD3D_ERROR_OUT_OF_MEMORY;
++
++    vsir_src_operand_init(&srcs[0], VSIR_REGISTER_TEXTURE, VSIR_DATA_F32, 1);
++    srcs[0].reg.idx[0].offset = texcoord_idx;
++    srcs[0].reg.dimension = VSIR_DIMENSION_VEC4;
++    srcs[0].swizzle = VKD3D_SHADER_NO_SWIZZLE;
++    srcs[1] = src;
++
++    ins->opcode = VSIR_OP_DP3;
++    ins->src = srcs;
++    ins->src_count = 2;
++    vsir_dst_operand_init(&ins->dst[0], VSIR_REGISTER_TEMP, VSIR_DATA_F32, 1);
++    ins->dst[0].reg.idx[0].offset = *tmp_idx;
++    ins->dst[0].reg.dimension = VSIR_DIMENSION_VEC4;
++    ins->dst[0].write_mask = VKD3DSP_WRITEMASK_0 << row;
++
++    return VKD3D_OK;
++}
++
++static enum vkd3d_result vsir_program_validate_texm3x3_sequence(unsigned int row, unsigned int tmp_idx,
++        const struct vkd3d_shader_location *location, struct vkd3d_shader_message_context *message_context,
++        const char *opcode)
++{
++    if (row == 2 && tmp_idx != ~0u)
++        return VKD3D_OK;
++
++    vkd3d_shader_error(message_context, location, VKD3D_SHADER_ERROR_VSIR_INVALID_OPCODE,
++            "%s requires two preceding TEXM3x3PAD instructions.", opcode);
++    return VKD3D_ERROR_INVALID_SHADER;
++}
++
++static enum vkd3d_result vsir_program_lower_texm3x3tex(struct vsir_program *program,
++        struct vsir_program_iterator *it, unsigned int row, unsigned int tmp_idx,
++        struct vkd3d_shader_message_context *message_context)
++{
++    struct vkd3d_shader_instruction *ins = vsir_program_iterator_current(it);
++    const struct vkd3d_shader_location location = ins->location;
++    struct vsir_dst_operand dst = ins->dst[0];
++    struct vsir_src_operand src = ins->src[0];
++    unsigned int texcoord_idx = dst.reg.idx[0].offset;
++
++    /* texm3x3tex tN, SRC
++     *      ->
++     * dp3   rTMP.z, tN, SRC
++     * sample tN, rTMP.xyz, resourceN, samplerN */
++
++    if (vsir_program_validate_texm3x3_sequence(row, tmp_idx, &location,
++            message_context, "TEXM3x3TEX") < 0)
++        return VKD3D_ERROR_INVALID_SHADER;
++
++    if (!vsir_program_iterator_insert_after(it, 1))
++        return VKD3D_ERROR_OUT_OF_MEMORY;
++
++    ins = vsir_program_iterator_current(it);
++    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_DP3, 1, 2))
++        return VKD3D_ERROR_OUT_OF_MEMORY;
++    vsir_dst_operand_init(&ins->dst[0], VSIR_REGISTER_TEMP, VSIR_DATA_F32, 1);
++    ins->dst[0].reg.idx[0].offset = tmp_idx;
++    ins->dst[0].reg.dimension = VSIR_DIMENSION_VEC4;
++    ins->dst[0].write_mask = VKD3DSP_WRITEMASK_2;
++    vsir_src_operand_init(&ins->src[0], VSIR_REGISTER_TEXTURE, VSIR_DATA_F32, 1);
++    ins->src[0].reg.idx[0].offset = texcoord_idx;
++    ins->src[0].reg.dimension = VSIR_DIMENSION_VEC4;
++    ins->src[0].swizzle = VKD3D_SHADER_NO_SWIZZLE;
++    ins->src[1] = src;
++
++    ins = vsir_program_iterator_next(it);
++    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_SAMPLE, 1, 3))
++        return VKD3D_ERROR_OUT_OF_MEMORY;
++    ins->dst[0] = dst;
++    vsir_src_operand_init_temp_f32v4(&ins->src[0], tmp_idx);
++    ins->src[0].swizzle = VKD3D_SHADER_SWIZZLE(X, Y, Z, Z);
++    vsir_src_operand_init_resource(&ins->src[1], texcoord_idx, texcoord_idx);
++    vsir_src_operand_init_sampler(&ins->src[2], texcoord_idx, texcoord_idx);
++
++    return VKD3D_OK;
++}
++
++static enum vkd3d_result vsir_program_lower_texm3x3vspec(struct vsir_program *program,
++        struct vsir_program_iterator *it, unsigned int row, unsigned int matrix_tmp_idx,
++        const unsigned int texcoord_w[2], struct vkd3d_shader_message_context *message_context)
++{
++    struct vkd3d_shader_instruction *ins = vsir_program_iterator_current(it);
++    const struct vkd3d_shader_location location = ins->location;
++    struct vsir_program_iterator out_it;
++    struct vsir_dst_operand dst = ins->dst[0];
++    struct vsir_src_operand src = ins->src[0];
++    unsigned int texcoord_idx = dst.reg.idx[0].offset;
++    unsigned int eye_tmp_idx;
++    uint32_t dot_id, double_dot_id, reflection_id;
++
++    /* texm3x3vspec tN, SRC
++     *      ->
++     * dp3    rMATRIX.z, tN, SRC
++     * mov    rEYE.x, tPAD0.w
++     * mov    rEYE.y, tPAD1.w
++     * mov    rEYE.z, tN.w
++     * nrm    rMATRIX.xyz, rMATRIX.xyz
++     * nrm    rEYE.xyz, rEYE.xyz
++     * dp3    srDOT, rMATRIX.xyz, rEYE.xyz
++     * add    srDOUBLE_DOT, srDOT, srDOT
++     * mad    srREFLECTION, rMATRIX.xyz, srDOUBLE_DOT, -rEYE.xyz
++     * sample tN, srREFLECTION, resourceN, samplerN */
++
++    if (vsir_program_validate_texm3x3_sequence(row, matrix_tmp_idx, &location,
++            message_context, "TEXM3x3VSPEC") < 0)
++        return VKD3D_ERROR_INVALID_SHADER;
++
++    eye_tmp_idx = program->temp_count++;
++    if (!vsir_program_iterator_insert_after(it, 9))
++        return VKD3D_ERROR_OUT_OF_MEMORY;
++
++    ins = vsir_program_iterator_current(it);
++    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_DP3, 1, 2))
++        return VKD3D_ERROR_OUT_OF_MEMORY;
++    vsir_dst_operand_init(&ins->dst[0], VSIR_REGISTER_TEMP, VSIR_DATA_F32, 1);
++    ins->dst[0].reg.idx[0].offset = matrix_tmp_idx;
++    ins->dst[0].reg.dimension = VSIR_DIMENSION_VEC4;
++    ins->dst[0].write_mask = VKD3DSP_WRITEMASK_2;
++    vsir_src_operand_init(&ins->src[0], VSIR_REGISTER_TEXTURE, VSIR_DATA_F32, 1);
++    ins->src[0].reg.idx[0].offset = texcoord_idx;
++    ins->src[0].reg.dimension = VSIR_DIMENSION_VEC4;
++    ins->src[0].swizzle = VKD3D_SHADER_NO_SWIZZLE;
++    ins->src[1] = src;
++
++    out_it = *it;
++    for (unsigned int i = 0; i < 3; ++i)
++    {
++        ins = vsir_program_iterator_next(&out_it);
++        if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_MOV, 1, 1))
++            return VKD3D_ERROR_OUT_OF_MEMORY;
++        vsir_dst_operand_init(&ins->dst[0], VSIR_REGISTER_TEMP, VSIR_DATA_F32, 1);
++        ins->dst[0].reg.idx[0].offset = eye_tmp_idx;
++        ins->dst[0].reg.dimension = VSIR_DIMENSION_VEC4;
++        ins->dst[0].write_mask = VKD3DSP_WRITEMASK_0 << i;
++        vsir_src_operand_init(&ins->src[0], VSIR_REGISTER_TEXTURE, VSIR_DATA_F32, 1);
++        ins->src[0].reg.idx[0].offset = i < 2 ? texcoord_w[i] : texcoord_idx;
++        ins->src[0].reg.dimension = VSIR_DIMENSION_VEC4;
++        ins->src[0].swizzle = VKD3D_SHADER_SWIZZLE(W, W, W, W);
++    }
++
++    ins = vsir_program_iterator_next(&out_it);
++    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_NRM, 1, 1))
++        return VKD3D_ERROR_OUT_OF_MEMORY;
++    vsir_dst_operand_init(&ins->dst[0], VSIR_REGISTER_TEMP, VSIR_DATA_F32, 1);
++    ins->dst[0].reg.idx[0].offset = matrix_tmp_idx;
++    ins->dst[0].reg.dimension = VSIR_DIMENSION_VEC4;
++    ins->dst[0].write_mask = VKD3DSP_WRITEMASK_0 | VKD3DSP_WRITEMASK_1 | VKD3DSP_WRITEMASK_2;
++    vsir_src_operand_init_temp_f32v4(&ins->src[0], matrix_tmp_idx);
++
++    ins = vsir_program_iterator_next(&out_it);
++    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_NRM, 1, 1))
++        return VKD3D_ERROR_OUT_OF_MEMORY;
++    vsir_dst_operand_init(&ins->dst[0], VSIR_REGISTER_TEMP, VSIR_DATA_F32, 1);
++    ins->dst[0].reg.idx[0].offset = eye_tmp_idx;
++    ins->dst[0].reg.dimension = VSIR_DIMENSION_VEC4;
++    ins->dst[0].write_mask = VKD3DSP_WRITEMASK_0 | VKD3DSP_WRITEMASK_1 | VKD3DSP_WRITEMASK_2;
++    vsir_src_operand_init_temp_f32v4(&ins->src[0], eye_tmp_idx);
++
++    ins = vsir_program_iterator_next(&out_it);
++    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_DP3, 1, 2))
++        return VKD3D_ERROR_OUT_OF_MEMORY;
++    dot_id = program->ssa_count++;
++    vsir_dst_operand_init_ssa_f32(&ins->dst[0], dot_id);
++    vsir_src_operand_init_temp_f32v4(&ins->src[0], matrix_tmp_idx);
++    vsir_src_operand_init_temp_f32v4(&ins->src[1], eye_tmp_idx);
++
++    ins = vsir_program_iterator_next(&out_it);
++    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_ADD, 1, 2))
++        return VKD3D_ERROR_OUT_OF_MEMORY;
++    double_dot_id = program->ssa_count++;
++    vsir_dst_operand_init_ssa_f32(&ins->dst[0], double_dot_id);
++    vsir_src_operand_init_ssa_f32(&ins->src[0], dot_id);
++    vsir_src_operand_init_ssa_f32(&ins->src[1], dot_id);
++
++    ins = vsir_program_iterator_next(&out_it);
++    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_MAD, 1, 3))
++        return VKD3D_ERROR_OUT_OF_MEMORY;
++    reflection_id = program->ssa_count++;
++    vsir_dst_operand_init_ssa_f32v4(&ins->dst[0], reflection_id);
++    vsir_src_operand_init_temp_f32v4(&ins->src[0], matrix_tmp_idx);
++    vsir_src_operand_init_ssa_f32(&ins->src[1], double_dot_id);
++    vsir_src_operand_init_temp_f32v4(&ins->src[2], eye_tmp_idx);
++    ins->src[2].modifiers = VKD3DSPSM_NEG;
++
++    ins = vsir_program_iterator_next(&out_it);
++    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_SAMPLE, 1, 3))
++        return VKD3D_ERROR_OUT_OF_MEMORY;
++    ins->dst[0] = dst;
++    vsir_src_operand_init_ssa_f32v4(&ins->src[0], reflection_id);
++    vsir_src_operand_init_resource(&ins->src[1], texcoord_idx, texcoord_idx);
++    vsir_src_operand_init_sampler(&ins->src[2], texcoord_idx, texcoord_idx);
++
++    return VKD3D_OK;
++}
++
+ static enum vkd3d_result vsir_program_lower_dcl_input(struct vsir_program *program,
+         struct vkd3d_shader_instruction *ins, struct vsir_transformation_context *ctx)
+ {
+@@ -3741,6 +3954,9 @@ static enum vkd3d_result vsir_program_lower_d3dbc_instructions(struct vsir_progr
+     struct vsir_program_iterator it = vsir_program_iterator(&program->instructions);
+     struct vkd3d_shader_message_context *message_context = ctx->message_context;
+     struct vkd3d_shader_instruction *ins;
++    unsigned int texm3x3_texcoord_w[2];
++    unsigned int texm3x3_tmp_idx = ~0u;
++    unsigned int texm3x3_row = 0;
+     unsigned int tmp_idx = ~0u;
+ 
+     for (ins = vsir_program_iterator_head(&it); ins; ins = vsir_program_iterator_next(&it))
+@@ -3862,15 +4078,37 @@ static enum vkd3d_result vsir_program_lower_d3dbc_instructions(struct vsir_progr
+             case VSIR_OP_TEXM3x2PAD:
+             case VSIR_OP_TEXM3x2TEX:
+             case VSIR_OP_TEXM3x3DIFF:
+-            case VSIR_OP_TEXM3x3PAD:
+             case VSIR_OP_TEXM3x3SPEC:
+-            case VSIR_OP_TEXM3x3TEX:
+-            case VSIR_OP_TEXM3x3VSPEC:
+                 vkd3d_shader_error(ctx->message_context, &ins->location, VKD3D_SHADER_ERROR_VSIR_NOT_IMPLEMENTED,
+                         "Aborting due to unimplemented feature: Combined sampler instruction \"%s\" (%#x).",
+                         vsir_opcode_get_name(ins->opcode, "<unknown>"), ins->opcode);
+                 return VKD3D_ERROR_NOT_IMPLEMENTED;
+ 
++            case VSIR_OP_TEXM3x3PAD:
++                if (texm3x3_row >= 2)
++                {
++                    vkd3d_shader_error(message_context, &ins->location,
++                            VKD3D_SHADER_ERROR_VSIR_INVALID_OPCODE,
++                            "TEXM3x3PAD sequence contains more than two rows.");
++                    return VKD3D_ERROR_INVALID_SHADER;
++                }
++                ret = vsir_program_lower_texm3x3pad(program, ins, texm3x3_row,
++                        &texm3x3_tmp_idx, &texm3x3_texcoord_w[texm3x3_row]);
++                ++texm3x3_row;
++                break;
++
++            case VSIR_OP_TEXM3x3TEX:
++                ret = vsir_program_lower_texm3x3tex(program, &it, texm3x3_row,
++                        texm3x3_tmp_idx, message_context);
++                texm3x3_row = 0;
++                break;
++
++            case VSIR_OP_TEXM3x3VSPEC:
++                ret = vsir_program_lower_texm3x3vspec(program, &it, texm3x3_row,
++                        texm3x3_tmp_idx, texm3x3_texcoord_w, message_context);
++                texm3x3_row = 0;
++                break;
++
+             default:
+                 ret = VKD3D_OK;
+                 break;

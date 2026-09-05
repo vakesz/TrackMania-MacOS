@@ -1,0 +1,12 @@
+{
+  "wine": {"git": "https://github.com/wine-mirror/wine.git", "revision": "36b6a2cf679fb395f668a917b76537190e212d9c"},
+  "d9vk": {"git": "https://github.com/Sikarugir-App/d9vk.git", "revision": "905027e8e8cb45b7b54e54d3c3458ef61444949b", "submodules": true},
+  "x87sidecar": {"git": "https://github.com/athei/x87sidecar.git", "revision": "4e9c7386d9253e838692c05015de9ae61bd6a11f"},
+  "moltenvk": {"url": "https://github.com/KhronosGroup/MoltenVK/archive/refs/tags/v1.4.2.tar.gz", "sha256": "6864db532f1dbbdb621a8d0ec13f24edae318fd9269dd3dd0cdff791334bb1cb"},
+  "freetype": {"url": "https://downloads.sourceforge.net/project/freetype/freetype2/2.14.3/freetype-2.14.3.tar.xz", "sha256": "36bc4f1cc413335368ee656c42afca65c5a3987e8768cc28cf11ba775e785a5f"},
+  "gmp": {"url": "https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz", "sha256": "a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898"},
+  "nettle": {"url": "https://ftp.gnu.org/gnu/nettle/nettle-4.0.tar.gz", "sha256": "3addbc00da01846b232fb3bc453538ea5468da43033f21bb345cb1e9073f5094"},
+  "libtasn1": {"url": "https://ftp.gnu.org/gnu/libtasn1/libtasn1-4.21.0.tar.gz", "sha256": "1d8a444a223cc5464240777346e125de51d8e6abf0b8bac742ac84609167dc87"},
+  "libunistring": {"url": "https://ftp.gnu.org/gnu/libunistring/libunistring-1.4.2.tar.gz", "sha256": "e82664b170064e62331962126b259d452d53b227bb4a93ab20040d846fec01d8"},
+  "gnutls": {"url": "https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/gnutls-3.8.13.tar.xz", "sha256": "ffed8ec1bf09c2426d4f14aae377de4753b53e537d685e604e99a8b16ca9c97e"}
+}

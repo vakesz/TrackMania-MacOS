@@ -40,15 +40,26 @@ initialize_prefix() {
   # TMNF is native code. Skip optional Mono/Gecko registration so prefix setup
   # does not stop at download dialogs for unrelated .NET or browser runtimes.
   env WINEPREFIX="$MACTMNF_PREFIX" WINEDEBUG=-all WINEDLLOVERRIDES='mscoree,mshtml=' "$wineboot_bin" --init
-  # Give a new prefix its own Documents directory. Never copy a personal profile
-  # or overwrite an existing installation's settings and saved replays.
-  local documents
+  # A fresh prefix links the Windows profile folders to the real macOS home, so
+  # the game trips macOS privacy prompts for the Desktop, Downloads and media
+  # folders it never touches. Keep Documents on the game's own UserData, and
+  # replace the rest with plain folders inside the prefix. Never copy a personal
+  # profile or overwrite an existing installation's settings and saved replays.
+  local profile name link
   mkdir -p "${MACTMNF_USERDATA}/TmForever/Config"
-  for documents in "${MACTMNF_PREFIX}/drive_c/users/"*/Documents; do
-    if test -L "$documents"; then
-      rm "$documents"
-      ln -s "$MACTMNF_USERDATA" "$documents"
+  for profile in "${MACTMNF_PREFIX}/drive_c/users/"*/; do
+    link="${profile}Documents"
+    if test -L "$link"; then
+      rm "$link"
+      ln -s "$MACTMNF_USERDATA" "$link"
     fi
+    for name in Desktop Downloads Music Pictures Videos; do
+      link="${profile}${name}"
+      if test -L "$link"; then
+        rm "$link"
+        mkdir -p "$link"
+      fi
+    done
   done
   if test ! -e "${MACTMNF_USERDATA}/TmForever/Config/Default.SystemConfig.Gbx"; then
     cp "${MACTMNF_RUNTIME}/config/Default.SystemConfig.Gbx" "${MACTMNF_USERDATA}/TmForever/Config/"

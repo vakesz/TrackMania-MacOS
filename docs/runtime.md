@@ -11,6 +11,7 @@ order to the exact revisions in `config/sources.json`.
 | Wine 0006 | Accept legacy HLSL function targets used by TMNF materials | Shader probes |
 | Wine 0007 | Honor the legacy D3DX compiler flag | Shader probes and visual material check |
 | Wine 0008 | Start x87sidecar through a cooperative per-process handshake | 32-bit and 64-bit precision probes |
+| Wine 0009 | Report no CoreAudio capture devices, so the game never opens a microphone | Audio probes |
 | D9VK 0001 and 0002 | Build this MoltenVK-compatible fork with current MinGW headers | Source build |
 | MoltenVK 0001 | Reuse the dependency sources supplied in a source release | Source archive preparation |
 | x87sidecar 0001 | Honor x87 precision-control and rounding modes, including 24-bit arithmetic | Arithmetic, host-state and translation-mode probes |
@@ -42,11 +43,21 @@ legacy DirectX installer can replace Wine DLLs, so installation restores the
 Wine-owned files afterwards.
 
 Prefix setup skips optional Mono and Gecko downloads. DirectX setup treats
-.NET as unavailable because TMNF uses the native components. The game's old
-installer can hang while exiting under WoW64/Rosetta. Installation waits for
-its log to confirm successful installation and deinitialization, then allows
-ten seconds for shutdown before stopping that prefix. A partial installation
-does not qualify for this workaround and is retried on the next install.
+.NET as unavailable because TMNF uses the native components. Setup also points
+the Windows profile folders (Desktop, Downloads, Music, Pictures, Videos) into
+the prefix instead of the real macOS home, and keeps Documents on the game's
+own UserData, so the game never trips a macOS privacy prompt for folders it does
+not use. The game's old installer can hang while exiting under WoW64/Rosetta.
+Installation waits for its log to confirm successful installation and
+deinitialization, then allows ten seconds for shutdown before stopping that
+prefix. A partial installation does not qualify for this workaround and is
+retried on the next install.
+
+The same shutdown weakness can leave a game process alive after you quit,
+holding the Wine virtual desktop on screen as a black window. Each launch runs a
+small watchdog that waits for the game's own process to exit, then stops the
+prefix, so the window closes and the app quits. The watchdog matches the game
+process only, never the desktop that hosts it, so it never acts mid-game.
 
 CoreAudio is enabled. The audio probes check both device enumeration and actual
 DirectSound playback progress for stereo and positional sound. x87sidecar runs

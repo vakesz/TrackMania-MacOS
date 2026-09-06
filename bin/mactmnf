@@ -27,8 +27,32 @@ Commands:
 EOF
 }
 
+# Once the launched game (or the settings launcher) process has exited, make
+# sure nothing keeps the prefix alive. A process that fails to shut down under
+# Rosetta would otherwise leave the explorer virtual desktop on screen as a
+# black window. Match the game process only, never the explorer wrapper whose
+# command line also names the executable.
+game_exit_watchdog() {
+  local watch="$1"
+  local server_bin="$2"
+  local prefix="$3"
+  local waited=0
+
+  until pgrep -fl "$watch" 2>/dev/null | grep -qv explorer; do
+    waited=$((waited + 1))
+    test "$waited" -lt 300 || return 0
+    sleep 1
+  done
+  while pgrep -fl "$watch" 2>/dev/null | grep -qv explorer; do
+    sleep 2
+  done
+  env WINEPREFIX="$prefix" WINEDEBUG=-all "$server_bin" -k >/dev/null 2>&1 || true
+}
+
 play_target() {
   local executable="$1"
+  shift
+  local watch="$1"
   shift
   local wine_bin
   local overrides
@@ -51,7 +75,15 @@ play_target() {
   done < <(renderer_env)
   configure_wine_audio "$wine_bin"
   configure_translation
+  local server_bin=""
+  server_bin="$(wineserver_binary "$wine_bin" 2>/dev/null)" || server_bin=""
   cd "$GAME_DIR"
+  # Tear the prefix down once the game exits, so a process that lingers under
+  # Rosetta cannot leave the explorer virtual-desktop window (a black window)
+  # up and the app running. The watchdog is orphaned by the exec below.
+  if test -n "$watch" && test -n "$server_bin"; then
+    game_exit_watchdog "$watch" "$server_bin" "$MACTMNF_PREFIX" &
+  fi
   exec env \
     WINEPREFIX="$MACTMNF_PREFIX" \
     WINEDEBUG="${WINEDEBUG:--all}" \
@@ -77,11 +109,11 @@ install_d9vk() {
 
 play_game() {
   competition_patch_is_current || die "Competition Patch is missing or outdated. Run ./install.sh."
-  play_target "$TMLOADER_EXE" run TmForever competition "$@"
+  play_target "$TMLOADER_EXE" TmForever.exe run TmForever competition "$@"
 }
 
 play_vanilla() {
-  play_target "$GAME_EXE" "$@"
+  play_target "$GAME_EXE" TmForever.exe "$@"
 }
 
 configure_game() {
@@ -103,7 +135,7 @@ configure_game() {
 
   # Same environment as the game, so the launcher's own benchmark and "Play"
   # button inherit D9VK's configuration and the patched x87 translation.
-  play_target "$LAUNCHER_EXE"
+  play_target "$LAUNCHER_EXE" TmForeverLauncher.exe
 }
 
 update_game() {

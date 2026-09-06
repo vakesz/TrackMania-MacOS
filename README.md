@@ -7,14 +7,25 @@ x87 translator that preserves the game's 24-bit floating-point precision.
 This is an independent community project. The game and Microsoft DirectX are
 downloaded from their original hosts during installation, not redistributed here.
 
-## Install
+| In game | Main menu |
+| --- | --- |
+| ![TMNF racing on an M1 Pro with the DXVK FPS overlay](docs/images/ingame.png) | ![TMNF main menu with Competition Patch and CoreMod loaded](docs/images/menu.png) |
 
-You need an Apple Silicon Mac, an internet connection and Apple's command line
-tools for `make`. Run `xcode-select --install` if those tools are missing.
-Rosetta 2 is also required; the installer installs it if necessary.
+Both screenshots are from an M1 Pro in a 1280x720 window with the DXVK frame
+rate overlay enabled (`DXVK_HUD=fps,frametimes`).
 
-Close any existing TMNF session before installing or updating. Download this
-repository, open Terminal in its folder, then run:
+## Requirements
+
+An Apple Silicon Mac, an internet connection, and Apple's command line tools for
+`make` (run `xcode-select --install` if they are missing). Rosetta 2 is also
+required; the installer adds it if necessary.
+
+Close any existing TMNF session before installing or updating, then download this
+repository and open Terminal in its folder. Pick one of the two options below.
+
+## Option 1: install the prebuilt runtime
+
+This downloads a ready-built runtime. Run:
 
 ```sh
 make install
@@ -57,9 +68,11 @@ xattr -dr com.apple.quarantine "$HOME/Downloads/mactmnf-0.1.0-runtime.tar.xz"
 Archives that `make install` fetches with `curl` are not quarantined, so this
 step is only for a browser download.
 
-## Build locally
+## Option 2: build it yourself
 
-Install [Homebrew](https://brew.sh) and the full Xcode app, then select Xcode:
+This compiles the whole runtime from the pinned sources instead of downloading
+it, then installs the game. Install [Homebrew](https://brew.sh) and the full
+Xcode app, then select Xcode:
 
 ```sh
 sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
@@ -143,3 +156,18 @@ See [docs/building.md](docs/building.md) before distributing them.
 This project's own scripts and tests use the MIT license. Patches and bundled third-party
 code retain their upstream licenses. See [LICENSE](LICENSE) and the `licenses`
 directory in each runtime archive.
+
+## Acknowledgements
+
+This runtime is thin glue over other people's hard work. With gratitude to:
+
+- [Wine](https://www.winehq.org) for the Windows compatibility layer everything here is built on.
+- [DXVK](https://github.com/doitsujin/dxvk) and the [d9vk fork](https://github.com/Sikarugir-App/d9vk) that turn the game's Direct3D 9 calls into Vulkan.
+- [MoltenVK](https://github.com/KhronosGroup/MoltenVK) for running Vulkan on Apple's Metal.
+- Apple's Rosetta 2 for translating the game's x86 code on Apple Silicon.
+- [athei](https://github.com/athei)'s [x87sidecar](https://github.com/athei/x87sidecar) and cooperative Wine handshake, which keep TMNF's 24-bit x87 math intact under Rosetta.
+- [tomashu](https://tomashu.pages.dev)'s TMLoader, and the TrackMania Competition Patch and CoreMod that make online play current.
+- GnuTLS, Nettle, GMP, libtasn1, libunistring, FreeType and mingw-w64, which the runtime links or is built with.
+- Nadeo and Ubisoft for TrackMania Nations Forever itself.
+
+Trademarks and game content belong to their owners. This is an unofficial community project, not affiliated with Nadeo or Ubisoft.

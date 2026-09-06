@@ -28,6 +28,10 @@ ENV = dict(os.environ, MACOSX_DEPLOYMENT_TARGET='14.0')
 LOG = BUILD / 'logs' / 'build.log'
 if (ROOT / 'upstream').is_dir():
     ENV['MACTMNF_BUNDLED_SOURCES'] = '1'
+# Remap the build path out of __FILE__ and debug strings, so shipped binaries
+# never carry the maintainer's home directory. verify_no_build_paths() enforces
+# that nothing slips through.
+FILE_PREFIX_MAP = f'-ffile-prefix-map={ROOT}=/mactmnf'
 
 
 def run(*args, cwd=ROOT, env=None, capture=False):
@@ -123,7 +127,7 @@ def autotools(name, *options):
     build = WORK / name
     build.mkdir(parents=True, exist_ok=True)
     env = dict(ENV, CC='/usr/bin/clang -arch x86_64', CXX='/usr/bin/clang++ -arch x86_64',
-               CFLAGS='-O2', CXXFLAGS='-O2', CPPFLAGS=f'-I{DEPS}/include',
+               CFLAGS=f'-O2 {FILE_PREFIX_MAP}', CXXFLAGS=f'-O2 {FILE_PREFIX_MAP}', CPPFLAGS=f'-I{DEPS}/include',
                LDFLAGS=f'-L{DEPS}/lib -Wl,-headerpad_max_install_names',
                PKG_CONFIG_LIBDIR=f'{DEPS}/lib/pkgconfig', PKG_CONFIG_PATH='')
     stamp = build / '.mactmnf-configure.json'
@@ -143,9 +147,13 @@ def dependencies():
     autotools('nettle', '--disable-documentation', '--disable-openssl')
     autotools('libtasn1', '--disable-doc', '--disable-tools')
     autotools('libunistring', '--disable-rpath')
+    # A neutral sysconfdir keeps the build's deps path out of the shipped
+    # library; TMNF does not use a system gnutls config file. -ffile-prefix-map
+    # only remaps __FILE__ and debug paths, not this configure constant.
     autotools('gnutls', '--disable-doc', '--disable-tests', '--disable-tools', '--disable-cxx',
               '--without-p11-kit', '--without-idn', '--without-brotli',
-              '--without-zstd', '--with-included-unistring=no', '--disable-nls')
+              '--without-zstd', '--with-included-unistring=no', '--disable-nls',
+              '--sysconfdir=/etc')
     source = fetch('moltenvk')
     run('./fetchDependencies', '--macos', '--keep-cache', cwd=source)
     run('/usr/bin/make', 'macos', cwd=source)
@@ -169,7 +177,9 @@ def wine():
             '--without-x', '--without-wayland', '--without-alsa', '--without-pulse', '--without-oss',
             '--without-gstreamer', '--without-sdl', '--without-usb', '--without-udev',
             '--without-cups', '--without-pcap', '--without-dbus',
-            'CC=clang -arch x86_64', 'CXX=clang++ -arch x86_64',
+            f'CC=clang -arch x86_64 {FILE_PREFIX_MAP}', f'CXX=clang++ -arch x86_64 {FILE_PREFIX_MAP}',
+            # The PE (mingw) side is compiled separately; map its paths too.
+            f'CROSSCFLAGS=-O2 -g {FILE_PREFIX_MAP}',
             f'BISON={shutil.which("bison")}', f'FLEX={shutil.which("flex")}',
             f'CPPFLAGS=-I{headers}', f'FREETYPE_CFLAGS=-I{DEPS}/include/freetype2',
             f'FREETYPE_LIBS=-L{DEPS}/lib -lfreetype', f'GNUTLS_CFLAGS=-I{DEPS}/include',
@@ -299,6 +309,20 @@ def relocate():
                        for path in sorted(RUNTIME.rglob('*'))
                        if path.is_file() and not path.is_symlink() and path.name != 'SHA256SUMS')
     (RUNTIME / 'SHA256SUMS').write_text(manifest)
+    verify_no_build_paths()
+
+
+def verify_no_build_paths():
+    # No shipped file may carry the absolute build path (it would leak the
+    # maintainer's home directory). FILE_PREFIX_MAP keeps it out of compiled
+    # binaries; this catches anything that still slips through, from any source.
+    found = subprocess.run(['grep', '-rlF', str(ROOT), str(RUNTIME)],
+                           stdout=subprocess.PIPE, text=True, check=False)
+    leaked = [line for line in found.stdout.splitlines() if line]
+    if leaked:
+        listing = '\n  '.join(leaked[:20])
+        more = '' if len(leaked) <= 20 else f'\n  ... and {len(leaked) - 20} more'
+        raise RuntimeError(f'Build path {ROOT} leaked into the runtime:\n  {listing}{more}')
 
 
 def archive_metadata(info):

@@ -50,8 +50,8 @@ The apps go in `/Applications` when it is writable, otherwise in
 `~/Applications`. You can remove the downloaded repository after installation.
 The apps use their installed support files, not the checkout.
 
-**The first runtime release is being prepared.** Until its assets are published,
-use the source build below or supply a runtime archive explicitly:
+To install from an archive you already downloaded instead, point the installer
+at it and give the checksum from the release:
 
 ```sh
 MACTMNF_RUNTIME_ARCHIVE="$HOME/Downloads/mactmnf-0.1.0-runtime.tar.xz" \

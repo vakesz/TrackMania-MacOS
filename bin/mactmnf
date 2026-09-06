@@ -27,16 +27,6 @@ Commands:
 EOF
 }
 
-play_executable() {
-  local executable="$1"
-  local wine_bin
-
-  test -f "$executable" || die "TMNF is not installed. Run ./install.sh first."
-  wine_bin="$(wine_binary)" || die "Wine is not installed. Run ./install.sh first."
-  cd "$GAME_DIR"
-  exec env WINEPREFIX="$MACTMNF_PREFIX" WINEDEBUG="${WINEDEBUG:--all}" "$wine_bin" "$executable"
-}
-
 play_target() {
   local executable="$1"
   shift
@@ -100,8 +90,10 @@ configure_game() {
   test -f "$LAUNCHER_EXE" || die "TMNF is not installed. Run ./install.sh first."
   wine_bin="$(wine_binary)" || die "Wine is not installed. Run ./install.sh first."
 
-  # The 2008 launcher crashes while probing Wine's Apple PCI identity. Spoof a
-  # known D3D9 GPU for this executable only; the game keeps the real adapter.
+  # The 2008 launcher looks the GPU up by PCI ID and crashes or benchmarks on
+  # Wine's Apple identity. Spoof a known D3D9 GPU for this executable only: the
+  # wined3d renderers read these registry keys, D9VK reads its dxvk.conf
+  # section. The game keeps the real adapter.
   env WINEPREFIX="$MACTMNF_PREFIX" WINEDEBUG=-all "$wine_bin" reg add \
     'HKCU\Software\Wine\AppDefaults\TmForeverLauncher.exe\Direct3D' \
     /v VideoPciVendorID /t REG_DWORD /d 0x10de /f >/dev/null
@@ -109,7 +101,9 @@ configure_game() {
     'HKCU\Software\Wine\AppDefaults\TmForeverLauncher.exe\Direct3D' \
     /v VideoPciDeviceID /t REG_DWORD /d 0x0611 /f >/dev/null
 
-  play_executable "$LAUNCHER_EXE"
+  # Same environment as the game, so the launcher's own benchmark and "Play"
+  # button inherit D9VK's configuration and the patched x87 translation.
+  play_target "$LAUNCHER_EXE"
 }
 
 update_game() {

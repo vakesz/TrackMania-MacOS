@@ -11,12 +11,19 @@ write_app() {
       die "An unrelated app already exists: $path"
     fi
   fi
-  mkdir -p "${contents}/MacOS"
+  mkdir -p "${contents}/MacOS" "${contents}/Resources"
+  # The icon comes from the installed game executable, so nothing of Nadeo's is
+  # redistributed. A missing icon only costs the Finder artwork.
+  if ! python3 "${MACTMNF_PROJECT_DIR}/lib/app_icon.py" "$GAME_EXE" "${contents}/Resources/AppIcon.icns" 2>/dev/null; then
+    rm -f "${contents}/Resources/AppIcon.icns"
+    warn "Could not extract the game icon for $name; using the generic app icon."
+  fi
   cat >"${contents}/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>CFBundleExecutable</key><string>MacTMNF</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleIdentifier</key><string>${identifier}</string>
   <key>CFBundleName</key><string>${name}</string>
   <key>CFBundlePackageType</key><string>APPL</string>
@@ -34,7 +41,7 @@ EOF
     printf 'fi\nexit "$status"\n'
   } >"${contents}/MacOS/MacTMNF"
   chmod +x "${contents}/MacOS/MacTMNF"
-  touch "${contents}/.mactmnf-app"
+  touch "${contents}/.mactmnf-app" "$path"  # Finder refreshes a touched bundle's icon.
   say "Installed $path"
 }
 
@@ -47,7 +54,7 @@ install_app() {
     trap 'rm -rf "$staging"' EXIT
     mkdir -p "${staging}/bin" "${staging}/lib" "${staging}/config"
     cp "${MACTMNF_PROJECT_DIR}/bin/mactmnf" "${staging}/bin/"
-    cp "${MACTMNF_PROJECT_DIR}/lib/"*.sh "${staging}/lib/"
+    cp "${MACTMNF_PROJECT_DIR}/lib/"*.sh "${MACTMNF_PROJECT_DIR}/lib/"*.py "${staging}/lib/"
     cp "${MACTMNF_PROJECT_DIR}/config/dxvk.conf" "${staging}/config/"
     cp "${MACTMNF_PROJECT_DIR}/install.sh" "$staging"
     cp "${MACTMNF_PROJECT_DIR}/VERSION" "$staging"

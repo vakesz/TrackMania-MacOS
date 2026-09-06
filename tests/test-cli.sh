@@ -86,6 +86,8 @@ grep -Fq 'overrides=d3d9=n;d3dx9_30,d3dx9_43,wined3d=b' "$CALL_LOG"
 grep -Fq "sidecar=${MACTMNF_SIDECAR}" "$CALL_LOG"
 grep -Fq 'rounding=0,0' "$CALL_LOG"
 grep -Fq "dxvk_conf=${PROJECT_DIR}/config/dxvk.conf" "$CALL_LOG"
+# ddraw's wined3d adapter stays off OpenGL while D9VK renders.
+grep -Fq 'd3d_config=renderer=gdi' "$CALL_LOG"
 grep -Fq "<explorer></desktop=TMNF,1280x720><${FAKE_GAME}/TmForever.exe></test-argument>" "$CALL_LOG"
 
 : >"$CALL_LOG"
@@ -109,22 +111,36 @@ test ! -s "$CALL_LOG"
 MACTMNF_RENDERER=wined3d-vulkan "${PROJECT_DIR}/bin/mactmnf" play-vanilla
 grep -Fq "overrides=d3d9=b" "$CALL_LOG"
 grep -Fq "d3d_config=renderer=vulkan" "$CALL_LOG"
+: >"$CALL_LOG"
+WINE_D3D_CONFIG=csmt=0 "${PROJECT_DIR}/bin/mactmnf" play-vanilla
+grep -Fq "d3d_config=renderer=gdi,csmt=0" "$CALL_LOG"
 
 doctor_output="$("${PROJECT_DIR}/bin/mactmnf" doctor 2>&1)" || true
 printf '%s\n' "$doctor_output" | grep -q 'Renderer: d9vk'
 printf '%s\n' "$doctor_output" | grep -q 'D9VK: installed in the prefix'
 
+: >"$CALL_LOG"
 "${PROJECT_DIR}/bin/mactmnf" configure
 grep -Fq '<reg><add><HKCU\Software\Wine\AppDefaults\TmForeverLauncher.exe\Direct3D>' "$CALL_LOG"
-grep -Fq "<${FAKE_GAME}/TmForeverLauncher.exe>" "$CALL_LOG"
+grep -Fq "<explorer></desktop=TMNF,1280x720><${FAKE_GAME}/TmForeverLauncher.exe>" "$CALL_LOG"
+# The launcher and its benchmark run with the game's renderer and translator.
+grep -Fq 'overrides=d3d9=n;d3dx9_30,d3dx9_43,wined3d=b' "$CALL_LOG"
+grep -Fq "sidecar=${MACTMNF_SIDECAR}" "$CALL_LOG"
+grep -Fq "dxvk_conf=${PROJECT_DIR}/config/dxvk.conf" "$CALL_LOG"
+# D9VK reports a listed GPU to the launcher only, so it does not benchmark.
+grep -qx '\[TmForeverLauncher.exe\]' "${PROJECT_DIR}/config/dxvk.conf"
+grep -Eq '^d3d9.customVendorId *= *10de$' "${PROJECT_DIR}/config/dxvk.conf"
+grep -Eq '^d3d9.customDeviceId *= *0611$' "${PROJECT_DIR}/config/dxvk.conf"
 
 if "${PROJECT_DIR}/bin/mactmnf" nonsense >/dev/null 2>&1; then
   echo "unknown command unexpectedly succeeded" >&2
   exit 1
 fi
 
-"${PROJECT_DIR}/bin/mactmnf" app >/dev/null
+"${PROJECT_DIR}/bin/mactmnf" app >/dev/null 2>&1
 test -x "${MACTMNF_APP}/Contents/MacOS/MacTMNF"
+grep -Fq '<key>CFBundleIconFile</key><string>AppIcon</string>' "${MACTMNF_APP}/Contents/Info.plist"
+test ! -e "${MACTMNF_APP}/Contents/Resources/AppIcon.icns"  # the fake executable has no icon
 test -x "${FAKE_HOME}/Applications/TrackMania Settings.app/Contents/MacOS/MacTMNF"
 if grep -Fq "$PROJECT_DIR" "${MACTMNF_APP}/Contents/MacOS/MacTMNF"; then
   echo 'Installed app still depends on the checkout' >&2; exit 1

@@ -28,6 +28,13 @@ its checksum, installs the game and creates two apps:
 - **TrackMania Settings** opens the original launcher to change graphics and
   audio settings. Close the game before changing these settings.
 
+Save and close the settings launcher, then use the game app to play with
+Competition Patch.
+
+On the first launch the game shows its own "Network check" dialog for the
+peer-to-peer firewall test; click OK. The account screen follows. A launch
+takes a while to show a window; the game's windows may open behind others.
+
 The apps go in `/Applications` when it is writable, otherwise in
 `~/Applications`. You can remove the downloaded repository after installation.
 The apps use their installed support files, not the checkout.

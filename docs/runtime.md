@@ -25,19 +25,53 @@ caching, direct buffer mapping and device-local constants. The frame queue is
 one frame, with no forced presentation interval. Shader caches persist in the
 Wine prefix. Diagnostics are off during ordinary play.
 
+With the D9VK renderer, wined3d runs with `renderer=gdi` (its no-3D adapter).
+TMNF and its launcher call `DirectDrawCreateEx` during startup, and Wine's
+ddraw would otherwise create a wined3d OpenGL adapter that nothing renders
+with. That GL context work, spread over the main thread and the network-check
+splash thread, made about half of all launches crash under Rosetta: the
+32-bit thread resumed in 64-bit mode at a 32-bit function entry (or the
+reverse, in Wine's syscall thunk), always right after the GL vendor probe.
+Ten launches with the no-3D adapter showed no crash; the game only needs
+ddraw for 2D startup windows. Set `WINE_D3D_CONFIG` to add other wined3d
+options; the renderer setting is prepended.
+
 The launcher uses Wine's patched `d3dx9_30` and `d3dx9_43` compilers, including
 when CoreMod redirects shader compilation from one to the other. Microsoft's
 legacy DirectX installer can replace Wine DLLs, so installation restores the
 Wine-owned files afterwards.
+
+Prefix setup skips optional Mono and Gecko downloads. DirectX setup treats
+.NET as unavailable because TMNF uses the native components. The game's old
+installer can hang while exiting under WoW64/Rosetta. Installation waits for
+its log to confirm successful installation and deinitialization, then allows
+ten seconds for shutdown before stopping that prefix. A partial installation
+does not qualify for this workaround and is retried on the next install.
 
 CoreAudio is enabled. The audio probes check both device enumeration and actual
 DirectSound playback progress for stereo and positional sound. x87sidecar runs
 with FMA contraction and fast rounding disabled. It uses cooperative attachment;
 no system Rosetta files, privileged service or debugger entitlement is needed.
 
-The original graphics launcher receives a known Nvidia PCI identity for that
-executable only. This avoids its old adapter-probing crash. The game keeps its
-actual renderer identity.
+The original graphics launcher receives a known Nvidia PCI identity (GeForce
+8800 GT) for that executable only. The wined3d renderers read it from the
+launcher's per-application registry keys; D9VK reads it from the
+`[TmForeverLauncher.exe]` section of `config/dxvk.conf`. The launcher looks the
+GPU up in `GfxDevicePerfs.txt` by PCI ID. Apple GPUs are not listed, so without
+the spoof it starts `TmForever.exe /bench`, which does not complete under
+Rosetta, and its older adapter probing could crash. The game keeps its actual
+renderer identity. The launcher runs with the same environment as the game, so
+a benchmark or game started from it inherits the D9VK settings and x87sidecar.
+
+The first launch shows TMNF's own "Network check" dialog, which confirms the
+peer-to-peer firewall test, followed by the account screen. Both are the
+game's normal first-run behavior and are remembered in the SystemConfig.
+Windows opened by the game are ordinary macOS windows; check behind other
+windows if a launch seems silent.
+
+The two apps carry TMNF's own icon, extracted at install time from the
+installed `TmForever.exe` by `lib/app_icon.py` using only sips and iconutil.
+Nothing of Nadeo's is stored in this repository.
 
 `config/game-settings.json` describes the initial graphics preset.
 `tools/game_profile.py` generates only display and opponent chunks in a GBX

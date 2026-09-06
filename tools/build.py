@@ -300,6 +300,34 @@ def relocate():
     (RUNTIME / 'SHA256SUMS').write_text(manifest)
 
 
+def archive_metadata(info):
+    info.uid = info.gid = 0
+    info.uname = info.gname = ''
+    return info
+
+
+def source_archive(archive):
+    def project_filter(info):
+        return None if '__pycache__' in Path(info.name).parts else archive_metadata(info)
+
+    def source_filter(info):
+        # Omit generated binaries and Git metadata, retain corresponding source.
+        if '.git' in Path(info.name).parts:
+            return None
+        mvk = 'mactmnf/upstream/moltenvk/'
+        if any(info.name == mvk + p or info.name.startswith(mvk + p + '/')
+               for p in ('build', 'Package', 'External/build', 'DerivedData', 'xcodebuild.log')):
+            return None
+        return archive_metadata(info)
+
+    with tarfile.open(archive, 'w:xz', preset=3) as tar:
+        for entry in ('VERSION', 'Makefile', 'README.md', 'LICENSE', '.gitignore', 'bin', 'lib',
+                      'config', 'patches', 'tools', 'tests', 'docs', 'licenses', 'install.sh'):
+            tar.add(ROOT / entry, arcname=f'mactmnf/{entry}', filter=project_filter)
+        for name in LOCK:
+            tar.add(SOURCES / name, arcname=f'mactmnf/upstream/{name}', filter=source_filter)
+
+
 def package():
     if not (RUNTIME / '.mactmnf-runtime').exists():
         raise RuntimeError('Run make build first.')
@@ -309,27 +337,11 @@ def package():
     DIST.mkdir(parents=True, exist_ok=True)
     for kind in ('runtime', 'source'):
         archive = DIST / f'mactmnf-{VERSION}-{kind}.tar.xz'
-        with tarfile.open(archive, 'w:xz', preset=3) as tar:
-            if kind == 'runtime':
-                tar.add(RUNTIME, arcname='runtime')
-            else:
-                def project_filter(info):
-                    return None if '__pycache__' in Path(info.name).parts else info
-                for entry in ('VERSION', 'Makefile', 'README.md', 'LICENSE', '.gitignore', 'bin', 'lib',
-                              'config', 'patches', 'tools', 'tests', 'docs', 'licenses', 'install.sh'):
-                    tar.add(ROOT / entry, arcname=f'mactmnf/{entry}', filter=project_filter)
-                def source_filter(info):
-                    # Omit generated binaries and Git metadata, retain all corresponding source.
-                    parts = Path(info.name).parts
-                    if '.git' in parts:
-                        return None
-                    mvk = 'mactmnf/upstream/moltenvk/'
-                    if any(info.name == mvk + p or info.name.startswith(mvk + p + '/')
-                           for p in ('build', 'Package', 'External/build', 'DerivedData', 'xcodebuild.log')):
-                        return None
-                    return info
-                for name in LOCK:
-                    tar.add(SOURCES / name, arcname=f'mactmnf/upstream/{name}', filter=source_filter)
+        if kind == 'runtime':
+            with tarfile.open(archive, 'w:xz', preset=3) as tar:
+                tar.add(RUNTIME, arcname='runtime', filter=archive_metadata)
+        else:
+            source_archive(archive)
         (DIST / f'{archive.name}.sha256').write_text(f'{digest(archive)}  {archive.name}\n')
         print(archive, flush=True)
 

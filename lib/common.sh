@@ -152,11 +152,16 @@ renderer_overrides() {
 renderer_env() {
   case "$MACTMNF_RENDERER" in
     d9vk)
+      # TMNF and its launcher also call DirectDrawCreateEx at startup. Wine's
+      # ddraw would then bring up a wined3d OpenGL adapter that nothing renders
+      # with, and its GL context work on two threads intermittently derails
+      # 32-bit execution under Rosetta. Keep wined3d on its no-3D adapter.
       printf '%s\n' \
         "DXVK_CONFIG_FILE=${DXVK_CONFIG_FILE:-$DXVK_CONF}" \
         "DXVK_STATE_CACHE_PATH=${DXVK_STATE_CACHE_PATH:-$MACTMNF_PREFIX}" \
         "DXVK_LOG_LEVEL=${DXVK_LOG_LEVEL:-warn}" \
-        "DXVK_LOG_PATH=${DXVK_LOG_PATH:-none}"
+        "DXVK_LOG_PATH=${DXVK_LOG_PATH:-none}" \
+        "WINE_D3D_CONFIG=renderer=gdi${WINE_D3D_CONFIG:+,$WINE_D3D_CONFIG}"
       ;;
     wined3d-vulkan) printf '%s\n' "WINE_D3D_CONFIG=renderer=vulkan${WINE_D3D_CONFIG:+,$WINE_D3D_CONFIG}" ;;
     wined3d-gl) printf '%s\n' "WINE_D3D_CONFIG=renderer=gl${WINE_D3D_CONFIG:+,$WINE_D3D_CONFIG}" ;;

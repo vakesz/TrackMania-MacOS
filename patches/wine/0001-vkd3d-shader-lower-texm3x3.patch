@@ -1,3 +1,13 @@
+Subject: vkd3d-shader: Lower legacy texm3x3 bump-mapping instructions.
+
+TMNF materials use the D3D9 texm3x3pad, texm3x3tex and texm3x3vspec
+instructions. vkd3d left them unlowered, so those pixel shaders failed to
+compile and the affected materials did not render. Lower each into its dp3
+and sampling sequence during d3dbc instruction lowering.
+
+Based on Wine 36b6a2cf679. Exercised by the shader-profile probes
+(make smoke-shaders).
+
 diff --git a/libs/vkd3d/libs/vkd3d-shader/ir.c b/libs/vkd3d/libs/vkd3d-shader/ir.c
 index c8f8b8b7478..fbe9b3f1372 100644
 --- a/libs/vkd3d/libs/vkd3d-shader/ir.c

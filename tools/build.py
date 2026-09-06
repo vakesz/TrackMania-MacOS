@@ -4,13 +4,14 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
-import shutil
 import shlex
+import shutil
 import subprocess
 import sys
 import tarfile
+from pathlib import Path
+
 from game_profile import generate
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,7 +40,7 @@ def run(*args, cwd=ROOT, env=None, capture=False):
         log.write('\n$ ' + shlex.join(command) + '\n')
         log.flush()
         result = subprocess.run(command, cwd=cwd, env=env or ENV, text=True,
-                                stdout=log, stderr=subprocess.STDOUT)
+                                stdout=log, stderr=subprocess.STDOUT, check=False)
     if result.returncode:
         print('\n'.join(LOG.read_text(errors='replace').splitlines()[-35:]), file=sys.stderr)
         raise RuntimeError(f'{command[0]} failed with status {result.returncode}. Full log: {LOG}')
@@ -60,7 +61,7 @@ def build_inputs():
 def apply_patches(name, source):
     for patch in sorted((ROOT / 'patches' / name).glob('*.patch')):
         reverse = subprocess.run(['git', 'apply', '--reverse', '--check', str(patch)],
-                                 cwd=source, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                 cwd=source, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
         if reverse.returncode:
             run('git', 'apply', '--check', patch, cwd=source)
             run('git', 'apply', patch, cwd=source)

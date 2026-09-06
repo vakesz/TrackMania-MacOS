@@ -1,11 +1,11 @@
 import hashlib
 import io
 import os
-from pathlib import Path
 import subprocess
 import tarfile
 import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -43,7 +43,7 @@ class RuntimeInstall(unittest.TestCase):
                    MACTMNF_CACHE=str(self.root / 'cache'), MACTMNF_RUNTIME_ARCHIVE=str(self.archive),
                    MACTMNF_RUNTIME_SHA256=checksum or hashlib.sha256(self.archive.read_bytes()).hexdigest())
         return subprocess.run(['bash', '-euc', '. lib/common.sh; . lib/runtime.sh; install_wine_runtime'],
-                              cwd=ROOT, env=env, text=True, capture_output=True)
+                              cwd=ROOT, env=env, text=True, capture_output=True, check=False)
 
     def test_verified_archive_installs_outside_checkout(self):
         self.package()

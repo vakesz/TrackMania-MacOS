@@ -1,0 +1,47 @@
+name: Bug report
+description: Something is broken when installing, building or playing TMNF.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Run `./bin/mactmnf doctor` first. It prints most of what is asked below.
+        For a security problem, use the security policy instead of a public issue.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did and what went wrong. Paste exact error text.
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: macOS version and Mac model
+      placeholder: e.g. macOS 15.1, M1 Pro
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed
+      options:
+        - Release runtime archive
+        - Built from source (make build)
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of make doctor
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: From ~/Library/Logs/MacTMNF (play.log, configure.log). Trim long files.
+      render: text
+    validations:
+      required: false

@@ -47,6 +47,16 @@ MACTMNF_RUNTIME_ARCHIVE="$HOME/Downloads/mactmnf-0.1.0-runtime.tar.xz" \
 MACTMNF_RUNTIME_SHA256="<checksum from the release>" make install
 ```
 
+If macOS refuses to open the game after a manual download, the archive picked up
+a quarantine flag in the browser. Clear it, then install:
+
+```sh
+xattr -dr com.apple.quarantine "$HOME/Downloads/mactmnf-0.1.0-runtime.tar.xz"
+```
+
+Archives that `make install` fetches with `curl` are not quarantined, so this
+step is only for a browser download.
+
 ## Build locally
 
 Install [Homebrew](https://brew.sh) and the full Xcode app, then select Xcode:
@@ -130,6 +140,6 @@ regression probes against the selected Wine prefix. `make package` creates the
 runtime archive, matching source archive, and SHA-256 files for a release.
 See [docs/building.md](docs/building.md) before distributing them.
 
-MacTMNF scripts and tests use the MIT license. Patches and bundled third-party
+This project's own scripts and tests use the MIT license. Patches and bundled third-party
 code retain their upstream licenses. See [LICENSE](LICENSE) and the `licenses`
 directory in each runtime archive.

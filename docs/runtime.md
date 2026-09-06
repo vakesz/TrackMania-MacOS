@@ -29,12 +29,12 @@ With the D9VK renderer, wined3d runs with `renderer=gdi` (its no-3D adapter).
 TMNF and its launcher call `DirectDrawCreateEx` during startup, and Wine's
 ddraw would otherwise create a wined3d OpenGL adapter that nothing renders
 with. That GL context work, spread over the main thread and the network-check
-splash thread, made about half of all launches crash under Rosetta: the
-32-bit thread resumed in 64-bit mode at a 32-bit function entry (or the
-reverse, in Wine's syscall thunk), always right after the GL vendor probe.
-Ten launches with the no-3D adapter showed no crash; the game only needs
-ddraw for 2D startup windows. Set `WINE_D3D_CONFIG` to add other wined3d
-options; the renderer setting is prepended.
+splash thread, crashed about half of all launches under Rosetta. The 32-bit
+thread resumed in 64-bit mode at a 32-bit function entry, or the reverse in
+Wine's syscall thunk, always right after the GL vendor probe. Ten launches with
+the no-3D adapter showed no crash, and the game only needs ddraw for its 2D
+startup windows. Set `WINE_D3D_CONFIG` to add other wined3d options; the
+renderer setting is prepended.
 
 The launcher uses Wine's patched `d3dx9_30` and `d3dx9_43` compilers, including
 when CoreMod redirects shader compilation from one to the other. Microsoft's

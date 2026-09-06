@@ -1,3 +1,11 @@
+Subject: d3d9: Include <algorithm> in d3d9_mem.cpp.
+
+The file calls std::max and std::remove_if but reached them through a
+transitive include that current libc++ no longer pulls in, so the build fails.
+Include <algorithm> directly.
+
+Based on d9vk 905027e.
+
 diff --git a/src/d3d9/d3d9_mem.cpp b/src/d3d9/d3d9_mem.cpp
 index ec256246..5662a213 100644
 --- a/src/d3d9/d3d9_mem.cpp

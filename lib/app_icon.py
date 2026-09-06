@@ -8,6 +8,7 @@ icon size is converted with sips and assembled with iconutil, both part of
 macOS. Missing sizes are scaled from the largest image.
 """
 import os
+import pathlib
 import struct
 import subprocess
 import sys
@@ -58,7 +59,7 @@ def best_images(data):
         count = struct.unpack_from('<H', group, 4)[0]
         candidates = {}
         for k in range(count):
-            w, h, colors, _, planes, bits, size, ident = struct.unpack_from('<BBBBHHIH', group, 6 + k * 14)
+            w, h, colors, _, planes, bits, _size, ident = struct.unpack_from('<BBBBHHIH', group, 6 + k * 14)
             side = w or 256
             if ident in images and (side not in candidates or bits > candidates[side][0]):
                 header = struct.pack('<HHH', 0, 1, 1)
@@ -74,7 +75,7 @@ def run(*command):
 
 
 def main(exe, output):
-    icons = best_images(open(exe, 'rb').read())
+    icons = best_images(pathlib.Path(exe).read_bytes())
     if not icons:
         raise SystemExit(f'{exe}: no icons found')
     largest = max(icons)
@@ -82,7 +83,7 @@ def main(exe, output):
         pngs = {}
         for side, ico in icons.items():
             path = os.path.join(work, f'{side}.ico')
-            open(path, 'wb').write(ico)
+            pathlib.Path(path).write_bytes(ico)
             pngs[side] = os.path.join(work, f'{side}.png')
             run('sips', '-s', 'format', 'png', path, '--out', pngs[side])
         iconset = os.path.join(work, 'App.iconset')

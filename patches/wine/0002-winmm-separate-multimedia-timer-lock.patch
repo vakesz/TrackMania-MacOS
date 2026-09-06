@@ -1,3 +1,13 @@
+Subject: winmm: Give the multimedia timer thread its own lock.
+
+The timer service thread held the shared WINMM_cs across its callback and its
+condition-variable wait, so a callback that re-entered winmm could contend for
+that lock or deadlock during startup. Move the timer state under a dedicated
+TIME_cs and release only that lock around the callback.
+
+Based on Wine 36b6a2cf679. Exercised by the audio and wait-handling probes
+(make smoke).
+
 diff --git a/dlls/winmm/time.c b/dlls/winmm/time.c
 index e03bbac34c6..e2b8bace5a2 100644
 --- a/dlls/winmm/time.c

@@ -11,7 +11,7 @@ order to the exact revisions in `config/sources.json`.
 | Wine 0006 | Accept legacy HLSL function targets used by TMNF materials | Shader probes |
 | Wine 0007 | Honor the legacy D3DX compiler flag | Shader probes and visual material check |
 | Wine 0008 | Start x87sidecar through a cooperative per-process handshake | 32-bit and 64-bit precision probes |
-| Wine 0009 | Report no CoreAudio capture devices, so the game never opens a microphone | Audio probes |
+| Wine 0009 | Disable audio capture on macOS, so the game never opens a microphone | Audio probes |
 | D9VK 0001 and 0002 | Build this MoltenVK-compatible fork with current MinGW headers | Source build |
 | MoltenVK 0001 | Reuse the dependency sources supplied in a source release | Source archive preparation |
 | x87sidecar 0001 | Honor x87 precision-control and rounding modes, including 24-bit arithmetic | Arithmetic, host-state and translation-mode probes |
@@ -79,6 +79,14 @@ peer-to-peer firewall test, followed by the account screen. Both are the
 game's normal first-run behavior and are remembered in the SystemConfig.
 Windows opened by the game are ordinary macOS windows; check behind other
 windows if a launch seems silent.
+
+By default the launcher runs the game directly, so it uses the display mode set
+in TrackMania Settings (fullscreen or windowed, at the chosen resolution).
+`MACTMNF_WINDOW_SIZE=WxH` instead runs it inside an explorer virtual desktop of
+that size; the desktop's title bar shrinks the drawable below the requested
+height, which clips the bottom of the game's fixed-size menu, so the direct
+launch is the default. Fullscreen uses the primary display; on multiple monitors
+set the game's resolution to the primary's.
 
 The two apps carry TMNF's own icon, extracted at install time from the
 installed `TmForever.exe` by `lib/app_icon.py` using only sips and iconutil.

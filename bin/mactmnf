@@ -27,26 +27,44 @@ Commands:
 EOF
 }
 
-# Once the launched game (or the settings launcher) process has exited, make
-# sure nothing keeps the prefix alive. A process that fails to shut down under
-# Rosetta would otherwise leave the explorer virtual desktop on screen as a
-# black window. Match the game process only, never the explorer wrapper whose
-# command line also names the executable.
-game_exit_watchdog() {
-  local watch="$1"
-  local server_bin="$2"
-  local prefix="$3"
+# Run the game, then stop the prefix once its own process exits. A process that
+# fails to shut down under Rosetta would otherwise keep the explorer virtual
+# desktop on screen as a black window. A normal quit is a success even though
+# the teardown ends the foreground process; only a failure to start is reported
+# as an error, so the app does not show a spurious "could not start" alert.
+# Match the game process only, never the explorer wrapper whose command line
+# also names the executable.
+supervise_game() {
+  local wine_pid="$1"
+  local watch="$2"
+  local server_bin="$3"
+  local prefix="$4"
   local waited=0
+  local status=0
 
+  # Wait for the game's own process to appear. If the launcher exits first, the
+  # game never started: report its exit status so the app surfaces the failure.
   until pgrep -fl "$watch" 2>/dev/null | grep -qv explorer; do
+    if ! kill -0 "$wine_pid" 2>/dev/null; then
+      wait "$wine_pid" 2>/dev/null || status=$?
+      return "$status"
+    fi
     waited=$((waited + 1))
-    test "$waited" -lt 300 || return 0
+    if test "$waited" -ge 300; then
+      wait "$wine_pid" 2>/dev/null || status=$?
+      return "$status"
+    fi
     sleep 1
   done
+  # The game is running; wait for it to exit (a normal quit or a crash).
   while pgrep -fl "$watch" 2>/dev/null | grep -qv explorer; do
     sleep 2
   done
+  # Tear the prefix down so explorer and any straggler cannot linger, then treat
+  # the run as successful regardless of how the foreground process ended.
   env WINEPREFIX="$prefix" WINEDEBUG=-all "$server_bin" -k >/dev/null 2>&1 || true
+  wait "$wine_pid" 2>/dev/null || true
+  return 0
 }
 
 play_target() {
@@ -77,19 +95,35 @@ play_target() {
   configure_translation
   local server_bin=""
   server_bin="$(wineserver_binary "$wine_bin" 2>/dev/null)" || server_bin=""
+  # A WxH window size runs the game inside an explorer virtual desktop; any other
+  # value (the default "fullscreen") launches it directly so it uses its own
+  # display mode. The virtual desktop's title bar otherwise shrinks the drawable
+  # and clips the game's fixed-size menu along the bottom edge.
+  local desktop=()
+  case "$MACTMNF_WINDOW_SIZE" in
+    *[0-9]x[0-9]*) desktop=(explorer "/desktop=TMNF,${MACTMNF_WINDOW_SIZE}") ;;
+  esac
   cd "$GAME_DIR"
-  # Tear the prefix down once the game exits, so a process that lingers under
-  # Rosetta cannot leave the explorer virtual-desktop window (a black window)
-  # up and the app running. The watchdog is orphaned by the exec below.
-  if test -n "$watch" && test -n "$server_bin"; then
-    game_exit_watchdog "$watch" "$server_bin" "$MACTMNF_PREFIX" &
+  # Without a wineserver to tear the prefix down (for example the test harness),
+  # run the game directly.
+  if test -z "$watch" || test -z "$server_bin"; then
+    exec env \
+      WINEPREFIX="$MACTMNF_PREFIX" \
+      WINEDEBUG="${WINEDEBUG:--all}" \
+      WINEDLLOVERRIDES="$overrides" \
+      "${renderer_vars[@]}" \
+      "$wine_bin" ${desktop[@]+"${desktop[@]}"} "$executable" "$@"
   fi
-  exec env \
+  # Run the game in the background and supervise it, so the prefix is torn down
+  # once the game exits (no lingering black window) while a normal quit still
+  # reports success.
+  env \
     WINEPREFIX="$MACTMNF_PREFIX" \
     WINEDEBUG="${WINEDEBUG:--all}" \
     WINEDLLOVERRIDES="$overrides" \
     "${renderer_vars[@]}" \
-    "$wine_bin" explorer "/desktop=TMNF,${MACTMNF_WINDOW_SIZE}" "$executable" "$@"
+    "$wine_bin" ${desktop[@]+"${desktop[@]}"} "$executable" "$@" &
+  supervise_game "$!" "$watch" "$server_bin" "$MACTMNF_PREFIX"
 }
 
 install_d9vk() {

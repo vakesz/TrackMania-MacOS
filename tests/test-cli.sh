@@ -88,6 +88,16 @@ grep -Fq 'rounding=0,0' "$CALL_LOG"
 grep -Fq "dxvk_conf=${PROJECT_DIR}/config/dxvk.conf" "$CALL_LOG"
 # ddraw's wined3d adapter stays off OpenGL while D9VK renders.
 grep -Fq 'd3d_config=renderer=gdi' "$CALL_LOG"
+# The default (fullscreen) launches the game directly, with no explorer desktop.
+grep -Fq "<${FAKE_GAME}/TmForever.exe></test-argument>" "$CALL_LOG"
+if grep -Fq '<explorer>' "$CALL_LOG"; then
+  echo 'fullscreen must not wrap the game in an explorer desktop' >&2
+  exit 1
+fi
+
+# A WxH window size runs the game inside an explorer virtual desktop.
+: >"$CALL_LOG"
+MACTMNF_WINDOW_SIZE=1280x720 "${PROJECT_DIR}/bin/mactmnf" play-vanilla /test-argument
 grep -Fq "<explorer></desktop=TMNF,1280x720><${FAKE_GAME}/TmForever.exe></test-argument>" "$CALL_LOG"
 
 : >"$CALL_LOG"
@@ -122,7 +132,7 @@ printf '%s\n' "$doctor_output" | grep -q 'D9VK: installed in the prefix'
 : >"$CALL_LOG"
 "${PROJECT_DIR}/bin/mactmnf" configure
 grep -Fq '<reg><add><HKCU\Software\Wine\AppDefaults\TmForeverLauncher.exe\Direct3D>' "$CALL_LOG"
-grep -Fq "<explorer></desktop=TMNF,1280x720><${FAKE_GAME}/TmForeverLauncher.exe>" "$CALL_LOG"
+grep -Fq "<${FAKE_GAME}/TmForeverLauncher.exe>" "$CALL_LOG"
 # The launcher and its benchmark run with the game's renderer and translator.
 grep -Fq 'overrides=d3d9=n;d3dx9_30,d3dx9_43,wined3d=b' "$CALL_LOG"
 grep -Fq "sidecar=${MACTMNF_SIDECAR}" "$CALL_LOG"

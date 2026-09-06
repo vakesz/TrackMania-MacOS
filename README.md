@@ -109,9 +109,15 @@ Rosetta version; its compatibility probe must pass. See
 | `./bin/mactmnf play-vanilla` | Run the official game without Competition Patch |
 | `./bin/mactmnf uninstall` | Remove the Wine prefix after confirmation |
 
-A new installation starts at 1280×720 with Nice shaders, post-processing and
-stadium water geometry disabled, four game threads and at most six opponents.
-Existing settings are preserved. Use the Settings app to adjust them.
+A new installation starts with Nice shaders, post-processing and stadium water
+geometry disabled, four game threads and at most six opponents. Existing
+settings are preserved. Use the Settings app to adjust them.
+
+The game runs in the display mode it is set to in **TrackMania Settings**
+(fullscreen or windowed, at the resolution you pick). On more than one monitor,
+fullscreen uses the primary display, so set the resolution to match it. To force
+a fixed windowed size instead, set `MACTMNF_WINDOW_SIZE=1280x720` (any `WxH`);
+that runs the game inside a Wine virtual desktop of that size.
 
 The renderer keeps a shader cache between launches. A first visit to a track can
 still stutter. The patches improve specific problems; they do not guarantee a

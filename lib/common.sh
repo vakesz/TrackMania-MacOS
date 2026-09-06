@@ -44,7 +44,12 @@ fi
 : "${MACTMNF_APP:=${MACTMNF_APPS_DIR}/TrackMania Nations Forever.app}"
 : "${MACTMNF_SETTINGS_APP:=$(dirname "$MACTMNF_APP")/TrackMania Settings.app}"
 : "${MACTMNF_LAUNCHER:=${MACTMNF_SUPPORT}/launcher}"
-: "${MACTMNF_WINDOW_SIZE:=1280x720}"
+# "fullscreen" (the default) launches the game directly so it uses its own
+# display mode, set in TrackMania Settings. A WxH value instead runs it inside
+# an explorer virtual desktop of that size, whose title bar shrinks the drawable
+# and clips the game's fixed-size menu, so use it only when a fixed window is
+# wanted.
+: "${MACTMNF_WINDOW_SIZE:=fullscreen}"
 : "${MACTMNF_AUDIO:=on}"
 : "${MACTMNF_X87:=on}"
 : "${MACTMNF_PREFIX:=${MACTMNF_ROOT}/prefix}"

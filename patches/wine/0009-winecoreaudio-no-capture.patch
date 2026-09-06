@@ -1,16 +1,17 @@
-Subject: winecoreaudio: Report no capture devices on macOS.
+Subject: winecoreaudio: Disable audio capture on macOS.
 
-TrackMania only plays audio, but mmdevapi still enumerates the default capture
-endpoint at startup and opens a microphone AudioUnit to probe it, which makes
-macOS prompt for microphone access the game never uses. Return an empty capture
-device list, so no capture client and no microphone AudioUnit is ever created.
-Playback is unchanged.
+TrackMania only plays audio, but Wine's CoreAudio driver opens an input-enabled
+AudioUnit while probing or opening the default capture device, which makes macOS
+prompt for microphone access the game never uses. Report no capture devices from
+the endpoint enumeration, and refuse capture units in get_audiounit(), the one
+place input I/O is enabled, so no path can reach the microphone. Playback is
+unchanged.
 
 Based on Wine 36b6a2cf679. Exercised by the audio probes (make smoke-audio),
 which enumerate and play render devices only.
 
 diff --git a/dlls/winecoreaudio.drv/coreaudio.c b/dlls/winecoreaudio.drv/coreaudio.c
-index 0ec10fe..d2f6e23 100644
+index 0ec10fe..4eb01c4 100644
 --- a/dlls/winecoreaudio.drv/coreaudio.c
 +++ b/dlls/winecoreaudio.drv/coreaudio.c
 @@ -221,7 +221,13 @@ static NTSTATUS unix_get_endpoint_ids(void *args)
@@ -28,3 +29,27 @@ index 0ec10fe..d2f6e23 100644
      else{
          params->result = E_INVALIDARG;
          return STATUS_SUCCESS;
+@@ -482,6 +488,12 @@ static AudioComponentInstance get_audiounit(EDataFlow dataflow, AudioDeviceID ad
+     AudioComponentDescription desc;
+     OSStatus sc;
+ 
++    /* This runtime never records audio. Refusing capture units here is the one
++     * choke point that keeps Wine from opening a microphone AudioUnit through
++     * any path, so macOS never prompts for microphone access. */
++    if(dataflow == eCapture)
++        return NULL;
++
+     memset(&desc, 0, sizeof(desc));
+     desc.componentType = kAudioUnitType_Output;
+     desc.componentSubType = kAudioUnitSubType_HALOutput;
+@@ -1187,6 +1199,10 @@ static NTSTATUS unix_is_format_supported(void *args)
+     const AudioDeviceID dev_id = dev_id_from_device(params->device);
+ 
+     unit = get_audiounit(params->flow, dev_id);
++    if(!unit){
++        params->result = AUDCLNT_E_UNSUPPORTED_FORMAT;
++        return STATUS_SUCCESS;
++    }
+ 
+     converter = NULL;
+     params->result = ca_setup_audiounit(params->flow, unit, params->fmt_in, &dev_desc, &converter);

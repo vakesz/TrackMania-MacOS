@@ -25,6 +25,9 @@ write_app() {
   <key>CFBundleExecutable</key><string>MacTMNF</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleIdentifier</key><string>${identifier}</string>
+  <!-- The wrapper only launches and supervises Wine; Wine shows the game's own
+       Dock tile. Hiding the wrapper's tile leaves a single icon in the Dock. -->
+  <key>LSUIElement</key><true/>
   <key>CFBundleName</key><string>${name}</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${MACTMNF_VERSION}</string>

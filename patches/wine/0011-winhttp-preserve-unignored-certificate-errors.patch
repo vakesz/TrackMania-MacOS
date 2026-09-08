@@ -1,0 +1,174 @@
+Subject: winhttp: Preserve unignored certificate errors and isolate pooled policies.
+
+Based on Wine 36b6a2cf679fb395f668a917b76537190e212d9c, after 0010.
+
+Mask only the categories explicitly ignored by the request before choosing an
+error. Keep the original certificate chain intact for SSL policy and callers.
+Initialize policy status and fail closed when policy evaluation itself fails.
+
+Do not delegate all checks to this revision's Crypt32 verify_ssl_policy: it does
+not reject partial chains or every unsupported trust bit that WinHTTP rejects.
+It does honor fdwChecks for date, unknown CA, wrong usage and hostname checks.
+The values match Microsoft's HTTPSPolicyCallbackData documentation:
+https://learn.microsoft.com/en-us/windows/win32/api/wincrypt/ns-wincrypt-httpspolicycallbackdata
+WinHTTP does not accept the SSL policy's IGNORE_REVOCATION option. Keep that
+restriction and its existing default revocation behavior unchanged.
+
+Record the successful connection's validation flags and revocation policy.
+Discard a retained or pooled secure connection when either differs from the
+request. Equal-policy keepalive remains available. The private structure change
+requires rebuilding every WinHTTP source, not merely net.c and request.c.
+
+If the final server certificate lookup fails, clear request->netconn before
+releasing the connection so request cleanup cannot release a dangling pointer.
+
+diff --git a/dlls/winhttp/net.c b/dlls/winhttp/net.c
+--- a/dlls/winhttp/net.c
++++ b/dlls/winhttp/net.c
+@@ -102,54 +102,31 @@
+     if (ret)
+     {
+-        if (chain->TrustStatus.dwErrorStatus)
+-        {
+-            static const DWORD supportedErrors =
+-                CERT_TRUST_IS_NOT_TIME_VALID |
+-                CERT_TRUST_IS_UNTRUSTED_ROOT |
+-                CERT_TRUST_IS_NOT_VALID_FOR_USAGE;
+-
+-            if (chain->TrustStatus.dwErrorStatus & CERT_TRUST_IS_NOT_TIME_VALID)
+-            {
+-                if (!(security_flags & SECURITY_FLAG_IGNORE_CERT_DATE_INVALID))
+-                    err = ERROR_WINHTTP_SECURE_CERT_DATE_INVALID;
+-            }
+-            else if ((chain->TrustStatus.dwErrorStatus &
+-                      CERT_TRUST_IS_UNTRUSTED_ROOT) ||
+-                     (chain->TrustStatus.dwErrorStatus &
+-                      CERT_TRUST_IS_PARTIAL_CHAIN))
+-            {
+-                if (!(security_flags & SECURITY_FLAG_IGNORE_UNKNOWN_CA))
+-                    err = ERROR_WINHTTP_SECURE_INVALID_CA;
+-            }
+-            else if ((chain->TrustStatus.dwErrorStatus &
+-                      CERT_TRUST_IS_OFFLINE_REVOCATION) ||
+-                     (chain->TrustStatus.dwErrorStatus &
+-                      CERT_TRUST_REVOCATION_STATUS_UNKNOWN))
+-                err = ERROR_WINHTTP_SECURE_CERT_REV_FAILED;
+-            else if (chain->TrustStatus.dwErrorStatus & CERT_TRUST_IS_REVOKED)
+-                err = ERROR_WINHTTP_SECURE_CERT_REVOKED;
+-            else if (chain->TrustStatus.dwErrorStatus &
+-                CERT_TRUST_IS_NOT_VALID_FOR_USAGE)
+-            {
+-                if (!(security_flags & SECURITY_FLAG_IGNORE_CERT_WRONG_USAGE))
+-                    err = ERROR_WINHTTP_SECURE_CERT_WRONG_USAGE;
+-            }
+-            else if (chain->TrustStatus.dwErrorStatus & ~supportedErrors)
+-                err = ERROR_WINHTTP_SECURE_INVALID_CERT;
+-        }
++        DWORD errors = chain->TrustStatus.dwErrorStatus;
++
++        if (security_flags & SECURITY_FLAG_IGNORE_CERT_DATE_INVALID)
++            errors &= ~CERT_TRUST_IS_NOT_TIME_VALID;
++        if (security_flags & SECURITY_FLAG_IGNORE_UNKNOWN_CA)
++            errors &= ~(CERT_TRUST_IS_UNTRUSTED_ROOT | CERT_TRUST_IS_PARTIAL_CHAIN);
++        if (security_flags & SECURITY_FLAG_IGNORE_CERT_WRONG_USAGE)
++            errors &= ~CERT_TRUST_IS_NOT_VALID_FOR_USAGE;
++
++        if (errors & CERT_TRUST_IS_NOT_TIME_VALID)
++            err = ERROR_WINHTTP_SECURE_CERT_DATE_INVALID;
++        else if (errors & (CERT_TRUST_IS_UNTRUSTED_ROOT | CERT_TRUST_IS_PARTIAL_CHAIN))
++            err = ERROR_WINHTTP_SECURE_INVALID_CA;
++        else if (errors & (CERT_TRUST_IS_OFFLINE_REVOCATION | CERT_TRUST_REVOCATION_STATUS_UNKNOWN))
++            err = ERROR_WINHTTP_SECURE_CERT_REV_FAILED;
++        else if (errors & CERT_TRUST_IS_REVOKED)
++            err = ERROR_WINHTTP_SECURE_CERT_REVOKED;
++        else if (errors & CERT_TRUST_IS_NOT_VALID_FOR_USAGE)
++            err = ERROR_WINHTTP_SECURE_CERT_WRONG_USAGE;
++        else if (errors)
++            err = ERROR_WINHTTP_SECURE_INVALID_CERT;
+         if (!err)
+         {
+             CERT_CHAIN_POLICY_PARA policyPara;
+             SSL_EXTRA_CERT_CHAIN_POLICY_PARA sslExtraPolicyPara;
+-            CERT_CHAIN_POLICY_STATUS policyStatus;
+-            CERT_CHAIN_CONTEXT chainCopy;
+-
+-            /* Clear chain->TrustStatus.dwErrorStatus so
+-             * CertVerifyCertificateChainPolicy will verify additional checks
+-             * rather than stopping with an existing, ignored error.
+-             */
+-            memcpy(&chainCopy, chain, sizeof(chainCopy));
+-            chainCopy.TrustStatus.dwErrorStatus = 0;
++            CERT_CHAIN_POLICY_STATUS policyStatus = { sizeof(policyStatus) };
+             sslExtraPolicyPara.cbSize = sizeof(sslExtraPolicyPara);
+             sslExtraPolicyPara.dwAuthType = AUTHTYPE_SERVER;
+             sslExtraPolicyPara.pwszServerName = server;
+@@ -158,12 +135,14 @@
+             policyPara.dwFlags = 0;
+             policyPara.pvExtraPolicyPara = &sslExtraPolicyPara;
+             ret = CertVerifyCertificateChainPolicy( CERT_CHAIN_POLICY_SSL,
+-                                                    &chainCopy, &policyPara,
++                                                    chain, &policyPara,
+                                                     &policyStatus );
+             /* Any error in the policy status indicates that the
+              * policy couldn't be verified.
+              */
+-            if (ret && policyStatus.dwError)
++            if (!ret)
++                err = ERROR_WINHTTP_SECURE_INVALID_CERT;
++            else if (policyStatus.dwError)
+             {
+                 if (policyStatus.dwError == CERT_E_CN_NO_MATCH)
+                     err = ERROR_WINHTTP_SECURE_CERT_CN_INVALID;
+@@ -447,3 +426,5 @@
+     conn->secure = TRUE;
++    conn->security_flags = security_flags;
++    conn->check_revocation = check_revocation;
+     conn->ssl_ctx = ctx;
+     return ERROR_SUCCESS;
+diff --git a/dlls/winhttp/winhttp_private.h b/dlls/winhttp/winhttp_private.h
+--- a/dlls/winhttp/winhttp_private.h
++++ b/dlls/winhttp/winhttp_private.h
+@@ -109,3 +109,5 @@
+     BOOL secure; /* SSL active on connection? */
++    DWORD security_flags;
++    BOOL check_revocation;
+     struct hostdata *host;
+     ULONGLONG keep_until;
+diff --git a/dlls/winhttp/request.c b/dlls/winhttp/request.c
+--- a/dlls/winhttp/request.c
++++ b/dlls/winhttp/request.c
+@@ -2045,6 +2045,13 @@
+     INTERNET_PORT port;
+     DWORD ret, len;
+ 
++    if (request->netconn && is_secure &&
++        (request->netconn->security_flags != request->security_flags ||
++         request->netconn->check_revocation != request->check_revocation))
++    {
++        netconn_release( request->netconn );
++        request->netconn = NULL;
++    }
+     if (request->netconn) goto done;
+ 
+     connect = request->connect;
+@@ -2097,8 +2104,10 @@
+         LeaveCriticalSection( &connection_pool_cs );
+         if (!netconn) break;
+ 
+-        if (netconn_is_alive( netconn )) break;
+-        TRACE("connection %p no longer alive, closing\n", netconn);
++        if ((!is_secure || (netconn->security_flags == request->security_flags &&
++                            netconn->check_revocation == request->check_revocation)) &&
++            netconn_is_alive( netconn )) break;
++        TRACE("connection %p dead or validation policy changed, closing\n", netconn);
+         netconn_release( netconn );
+         netconn = NULL;
+     }
+@@ -2209,6 +2218,7 @@
+     if (netconn->secure && !(request->server_cert = netconn_get_certificate( netconn )))
+     {
+         free( addressW );
++        request->netconn = NULL;
+         netconn_release( netconn );
+         return ERROR_WINHTTP_SECURE_FAILURE;
+     }

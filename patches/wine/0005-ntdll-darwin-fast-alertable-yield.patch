@@ -1,25 +1,31 @@
 Subject: ntdll, server: Avoid Darwin server round trips for empty alertable yields.
 
 TMNF repeatedly calls SleepEx(0, TRUE). Publish APC readiness through a
-server-owned pipe and test it locally with select(), preserving yielding.
-Pending APCs, finite waits, descriptor errors and unsupported descriptor
-numbers retain the normal server path. The existing alert-fd request and
+server-owned pipe and test it locally with poll(), preserving yielding.
+Pending APCs, finite waits and descriptor errors retain the normal server
+path. The existing alert-fd request and
 client descriptor lifetime are reused; there is no protocol change.
 
 The pipe tracks both user and system APC queues, including cancellation.
 Only the server consumes its notification byte. Closing a failed pipe
 makes the client fall back on EOF instead of overlooking pending work.
 Set WINEDARWINFASTWAIT=0 in the client environment to compare the old path.
+Failed acquisition disables this optional shortcut for the thread lifetime.
+EOF (POLLHUP), POLLNVAL and EBADF also disable it without closing or clearing
+the cached descriptor; existing thread cleanup still owns it. Other poll
+errors, including EINTR, fall back for this call only. Disabled threads skip
+acquisition, polling and the extra fast-path yield on subsequent calls.
+The environment check remains per-call; process-init caching and performance
+measurement are deferred.
 
-Based on Wine dfa96293478. Regression and timing probe:
-  WINEDARWINFASTWAIT=0 make smoke-sync
-  WINEDARWINFASTWAIT=1 make smoke-sync
+Based on Wine 36b6a2cf679fb395f668a917b76537190e212d9c. Regression and timing probe:
+  WINEDARWINFASTWAIT=0 ./tools/smoke-sync.sh
+  WINEDARWINFASTWAIT=1 ./tools/smoke-sync.sh
 
 diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
-index 0127a053013..453c0b5c797 100644
 --- a/dlls/ntdll/unix/sync.c
 +++ b/dlls/ntdll/unix/sync.c
-@@ -2420,6 +2420,31 @@ NTSTATUS WINAPI NtDelayExecution( BOOLEAN alertable, const LARGE_INTEGER *timeou
+@@ -2420,6 +2420,35 @@ NTSTATUS WINAPI NtDelayExecution( BOOLEAN alertable, const LARGE_INTEGER *timeou
  {
      unsigned int status = STATUS_SUCCESS;
  
@@ -27,22 +33,26 @@ index 0127a053013..453c0b5c797 100644
 +     * Darwin exposes an APC notification pipe through get_inproc_alert_fd();
 +     * the server owns its contents, so test readability without consuming the byte. */
 +#ifdef __APPLE__
-+    if (alertable && timeout && !timeout->QuadPart)
++    if (alertable && timeout && !timeout->QuadPart && !get_thread_data()->fast_wait_disabled)
 +    {
 +        const char *fast_wait = getenv( "WINEDARWINFASTWAIT" );
 +        if (!fast_wait || strcmp( fast_wait, "0" ))
 +        {
 +            int fd = get_inproc_alert_fd();
-+            if (fd >= 0 && fd < FD_SETSIZE)
++            if (fd < 0) get_thread_data()->fast_wait_disabled = TRUE;
++            else
 +            {
-+                fd_set read_fds;
-+                struct timeval tv = {0};
++                struct pollfd pfd = { fd, POLLIN, 0 };
++                int ret;
 +
-+                FD_ZERO( &read_fds );
-+                FD_SET( fd, &read_fds );
 +                NtYieldExecution();
-+                if (!select( fd + 1, &read_fds, NULL, NULL, &tv )) return STATUS_SUCCESS;
-+                /* Readiness, EOF, and errors all use the ordinary APC path. */
++                ret = poll( &pfd, 1, 0 );
++                if (!ret) return STATUS_SUCCESS;
++                if ((ret < 0 && errno == EBADF) ||
++                    (ret > 0 && (pfd.revents & (POLLHUP | POLLNVAL))))
++                    get_thread_data()->fast_wait_disabled = TRUE;
++                /* Do not consume the server byte, close its descriptor, or
++                 * permanently disable the shortcut on transient poll errors. */
 +            }
 +        }
 +    }
@@ -51,6 +61,32 @@ index 0127a053013..453c0b5c797 100644
      /* if alertable, we need to query the server */
      if (alertable)
      {
+diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+--- a/dlls/ntdll/unix/unix_private.h
++++ b/dlls/ntdll/unix/unix_private.h
+@@ -107,6 +107,9 @@ struct thread_data
+     int          reply_fd;          /* fd for receiving server replies */
+     int          wait_fd[2];        /* fd for sleeping server requests */
+     int          alert_fd;          /* inproc sync fd for user apc alerts */
++#ifdef __APPLE__
++    BOOL         fast_wait_disabled; /* failed Darwin zero-time APC shortcut */
++#endif
+     DWORD        tid;               /* thread id */
+     BOOL         allow_writes;      /* ThreadAllowWrites flags */
+     BOOL         suspend;           /* suspend on startup */
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -4172,6 +4172,9 @@ struct thread_data *virtual_alloc_thread_data(void)
+         data->wait_fd[0] = -1;
+         data->wait_fd[1] = -1;
+         data->alert_fd   = -1;
++#ifdef __APPLE__
++        data->fast_wait_disabled = FALSE;
++#endif
+ #ifdef VALGRIND_STACK_REGISTER
+         VALGRIND_STACK_REGISTER( (char *)data + signal_stack_mask + 1, (char *)data + view->size );
+ #endif
 diff --git a/server/thread.c b/server/thread.c
 index bdf48c4bf8f..4896a510c13 100644
 --- a/server/thread.c

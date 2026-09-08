@@ -42,6 +42,12 @@ its checksum, installs the game and creates two apps:
 Save and close the settings launcher, then use the game app to play with
 Competition Patch.
 
+The session supervisor tracks both settings and game executables, so a launcher
+exit alone does not authorize cleanup. Normal quits are quiet; failed or
+uncertain sessions show an alert with the log location. Uncertainty does not
+authorize killing a game that may still be running. Use `make stop` when you
+explicitly want to stop the selected prefix.
+
 On the first launch the game shows its own "Network check" dialog for the
 peer-to-peer firewall test; click OK. The account screen follows. A launch
 takes a while to show a window; the game's windows may open behind others.
@@ -54,7 +60,8 @@ To install from an archive you already downloaded instead, point the installer
 at it and give the checksum from the release:
 
 ```sh
-MACTMNF_RUNTIME_ARCHIVE="$HOME/Downloads/mactmnf-0.1.0-runtime.tar.xz" \
+version="$(cat VERSION)"
+MACTMNF_RUNTIME_ARCHIVE="$HOME/Downloads/mactmnf-${version}-runtime.tar.xz" \
 MACTMNF_RUNTIME_SHA256="<checksum from the release>" make install
 ```
 
@@ -62,7 +69,8 @@ If macOS refuses to open the game after a manual download, the archive picked up
 a quarantine flag in the browser. Clear it, then install:
 
 ```sh
-xattr -dr com.apple.quarantine "$HOME/Downloads/mactmnf-0.1.0-runtime.tar.xz"
+version="$(cat VERSION)"
+xattr -dr com.apple.quarantine "$HOME/Downloads/mactmnf-${version}-runtime.tar.xz"
 ```
 
 Archives that `make install` fetches with `curl` are not quarantined, so this
@@ -90,8 +98,8 @@ It does not require another Wine installation or a separate source checkout.
 
 The complete runtime is written to `.build/release/runtime`. Downloads, sources,
 build logs and intermediate files stay under `.build`. Allow several gigabytes
-of disk space and a substantial first build. Builds use three compiler jobs by
-default; use `MACTMNF_JOBS=6 make build` to change that.
+of disk space and a substantial first build. Builds use every CPU core by
+default; use `MACTMNF_JOBS=4 make build` to leave some free.
 
 The deployment target is macOS 14. x87sidecar also depends on the installed
 Rosetta version; its compatibility probe must pass. See
@@ -117,7 +125,8 @@ The game runs in the display mode it is set to in **TrackMania Settings**
 (fullscreen or windowed, at the resolution you pick). On more than one monitor,
 fullscreen uses the primary display, so set the resolution to match it. To force
 a fixed windowed size instead, set `MACTMNF_WINDOW_SIZE=1280x720` (any `WxH`);
-that runs the game inside a Wine virtual desktop of that size.
+that runs the game inside a separate Wine virtual desktop for this session.
+Each dimension must be between 1 and 65535.
 
 The renderer keeps a shader cache between launches. A first visit to a track can
 still stutter. The patches improve specific problems; they do not guarantee a
@@ -147,6 +156,10 @@ MACTMNF_APPS_DIR="$HOME/Applications" make install
 The apps remember these installation paths. When using commands from the
 checkout with a custom game folder, keep the same environment variables set.
 
+App logs rotate before launch when they reach 2 MiB, retaining three numbered
+backups. A currently running verbose session can exceed that size because game
+output goes directly to a file, not a pipe that could interrupt a surviving game.
+
 For a diagnostic comparison, `MACTMNF_X87=off make play` uses stock Rosetta math.
 `MACTMNF_AUDIO=off make play` disables sound. Normal installs enable both audio
 and the patched translator. These temporary overrides do not change saved game
@@ -155,8 +168,12 @@ settings.
 ## Development
 
 `make check` runs shell checks and offline tests. `make smoke` runs Windows
-regression probes against the selected Wine prefix. `make package` creates the
-runtime archive, matching source archive, and SHA-256 files for a release.
+regression probes against the selected Wine prefix, not an isolated test prefix.
+It needs an installed runtime and initialized prefix, Rosetta 2, Python 3, both
+32-bit and 64-bit MinGW-w64 C compilers, and network access for the HTTPS probe.
+Close the game and Settings app first; audio checks need a working output device.
+`make package` creates the runtime archive, matching source archive, and SHA-256
+files for a release.
 See [docs/building.md](docs/building.md) before distributing them.
 
 This project's own scripts and tests use the MIT license. Patches and bundled third-party

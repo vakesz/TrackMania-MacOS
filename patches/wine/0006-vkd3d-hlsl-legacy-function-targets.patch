@@ -7,9 +7,14 @@ ranking takes precedence. Preserve errors for qualifiers outside functions
 and for modern compiler versions. Reset the current function after parsing
 it so global initializers use the compilation target.
 
+Effect compile expressions pass their explicit target to the lookup rather
+than selecting against fx_2_0. This argument never changes the context or
+the target used while parsing another function's body. The effect probe
+reflects native SDK output; Wine FX2 shader-state emission remains unsupported.
+
 Based on Wine 36b6a2cf679. Native SDKs 30 and 36 establish the expected
 success/failure and executable shader output. SDKs 37 and 43 verify the
-modern behavior. Run make smoke-shaders for both architectures.
+modern behavior. Run ./tools/smoke-shaders.sh for both architectures.
 
 diff --git a/libs/vkd3d/include/vkd3d_shader.h b/libs/vkd3d/include/vkd3d_shader.h
 index dcfdd16c503..86b106d0246 100644
@@ -155,11 +160,17 @@ index 0f9a5ac89fb..2c7f7906758 100644
  static uint32_t add_modifiers(struct hlsl_ctx *ctx, uint32_t modifiers, uint32_t mod,
          const struct vkd3d_shader_location *loc)
  {
-@@ -2995,6 +3014,8 @@ static struct hlsl_ir_function_decl *find_function_call(struct hlsl_ctx *ctx,
+@@ -2990,11 +3009,13 @@
+ static struct hlsl_ir_function_decl *find_function_call(struct hlsl_ctx *ctx,
+-        const char *name, const struct parse_initializer *args, bool is_compile,
++        const char *name, const struct parse_initializer *args, const char *profile_name,
+         const struct vkd3d_shader_location *loc)
+ {
+     struct hlsl_ir_function_decl *decl;
      struct vkd3d_string_buffer *s;
      struct hlsl_ir_function *func;
      struct rb_entry *entry;
-+    const char *profile = ctx->profile->name;
++    const char *profile = profile_name ? profile_name : ctx->profile->name;
 +    unsigned int score;
      int compare;
      size_t i;
@@ -168,7 +179,7 @@ index 0f9a5ac89fb..2c7f7906758 100644
          return NULL;
      func = RB_ENTRY_VALUE(entry, struct hlsl_ir_function, entry);
  
-+    if (ctx->cur_function && ctx->cur_function->profile
++    if (!profile_name && ctx->cur_function && ctx->cur_function->profile
 +            && strcmp(ctx->cur_function->profile, "vs") && strcmp(ctx->cur_function->profile, "ps"))
 +        profile = ctx->cur_function->profile;
 +
@@ -176,7 +187,8 @@ index 0f9a5ac89fb..2c7f7906758 100644
      {
 +        if (!(score = hlsl_function_profile_score(decl, profile)))
 +            continue;
-         if (!func_is_compatible_match(ctx, decl, is_compile, args))
+-        if (!func_is_compatible_match(ctx, decl, is_compile, args))
++        if (!func_is_compatible_match(ctx, decl, !!profile_name, args))
              continue;
  
          if (candidates.count)
@@ -187,6 +199,18 @@ index 0f9a5ac89fb..2c7f7906758 100644
  
              /* The candidate is worse; skip it. */
              if (compare < 0)
+@@ -5695,4 +5724,4 @@
+-    if ((decl = find_function_call(ctx, name, args, false, loc)))
++    if ((decl = find_function_call(ctx, name, args, NULL, loc)))
+     {
+         if (!add_user_call(ctx, decl, args, loc))
+             goto fail;
+@@ -5769,4 +5798,4 @@
+-    if (!(decl = find_function_call(ctx, function_name, args, true, loc)))
++    if (!(decl = find_function_call(ctx, function_name, args, profile_name, loc)))
+     {
+         if (rb_get(&ctx->functions, function_name))
+         {
 @@ -7048,7 +7077,7 @@ static void validate_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim,
      FLOAT floatval;
      bool boolval;

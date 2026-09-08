@@ -6,8 +6,10 @@ correctly.
 
 ## Before you start
 
-- You need an Apple Silicon Mac, macOS 14 or later, and Rosetta 2. Building the
-  runtime also needs the full Xcode app, not just the command line tools.
+- You need an Apple Silicon Mac and Rosetta 2. macOS 14 is the deployment target,
+  not proof of compatibility on every later release. The current tested host is
+  an M1 Pro with macOS 27 and Xcode 27. Building the runtime needs the full Xcode
+  app, not just the command line tools.
 - Read [docs/building.md](../docs/building.md) for the build and release layout,
   and [docs/runtime.md](../docs/runtime.md) for what each patch does.
 - Open an issue before a large change so the approach can be agreed first.
@@ -28,6 +30,14 @@ make install
 make check     # script syntax, shellcheck, offline tests
 make smoke     # runtime probes in the installed prefix
 ```
+
+`make smoke` requires an installed runtime and initialized prefix, Python 3,
+and both MinGW-w64 C compilers on `PATH` (`brew install mingw-w64`). It uses
+the selected prefix, so close the game and Settings app first. The HTTPS check
+requires network access, and audio checks need a working output device. See
+[validation](../docs/building.md#validation) for isolated installation paths and
+the limits of these probes; passing API checks does not replace playing a race,
+checking materials and listening to the game.
 
 - Keep shell scripts shellcheck-clean; CI runs `make check` on every push.
 - A runtime patch goes under `patches/<component>/`. It must apply with

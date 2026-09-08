@@ -1,4 +1,4 @@
-Subject: x87: Honor 24-bit precision in arithmetic and preserve host FP state.
+Subject: x87: Honor PC24/PC53 arithmetic and floating-store rounding.
 
 Based on athei/x87sidecar 4e9c7386d9253e838692c05015de9ae61bd6a11f.
 TMNF uses control word 0x007f. Always computing in f64 ignores its PC field.
@@ -10,6 +10,8 @@ the significand explicitly. Round-to-odd prevents intermediate double
 rounding in nearest mode. Directed modes compose the requested rounding.
 Preserve host FPCR, sticky FPSR flags, guest NZCV, and borrowed registers.
 Update register-pressure estimates for the new temporary requirements.
+FSqrt needs two helper FPRs; binary arithmetic needs three. Model one dying
+input reused by these operations, including identical binary inputs.
 Fix FXCH-prefixed fusions counting the absorbed instruction twice, expiring
 live stack state early after pressure splits. Restore the delegated emitter's
 budget before the dispatcher applies its ticks.
@@ -17,13 +19,50 @@ budget before the dispatcher applies its ticks.
 Add exact-rational arithmetic vectors, precision transitions, SSE state,
 and optional PC24 coverage for integer arithmetic, flags and signal tests.
 FMA contraction remains an explicitly unsafe upstream opt-in and should
-remain disabled for TMNF. Existing non-PC24 arithmetic is unchanged.
+remain disabled for TMNF, as must fast-round.
 
+PC53 and all FST/FSTP m32 paths use guest RC with a scoped FPCR. Host FPCR
+is restored exactly, FPSR retains old and new sticky flags, and NZCV is
+untouched. Host flush/default-NaN/trap settings do not govern these operations.
+This preserves the upstream sticky-host-flags contract, not full x87 SW
+exception reporting or unmasked traps. PC64 still uses upstream's f64
+approximation. Full80 exponent handling and PC24 extreme underflow are not
+addressed here. Store rounding is independent of the precision-control field.
+
+diff --git a/rosetta_core/include/rosetta_core/TranslatorX87Helpers.hpp b/rosetta_core/include/rosetta_core/TranslatorX87Helpers.hpp
+index 127d55e..dcf484b 100644
+--- a/rosetta_core/include/rosetta_core/TranslatorX87Helpers.hpp
++++ b/rosetta_core/include/rosetta_core/TranslatorX87Helpers.hpp
+@@ -33,7 +33,7 @@
+ // =============================================================================
+ // X87State layout constants  (all offsets within X87State, relative to Xbase)
+ //
+-//   X87State (packed, 0x56 bytes)
++//   X87State (packed, 0x48 bytes)
+ //   +0x00  uint16_t  control_word
+ //   +0x02  uint16_t  status_word    ← TOP in bits [13:11]
+ //   +0x04  int16_t   tag_word
+@@ -110,12 +110,11 @@
+ // =============================================================================
+ // 2d — ST(i) byte offset computation
+ //
+-// Computes into Wd_offset: 0x06 + Wd_index * 0x0A
++// Computes into Wd_offset: 0x08 + Wd_index * 0x08
+ //
+-// Emits (multiply-by-10 via shifts):
++// Emits (multiply-by-8 via shift):
+ //   LSL   Wd_offset, Wd_index, #3            ; * 8
+-//   ADD   Wd_offset, Wd_offset, Wd_index, LSL #1  ; + * 2  =  * 10
+-//   ADD   Wd_offset, Wd_offset, #0x06        ; + st[] base offset
++//   ADD   Wd_offset, Wd_offset, #0x08        ; + st[] base offset
+ //
+ // Wd_index and Wd_offset may be the same register.
+ // =============================================================================
 diff --git a/rosetta_core/CMakeLists.txt b/rosetta_core/CMakeLists.txt
 index 868e218..7e16498 100644
 --- a/rosetta_core/CMakeLists.txt
 +++ b/rosetta_core/CMakeLists.txt
-@@ -20,6 +20,7 @@ add_library(rosetta_core STATIC
+@@ -20,6 +20,7 @@
      src/X87Cache.cpp
      src/X87IRBuild.cpp
      src/X87IRLower.cpp
@@ -32,7 +71,7 @@ index 868e218..7e16498 100644
      src/IRInstr.cpp
      src/OpcodeCompatibility.cpp
 diff --git a/rosetta_core/src/TranslatorX87.cpp b/rosetta_core/src/TranslatorX87.cpp
-index d4e1b3b..59524ba 100644
+index d4e1b3b..e5dfded 100644
 --- a/rosetta_core/src/TranslatorX87.cpp
 +++ b/rosetta_core/src/TranslatorX87.cpp
 @@ -1,3 +1,4 @@
@@ -40,7 +79,7 @@ index d4e1b3b..59524ba 100644
  #include "rosetta_core/TranslatorX87.h"
  
  #include <bit>
-@@ -579,7 +580,7 @@ auto translate_fadd(TranslationResult* a1, IRInstr* a2) -> void {
+@@ -579,7 +580,7 @@
          emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, depth_src), Wd_tmp, Dd_src, Xst_base);
          const int Wk = emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, depth_dst), Wd_tmp,
                                      Dd_dst, Xst_base);
@@ -49,7 +88,7 @@ index d4e1b3b..59524ba 100644
          emit_store_st_at_offset(buf, Xbase, Wk, Dd_dst, Xst_base);
      } else {
          // -----------------------------------------------------------------
-@@ -614,7 +615,7 @@ auto translate_fadd(TranslationResult* a1, IRInstr* a2) -> void {
+@@ -614,7 +615,7 @@
          }
  
          // Step 5: add
@@ -58,7 +97,7 @@ index d4e1b3b..59524ba 100644
  
          // Step 6: store back to ST(0).
          // Opt 3: addr_reg is a different free-pool register, so Wd_tmp still
-@@ -668,7 +669,7 @@ auto translate_faddp(TranslationResult* a1, IRInstr* a2) -> void {
+@@ -668,7 +669,7 @@
      emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, 0), Wd_tmp, Dd_src, Xst_base);
      const int Wk3 =
          emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, depth_dst), Wd_tmp, Dd_dst, Xst_base);
@@ -67,7 +106,7 @@ index d4e1b3b..59524ba 100644
      emit_store_st_at_offset(buf, Xbase, Wk3, Dd_dst, Xst_base);
  
      // Pop: TOP = (TOP + 1) & 7.  Wd_tmp is dead after emit_store_st_at_offset,
-@@ -747,9 +748,9 @@ auto translate_fsub(TranslationResult* a1, IRInstr* a2) -> void {
+@@ -747,9 +748,9 @@
                                       Dd_dst, Xst_base);
  
          if (is_fsubr) {
@@ -79,7 +118,7 @@ index d4e1b3b..59524ba 100644
          }
  
          emit_store_st_at_offset(buf, Xbase, Wk4, Dd_dst, Xst_base);
-@@ -777,9 +778,9 @@ auto translate_fsub(TranslationResult* a1, IRInstr* a2) -> void {
+@@ -777,9 +778,9 @@
          }
  
          if (is_fsubr) {
@@ -91,7 +130,7 @@ index d4e1b3b..59524ba 100644
          }
  
          // Opt 3: addr_reg is a separate free-pool register; Wd_tmp still holds
-@@ -839,9 +840,9 @@ auto translate_fsubp(TranslationResult* a1, IRInstr* a2) -> void {
+@@ -839,9 +840,9 @@
          emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, depth_dst), Wd_tmp, Dd_dst, Xst_base);
  
      if (is_fsubrp) {
@@ -103,7 +142,7 @@ index d4e1b3b..59524ba 100644
      }
  
      emit_store_st_at_offset(buf, Xbase, Wk6, Dd_dst, Xst_base);
-@@ -922,9 +923,9 @@ auto translate_fdiv(TranslationResult* a1, IRInstr* a2) -> void {
+@@ -922,9 +923,9 @@
                                       Dd_dst, Xst_base);
  
          if (is_fdivr) {
@@ -115,7 +154,7 @@ index d4e1b3b..59524ba 100644
          }
  
          emit_store_st_at_offset(buf, Xbase, Wk7, Dd_dst, Xst_base);
-@@ -952,9 +953,9 @@ auto translate_fdiv(TranslationResult* a1, IRInstr* a2) -> void {
+@@ -952,9 +953,9 @@
          }
  
          if (is_fdivr) {
@@ -127,7 +166,7 @@ index d4e1b3b..59524ba 100644
          }
  
          // Opt 3: addr_reg is a separate free-pool register; Wd_tmp still holds
-@@ -1014,9 +1015,9 @@ auto translate_fdivp(TranslationResult* a1, IRInstr* a2) -> void {
+@@ -1014,9 +1015,9 @@
          emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, depth_dst), Wd_tmp, Dd_dst, Xst_base);
  
      if (is_fdivrp) {
@@ -139,7 +178,7 @@ index d4e1b3b..59524ba 100644
      }
  
      emit_store_st_at_offset(buf, Xbase, Wk9, Dd_dst, Xst_base);
-@@ -1112,7 +1113,7 @@ auto translate_fiadd(TranslationResult* a1, IRInstr* a2) -> void {
+@@ -1112,7 +1113,7 @@
      free_gpr(*a1, addr_reg);
  
      // Step 5: add
@@ -148,7 +187,7 @@ index d4e1b3b..59524ba 100644
  
      // Step 6: store result back to ST(0).
      // Opt 3: Wd_tmp still holds the ST(0) byte offset from emit_load_st above.
-@@ -1192,7 +1193,7 @@ auto translate_fmul(TranslationResult* a1, IRInstr* a2) -> void {
+@@ -1192,7 +1193,7 @@
          emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, 0), Wd_tmp, Dd_src, Xst_base);
          const int Wk11 = emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, depth_dst), Wd_tmp,
                                        Dd_dst, Xst_base);
@@ -157,7 +196,7 @@ index d4e1b3b..59524ba 100644
          emit_store_st_at_offset(buf, Xbase, Wk11, Dd_dst, Xst_base);
  
          // Pop: TOP = (TOP + 1) & 7.  Wd_tmp is dead after emit_store_st_at_offset.
-@@ -1215,7 +1216,7 @@ auto translate_fmul(TranslationResult* a1, IRInstr* a2) -> void {
+@@ -1215,7 +1216,7 @@
          emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, depth_src), Wd_tmp, Dd_src, Xst_base);
          const int Wk12 = emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, depth_dst), Wd_tmp,
                                        Dd_dst, Xst_base);
@@ -166,7 +205,7 @@ index d4e1b3b..59524ba 100644
          emit_store_st_at_offset(buf, Xbase, Wk12, Dd_dst, Xst_base);
      } else {
          // ---------------------------------------------------------------------
-@@ -1248,7 +1249,7 @@ auto translate_fmul(TranslationResult* a1, IRInstr* a2) -> void {
+@@ -1248,7 +1249,7 @@
          }
  
          // Step 5: multiply
@@ -175,7 +214,16 @@ index d4e1b3b..59524ba 100644
  
          // Step 6: store back to ST(0).
          // Opt 3: addr_reg is a separate free-pool register; Wd_tmp still holds
-@@ -2039,7 +2040,7 @@ auto translate_fsqrt(TranslationResult* a1, IRInstr* /*a2*/) -> void {
+@@ -1400,7 +1401,7 @@
+         // Load ST(0) as f64, then narrow to f32 if needed.
+         emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, 0), Wd_tmp, Dd_src, Xst_base);
+         if (is_f32) {
+-            emit_fcvt_d_to_s(buf, Dd_src, Dd_src);
++            emit_x87_store_f32(*a1, buf, Xbase, Dd_src, Dd_src);
+         }
+
+         const int addr_reg =
+@@ -2039,7 +2040,7 @@
      const int Dd = alloc_free_fpr(*a1);
  
      const int Wk18 = emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, 0), Wd_tmp, Dd, Xst_base);
@@ -184,7 +232,7 @@ index d4e1b3b..59524ba 100644
      // Opt 3: Wd_tmp still holds the ST(0) byte offset from emit_load_st above.
      emit_store_st_at_offset(buf, Xbase, Wk18, Dd, Xst_base);
  
-@@ -2355,7 +2356,7 @@ auto translate_fidiv(TranslationResult* a1, IRInstr* a2) -> void {
+@@ -2355,7 +2356,7 @@
      free_gpr(*a1, addr_reg);
  
      // Step 5: FDIV ST(0), integer
@@ -193,7 +241,7 @@ index d4e1b3b..59524ba 100644
  
      // Step 6: store result back to ST(0).
      // Opt 3: Wd_tmp still holds the ST(0) byte offset from emit_load_st above.
-@@ -2419,7 +2420,7 @@ auto translate_fimul(TranslationResult* a1, IRInstr* a2) -> void {
+@@ -2419,7 +2420,7 @@
      free_gpr(*a1, addr_reg);
  
      // Step 5: FMUL ST(0), integer
@@ -202,7 +250,7 @@ index d4e1b3b..59524ba 100644
  
      // Step 6: store result back to ST(0).
      // Opt 3: Wd_tmp still holds the ST(0) byte offset from emit_load_st above.
-@@ -2481,7 +2482,7 @@ auto translate_fisub(TranslationResult* a1, IRInstr* a2) -> void {
+@@ -2481,7 +2482,7 @@
      free_gpr(*a1, addr_reg);
  
      // Step 5: FSUB ST(0) = ST(0) - integer
@@ -211,7 +259,7 @@ index d4e1b3b..59524ba 100644
  
      // Step 6: store result back to ST(0).
      // Opt 3: Wd_tmp still holds the ST(0) byte offset from emit_load_st above.
-@@ -2545,7 +2546,7 @@ auto translate_fidivr(TranslationResult* a1, IRInstr* a2) -> void {
+@@ -2545,7 +2546,7 @@
      free_gpr(*a1, addr_reg);
  
      // Step 5: FDIV Dd_st0, Dd_int, Dd_st0  — integer / ST(0)  (reversed)
@@ -220,7 +268,7 @@ index d4e1b3b..59524ba 100644
  
      // Step 6: store result back to ST(0).
      // Opt 3: Wd_tmp still holds the ST(0) byte offset from emit_load_st above.
-@@ -2987,7 +2988,7 @@ auto translate_fisubr(TranslationResult* a1, IRInstr* a2) -> void {
+@@ -2987,7 +2988,7 @@
      free_gpr(*a1, addr_reg);
  
      // Step 5: FSUB Dd_st0, Dd_int, Dd_st0 — integer - ST(0) (REVERSED)
@@ -230,7 +278,7 @@ index d4e1b3b..59524ba 100644
      // Step 6: store result
      emit_store_st_at_offset(buf, Xbase, Wk, Dd_st0, Xst_base);
 diff --git a/rosetta_core/src/TranslatorX87Fusion.cpp b/rosetta_core/src/TranslatorX87Fusion.cpp
-index 051a33e..c713fa8 100644
+index 051a33e..a2280b9 100644
 --- a/rosetta_core/src/TranslatorX87Fusion.cpp
 +++ b/rosetta_core/src/TranslatorX87Fusion.cpp
 @@ -1,3 +1,4 @@
@@ -238,7 +286,7 @@ index 051a33e..c713fa8 100644
  #include "rosetta_core/TranslatorX87Fusion.h"
  
  #include <cstdint>
-@@ -271,22 +272,22 @@ static auto try_fuse_fld_arithp(TranslationResult* a1, IRInstr* fld_instr, IRIns
+@@ -271,22 +272,22 @@
  
      switch (arith) {
          case kAdd:
@@ -267,7 +315,7 @@ index 051a33e..c713fa8 100644
              break;
      }
  
-@@ -386,22 +387,22 @@ static auto try_fuse_fld_arith(TranslationResult* a1, IRInstr* fld_instr, IRInst
+@@ -386,22 +387,22 @@
      // 3. FOP into Dd_a.
      switch (arith) {
          case kAdd:
@@ -296,7 +344,7 @@ index 051a33e..c713fa8 100644
              break;
      }
      free_fpr(*a1, Dd_b);
-@@ -461,11 +462,11 @@ static auto try_fuse_fxch_arithp(TranslationResult* a1, IRInstr* fxch_instr, IRI
+@@ -461,11 +462,11 @@
          return std::nullopt;
      }
  
@@ -313,7 +361,7 @@ index 051a33e..c713fa8 100644
          a1->x87_cache.run_remaining--;
      }
  
-@@ -501,9 +502,11 @@ static auto try_fuse_fxch_arithp(TranslationResult* a1, IRInstr* fxch_instr, IRI
+@@ -501,9 +502,11 @@
              break;
          }
          default:
@@ -325,7 +373,16 @@ index 051a33e..c713fa8 100644
      return 2;
  }
  
-@@ -802,22 +805,23 @@ static auto try_fuse_fxch_fcom_fstsw(TranslationResult* a1, IRInstr* fxch_instr,
+@@ -568,7 +571,7 @@
+     } else {
+         const bool is_f32 = (fstp_instr->operands[0].mem.size == IROperandSize::S32);
+         if (is_f32) {
+-            emit_fcvt_d_to_s(buf, Dd_val, Dd_val);
++            emit_x87_store_f32(*a1, buf, Xbase, Dd_val, Dd_val);
+         }
+
+         const int addr =
+@@ -802,22 +805,23 @@
      // OPT-G: Apply FXCH as compile-time perm swap before delegating.
      // resolve_depth() in the inner emit will honour the swapped perm so
      // ST(0) loads from the old slot i and ST(j) (for j∉{0,i}) is unchanged.
@@ -354,7 +411,7 @@ index 051a33e..c713fa8 100644
          return std::nullopt;
      }
      return *inner + 1;
-@@ -855,11 +859,13 @@ static auto try_fuse_fxch_fcom(TranslationResult* a1, IRInstr* fxch_instr, IRIns
+@@ -855,11 +859,13 @@
      std::swap(a1->x87_cache.perm[0], a1->x87_cache.perm[depth]);
      a1->x87_cache.perm_dirty = 1;
  
@@ -369,7 +426,7 @@ index 051a33e..c713fa8 100644
      return 2;
  }
  
-@@ -995,22 +1001,22 @@ static auto try_fuse_fld_arith_fstp(TranslationResult* a1, IRInstr* fld_instr, I
+@@ -995,22 +1001,22 @@
  
      switch (arith) {
          case kAdd:
@@ -398,7 +455,16 @@ index 051a33e..c713fa8 100644
              break;
      }
  
-@@ -1245,44 +1251,44 @@ static auto try_fuse_fld_arith_arithp(TranslationResult* a1, IRInstr* fld_instr,
+@@ -1031,7 +1037,7 @@
+     } else {
+         const bool is_f32 = (fstp_instr->operands[0].mem.size == IROperandSize::S32);
+         if (is_f32) {
+-            emit_fcvt_d_to_s(buf, Dd_fld, Dd_fld);
++            emit_x87_store_f32(*a1, buf, Xbase, Dd_fld, Dd_fld);
+         }
+
+         const int addr =
+@@ -1245,44 +1251,44 @@
              }
              switch (arith1) {
                  case kAdd:
@@ -455,7 +521,7 @@ index 051a33e..c713fa8 100644
                      break;
              }
          }
-@@ -1290,22 +1296,22 @@ static auto try_fuse_fld_arith_arithp(TranslationResult* a1, IRInstr* fld_instr,
+@@ -1290,22 +1296,22 @@
          // Step 4d: Final popping arithmetic — Dd_st0 = op2(Dd_st0, Dd_fld).
          switch (arith2) {
              case kAdd:
@@ -484,7 +550,7 @@ index 051a33e..c713fa8 100644
                  break;
          }
      }
-@@ -1911,22 +1917,22 @@ static auto try_fuse_arithp_fstp(TranslationResult* a1, IRInstr* arithp_instr, I
+@@ -1911,28 +1917,28 @@
      //   fdivrp: ST(1) = ST(0) / ST(1)
      switch (arith) {
          case kAdd:
@@ -513,7 +579,14 @@ index 051a33e..c713fa8 100644
              break;
      }
  
-@@ -2068,22 +2074,22 @@ static auto try_fuse_arith_fstp(TranslationResult* a1, IRInstr* arith_instr, IRI
+     // Convert and store to memory — result goes directly from register.
+     if (is_f32) {
+-        emit_fcvt_d_to_s(buf, Dd_dst, Dd_dst);
++        emit_x87_store_f32(*a1, buf, Xbase, Dd_dst, Dd_dst);
+     }
+
+     const int addr_reg =
+@@ -2068,22 +2074,22 @@
  
          switch (arith) {
              case kAdd:
@@ -542,7 +615,7 @@ index 051a33e..c713fa8 100644
                  break;
          }
      } else {
-@@ -2094,22 +2100,22 @@ static auto try_fuse_arith_fstp(TranslationResult* a1, IRInstr* arith_instr, IRI
+@@ -2094,29 +2100,29 @@
  
          switch (arith) {
              case kAdd:
@@ -571,7 +644,24 @@ index 051a33e..c713fa8 100644
                  break;
          }
      }
-@@ -2263,22 +2269,22 @@ static auto try_fuse_fstp_arith_fstp(TranslationResult* a1, IRInstr* fstp1_instr
+
+     // Convert and store to FSTP memory destination — result goes directly.
+     if (is_f32) {
+-        emit_fcvt_d_to_s(buf, Dd_dst, Dd_dst);
++        emit_x87_store_f32(*a1, buf, Xbase, Dd_dst, Dd_dst);
+     }
+
+     const int addr_fstp =
+@@ -2234,7 +2240,7 @@
+     {
+         const bool is_f32 = (fstp1_instr->operands[0].mem.size == IROperandSize::S32);
+         if (is_f32) {
+-            emit_fcvt_d_to_s(buf, Dd_a, Dd_a);
++            emit_x87_store_f32(*a1, buf, Xbase, Dd_a, Dd_a);
+         }
+         const int addr1 =
+             compute_operand_address(*a1, /*is_64bit=*/true, &fstp1_instr->operands[0], GPR::XZR);
+@@ -2263,22 +2269,22 @@
      // 4d: Arithmetic.
      switch (arith) {
          case kAdd:
@@ -600,8 +690,26 @@ index 051a33e..c713fa8 100644
              break;
      }
      free_fpr(*a1, Dd_c);
+@@ -2287,7 +2293,7 @@
+     {
+         const bool is_f32 = (fstp2_instr->operands[0].mem.size == IROperandSize::S32);
+         if (is_f32) {
+-            emit_fcvt_d_to_s(buf, Dd_b, Dd_b);
++            emit_x87_store_f32(*a1, buf, Xbase, Dd_b, Dd_b);
+         }
+         const int addr2 =
+             compute_operand_address(*a1, /*is_64bit=*/true, &fstp2_instr->operands[0], GPR::XZR);
+@@ -2557,7 +2563,7 @@
+
+         const bool is_f32 = (fstp_instr->operands[0].mem.size == IROperandSize::S32);
+         if (is_f32) {
+-            emit_fcvt_d_to_s(buf, Dd_st0, Dd_st0);
++            emit_x87_store_f32(*a1, buf, Xbase, Dd_st0, Dd_st0);
+         }
+
+         const int addr =
 diff --git a/rosetta_core/src/X87IRLower.cpp b/rosetta_core/src/X87IRLower.cpp
-index a60b32b..298ce3a 100644
+index a60b32b..3294e39 100644
 --- a/rosetta_core/src/X87IRLower.cpp
 +++ b/rosetta_core/src/X87IRLower.cpp
 @@ -1,3 +1,4 @@
@@ -609,7 +717,7 @@ index a60b32b..298ce3a 100644
  #include <algorithm>
  #include <cstdint>
  #include <cstdio>
-@@ -721,7 +722,7 @@ void lower(Context& ctx, TranslationResult* result) {
+@@ -721,7 +722,7 @@
                      Dd = alloc_free_fpr(*result);
                  }
                  fprs.node_fpr[i] = static_cast<int8_t>(Dd);
@@ -618,7 +726,7 @@ index a60b32b..298ce3a 100644
                  break;
              }
              case Op::FSub: {
-@@ -732,7 +733,7 @@ void lower(Context& ctx, TranslationResult* result) {
+@@ -732,7 +733,7 @@
                      Dd = alloc_free_fpr(*result);
                  }
                  fprs.node_fpr[i] = static_cast<int8_t>(Dd);
@@ -627,7 +735,7 @@ index a60b32b..298ce3a 100644
                  break;
              }
              case Op::FMul: {
-@@ -743,7 +744,7 @@ void lower(Context& ctx, TranslationResult* result) {
+@@ -743,7 +744,7 @@
                      Dd = alloc_free_fpr(*result);
                  }
                  fprs.node_fpr[i] = static_cast<int8_t>(Dd);
@@ -636,7 +744,7 @@ index a60b32b..298ce3a 100644
                  break;
              }
              case Op::FDiv: {
-@@ -754,7 +755,7 @@ void lower(Context& ctx, TranslationResult* result) {
+@@ -754,7 +755,7 @@
                      Dd = alloc_free_fpr(*result);
                  }
                  fprs.node_fpr[i] = static_cast<int8_t>(Dd);
@@ -645,7 +753,7 @@ index a60b32b..298ce3a 100644
                  break;
              }
  
-@@ -836,7 +837,7 @@ void lower(Context& ctx, TranslationResult* result) {
+@@ -836,7 +837,7 @@
                      Dd = alloc_free_fpr(*result);
                  }
                  fprs.node_fpr[i] = static_cast<int8_t>(Dd);
@@ -654,17 +762,29 @@ index a60b32b..298ce3a 100644
                  break;
              }
              case Op::FRndInt: {
-@@ -1534,7 +1535,8 @@ void lower(Context& ctx, TranslationResult* result) {
+@@ -1025,7 +1026,7 @@
+                 // for STP S / STR S, and as the source lane for the broadcast
+                 // DUP that feeds STR Q.
+                 const int Ds_narrow = alloc_free_fpr(*result);
+-                emit_fcvt_d_to_s(buf, Ds_narrow, fprs.get(src_node));
++                emit_x87_store_f32(*result, buf, Xbase, Ds_narrow, fprs.get(src_node));
+
+                 // Allocate the broadcast Q register lazily — only if at least
+                 // one STR Q group fires.  Most benches that take the STP S or
+@@ -1534,8 +1535,10 @@
  //   - Wd_rc_cached (pool 3) when RC caching is active = +1
  //
  // Per-node transient GPR demand (mirrors the lowering code exactly):
 -//   - ReadSt, Const*, FAdd/FSub/FMul/FDiv, FMA*, FNeg/FAbs/FSqrt, FCSel: 0
+-//   - LoadF64, LoadF32, StoreF64, StoreF32: 1 (addr from compute_operand_address)
 +//   - ReadSt, Const*, FMA*, FNeg/FAbs, FCSel: 0
 +//   - FAdd/FSub/FMul/FDiv/FSqrt: 3 (PC24 helper; Wd_tmp is borrowed)
- //   - LoadF64, LoadF32, StoreF64, StoreF32: 1 (addr from compute_operand_address)
++//   - LoadF64, LoadF32, StoreF64: 1 (addr from compute_operand_address)
++//   - StoreF32: 2 (scoped rounding before address allocation)
  //   - LoadI16/I32/I64: 2 (addr + Wd_val)
  //   - StoreI16/I32/I64: 2 (Wd_int + addr)
-@@ -1617,19 +1619,22 @@ int peak_live_gprs(const Context& ctx, int budget, int* first_over_node, bool fa
+ //   - FRndInt without RC cache: 1 (Wd_rc via alloc_gpr(3))
+@@ -1617,17 +1620,20 @@
              case Op::ConstZero:
              case Op::ConstOne:
              case Op::ConstF64:
@@ -677,38 +797,76 @@ index a60b32b..298ce3a 100644
              case Op::FNMSub:
              case Op::FNeg:
              case Op::FAbs:
--            case Op::FSqrt:
-             case Op::FCSel:
-                 break;
- 
++            case Op::FCSel:
++                break;
++
 +            case Op::FAdd:
 +            case Op::FSub:
 +            case Op::FMul:
 +            case Op::FDiv:
-+            case Op::FSqrt:
+             case Op::FSqrt:
+-            case Op::FCSel:
 +                transient = 3; // PC24 helper borrows Wd_tmp in addition.
+                 break;
+
+             // Transcendentals — peak GPR demand inside emit_inline_<op>_core
+@@ -1654,8 +1660,11 @@
+             case Op::LoadF64:
+             case Op::LoadF32:
+             case Op::StoreF64:
++                transient = 1;
 +                break;
 +
-             // Transcendentals — peak GPR demand inside emit_inline_<op>_core
-             // (the NZCV save GPR that guards guest EFLAGS in the flag-
-             // clobbering cores is included in each count):
-@@ -1884,6 +1889,11 @@ int peak_live_fprs(const Context& ctx, int budget, int* first_over_node) {
-             raise_peak(live, i);
-         }
+             case Op::StoreF32:
+-                transient = 1;
++                transient = 2;
+                 break;
  
-+        if (n.op == Op::FAdd || n.op == Op::FSub || n.op == Op::FMul ||
-+            n.op == Op::FDiv || n.op == Op::FSqrt) {
-+            raise_peak(live + 3, i); // PC24 operand temporaries and saved GPR
+             // 2 GPRs: Loads need addr + Wd_val; stores need Wd_int + addr.
+@@ -1784,7 +1793,8 @@
+ //   - free_dead_inputs() fires at the end of each node, so the transient peak
+ //     *during* a node is: (currently live) + 1 for the new output, before dead
+ //     inputs are freed.  try_reuse_input() can avoid the +1 by recycling a
+-//     dying input's FPR, but we conservatively ignore reuse here.
++//     dying input's FPR. Model reuse for PC24 arithmetic; conservatively
++//     ignore it for other operations.
+ //   - StoreF32 allocates one extra transient FPR (Ds_tmp) that is freed before
+ //     the node ends.  Model as a +1 spike.
+ //   - StoreI*, FCmp, FTst, FStsw produce no FPR output and need no extra FPRs.
+@@ -1878,10 +1888,28 @@
+         // emitted as part of the chain head's lower_fma_reduce body — no
+         // FPR is allocated for them.  Skip the produces_fpr accounting.
+         const bool absorbed_member = (n.flags & kFmaReduceMember) && !(n.flags & kFmaReduceHead);
++        const bool pc24_arithmetic = n.op == Op::FAdd || n.op == Op::FSub ||
++                                     n.op == Op::FMul || n.op == Op::FDiv || n.op == Op::FSqrt;
+         if (produces_fpr && !absorbed_member) {
++            if (pc24_arithmetic) {
++                // Match try_reuse_input: transfer only the first dying FPR.
++                // Skip its final free, including both references when lhs == rhs.
++                for (short in : n.inputs) {
++                    if (in >= 0 && last_use[in] == i && holding[in]) {
++                        holding[in] = false;
++                        live--;
++                        break;
++                    }
++                }
++            }
+             live++;
+             holding[i] = true;
+             raise_peak(live, i);
 +        }
 +
++        if (pc24_arithmetic) {
++            // Narrowed operand(s) and the saved borrowed GPR.
++            raise_peak(live + (n.op == Op::FSqrt ? 2 : 3), i);
+         }
+
          // FMA-reduction head: the whole chain emits as one fused body at the
-         // head.  lower_fma_reduce allocates 2 transient vector FPRs (V_data,
-         // V_w) on top of the held accumulator V_acc (counted by produces_fpr
 diff --git a/scripts/run_tests.sh b/scripts/run_tests.sh
 index 218e067..34161d6 100755
 --- a/scripts/run_tests.sh
 +++ b/scripts/run_tests.sh
-@@ -57,6 +57,9 @@ LOADER="$BIN/x87sidecar_entitled"
+@@ -57,6 +57,9 @@
  TESTS_BIN="$BIN/tests"
  
  ALL_TESTS=(
@@ -719,10 +877,10 @@ index 218e067..34161d6 100755
      test_fld
      test_fld_m80fp
 diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
-index 4532f1b..d312886 100644
+index 4532f1b..507c4f8 100644
 --- a/tests/CMakeLists.txt
 +++ b/tests/CMakeLists.txt
-@@ -92,3 +92,10 @@ add_x86_sample(test_bridge_ext)
+@@ -92,3 +92,11 @@
  add_x86_sample(test_decoder_fcomp_st)
  add_x86_sample_lowzero(test_decoder_arpl)
  add_x86_sample(test_x87_signal_storm)
@@ -733,6 +891,7 @@ index 4532f1b..d312886 100644
 +add_x86_sample(test_pc24_arithmetic)
 +unset(X86_SAMPLE_EXTRA_DEPS)
 +add_x86_sample(test_pc24_host_state)
++add_x86_sample(test_rc_rounding)
 diff --git a/tests/test_arith.c b/tests/test_arith.c
 index 69d1872..c695d30 100644
 --- a/tests/test_arith.c
@@ -745,7 +904,7 @@ index 69d1872..c695d30 100644
  #include <string.h>
  
  static int failures = 0;
-@@ -348,6 +349,10 @@ static double fisub_m32(void) {
+@@ -348,6 +349,10 @@
  }
  
  int main(void) {
@@ -756,7 +915,7 @@ index 69d1872..c695d30 100644
      printf("=== FADD variants ===\n");
      check("FADD ST(0),ST(1)  1+2=3", fadd_st0_st1(), 3.0);
      check("FADD ST(1),ST(0)  2+1=3", fadd_sti_st0(), 3.0);
-@@ -374,7 +379,7 @@ int main(void) {
+@@ -374,7 +379,7 @@
  
      printf("\n=== FDIV / FDIVR variants ===\n");
      check("FDIV ST(0),ST(1)  6/2=3", fdiv_st0_sti(), 3.0);
@@ -777,7 +936,7 @@ index 08f70b9..a58f2f7 100644
  
  static volatile double vx = 0.5, vy = 1.5;
  static double r1, r2;
-@@ -209,6 +210,10 @@ static int probe_fadd(unsigned a, unsigned b) {
+@@ -209,6 +210,10 @@
      return (eq << 1) | lt;
  }
  int main(void) {
@@ -800,7 +959,7 @@ index 1f93f45..b538e0a 100644
  #include <string.h>
  
  static int failures = 0;
-@@ -181,6 +182,29 @@ static double fxch_loop(void) {
+@@ -181,6 +182,29 @@
      return r;
  }
  
@@ -830,7 +989,7 @@ index 1f93f45..b538e0a 100644
  /* ==== FXCH double swap (swap back = no-op) ==== */
  static double fxch_double_swap(void) {
      double r;
-@@ -218,6 +242,10 @@ static void fxch_fcom(double* out_sw) {
+@@ -218,6 +242,10 @@
  }
  
  int main(void) {
@@ -841,7 +1000,7 @@ index 1f93f45..b538e0a 100644
      /* FXCH ST(0) no-op */
      check("fxch_st0_noop", fxch_st0_noop(), 3.14);
  
-@@ -265,6 +293,8 @@ int main(void) {
+@@ -265,6 +293,8 @@
  
      /* FXCH in loop */
      check("fxch_loop (5 iterations)", fxch_loop(), 5.0);
@@ -854,7 +1013,7 @@ diff --git a/tests/test_x87_signal_storm.c b/tests/test_x87_signal_storm.c
 index a1b39eb..51d6989 100644
 --- a/tests/test_x87_signal_storm.c
 +++ b/tests/test_x87_signal_storm.c
-@@ -418,7 +418,7 @@ static void init_input(double x) {
+@@ -418,7 +418,7 @@
      g_in.f80 = 2.5L;
      g_in.bcd[0] = 0x34; /* 1234 */
      g_in.bcd[1] = 0x12;
@@ -865,25 +1024,30 @@ index a1b39eb..51d6989 100644
  }
 diff --git a/rosetta_core/include/rosetta_core/X87Precision.hpp b/rosetta_core/include/rosetta_core/X87Precision.hpp
 new file mode 100644
-index 0000000..67c5bf4
+index 0000000..c2beb22
 --- /dev/null
 +++ b/rosetta_core/include/rosetta_core/X87Precision.hpp
-@@ -0,0 +1,9 @@
+@@ -0,0 +1,14 @@
 +#pragma once
 +
 +struct TranslationResult;
 +struct AssemblerBuffer;
 +
-+// Three transient GPRs and three FPRs; the borrowed GPR and guest NZCV survive.
++// Three transient GPRs; two FPRs for Sqrt, three for binary arithmetic.
++// The borrowed GPR and guest NZCV survive.
 +enum class X87Arithmetic { Mul = 0, Div = 1, Add = 2, Sub = 3, Sqrt = 4 };
 +void emit_x87_arithmetic(TranslationResult& result, AssemblerBuffer& buf, int base, int scratch,
 +                         X87Arithmetic op, int dst, int lhs, int rhs = -1);
++
++// Two transient GPRs, no FPRs. Preserves FPCR/NZCV; accumulates FPSR flags.
++void emit_x87_store_f32(TranslationResult& result, AssemblerBuffer& buf, int base,
++                        int dst, int src);
 diff --git a/rosetta_core/src/X87Precision.cpp b/rosetta_core/src/X87Precision.cpp
 new file mode 100644
-index 0000000..81169b5
+index 0000000..c9c09bb
 --- /dev/null
 +++ b/rosetta_core/src/X87Precision.cpp
-@@ -0,0 +1,226 @@
+@@ -0,0 +1,273 @@
 +#include "rosetta_core/X87Precision.hpp"
 +
 +#include <cassert>
@@ -951,7 +1115,46 @@ index 0000000..81169b5
 +    else
 +        emit_fp_dp2(b, 1, static_cast<int>(op), dst, lhs, rhs);
 +}
++
++// RC is independent of PC. No flag-setting instructions: guest NZCV survives.
++// Keep FPSR untouched, so old flags and the operation's new sticky flags survive.
++// This is the upstream exception contract, not x87 SW exception/trap emulation.
++template<class Emit>
++void rounded(AssemblerBuffer& b, int base, int saved, int rc, Emit emit) {
++    Label nearest, down, up, ready;
++    b.emit(0xd53b4400 | saved);
++    emit_ldr_str_imm(b, 1, 0, 1, 0, base, rc);
++    extract(b, rc, rc, 10, 2);
++    nearest.zero(b, rc);
++    down.bit(b, rc, 1);
++    up.bit(b, rc, 0);
++    emit_movn(b, 1, 2, 1, 0x00c0, rc);
++    ready.branch(b);
++    down.bind(b);
++    emit_movn(b, 1, 2, 1, 0x0080, rc);
++    ready.branch(b);
++    up.bind(b);
++    emit_movn(b, 1, 2, 1, 0x0040, rc);
++    ready.branch(b);
++    nearest.bind(b);
++    emit_movn(b, 1, 2, 0, 0, rc);
++    ready.bind(b);
++    // Default-NaN, FZ and host trap enables must not override guest rounding.
++    // Restore every host FPCR bit after the one operation; FPSR is cumulative.
++    b.emit(0xd51b4400 | rc);
++    emit();
++    b.emit(0xd51b4400 | saved);
++}
 +}  // namespace
++
++void emit_x87_store_f32(TranslationResult& result, AssemblerBuffer& b, int base,
++                        int dst, int src) {
++    const int saved = alloc_free_gpr(result);
++    const int rc = alloc_free_gpr(result);
++    rounded(b, base, saved, rc, [&] { emit_fcvt_d_to_s(b, dst, src); });
++    free_gpr(result, rc);
++    free_gpr(result, saved);
++}
 +
 +void emit_x87_arithmetic(TranslationResult& result, AssemblerBuffer& b, int base, int tmp,
 +                         X87Arithmetic op, int dst, int lhs, int rhs) {
@@ -996,14 +1199,15 @@ index 0000000..81169b5
 +    if (op != X87Arithmetic::Sqrt)
 +        check_operand(rhs, fast_zero_rhs);
 +    const int single_lhs = alloc_free_fpr(result);
-+    const int single_rhs = alloc_free_fpr(result);
 +    b.emit(0xd53b4420 | discard);  // restore status if the f32 range was exceeded
 +    emit_fcvt_d_to_s(b, single_lhs, lhs);
 +    if (op == X87Arithmetic::Sqrt)
 +        emit_fp_dp1(b, 0, 3, single_lhs, single_lhs);
 +    else {
++        const int single_rhs = alloc_free_fpr(result);
 +        emit_fcvt_d_to_s(b, single_rhs, rhs);
 +        emit_fp_dp2(b, 0, static_cast<int>(op), single_lhs, single_lhs, single_rhs);
++        free_fpr(result, single_rhs);
 +    }
 +    b.emit(0x1e260000 | (single_lhs << 5) | bits);  // FMOV W, S
 +    extract(b, tmp, bits, 23, 8);
@@ -1015,7 +1219,6 @@ index 0000000..81169b5
 +    fast_restore.bind(b);
 +    b.emit(0xd51b4420 | discard);
 +    precise.bind(b);
-+    free_fpr(result, single_rhs);
 +    free_fpr(result, single_lhs);
 +
 +    // For nearest rounding, compute a round-to-odd intermediate: truncate
@@ -1102,7 +1305,15 @@ index 0000000..81169b5
 +    b.emit(0x9e670000 | (bits << 5) | dst);  // FMOV D, X
 +    end.branch(b);
 +    normal.bind(b);
++    // PC=53 only. Reserved PC and PC=64 retain upstream's f64 approximation.
++    Label legacy, normal_done;
++    extract(b, tmp, rc, 8, 2);
++    legacy.bit(b, tmp, 0, true);
++    rounded(b, base, bits, tmp, [&] { arithmetic(b, op, dst, lhs, rhs); });
++    normal_done.branch(b);
++    legacy.bind(b);
 +    arithmetic(b, op, dst, lhs, rhs);
++    normal_done.bind(b);
 +    end.bind(b);
 +    b.emit(0x9e660000 | (saved_tmp << 5) | tmp);
 +    free_fpr(result, saved_tmp);
@@ -2364,5 +2575,213 @@ index 0000000..fbe2533
 +            failures += actual != expected;
 +        }
 +    printf("8 cases, %u failures\n", failures);
++    return failures != 0;
++}
+diff --git a/rosetta_core/src/TranslatorX87Single.cpp b/rosetta_core/src/TranslatorX87Single.cpp
+index 0b60904..872ed19 100644
+--- a/rosetta_core/src/TranslatorX87Single.cpp
++++ b/rosetta_core/src/TranslatorX87Single.cpp
+@@ -1,3 +1,4 @@
++#include "rosetta_core/X87Precision.hpp"
+ #include <cstdint>
+
+ #include "TranslatorX87Internal.hpp"
+@@ -182,7 +183,7 @@
+         const int Xaddr =
+             compute_operand_address(a1, /*is_64bit=*/true, &a2->operands[0], GPR::XZR);
+         if (is_f32) {
+-            emit_fcvt_d_to_s(buf, Dd, Dd);
++            emit_x87_store_f32(a1, buf, Xbase, Dd, Dd);
+         }
+         emit_fstr_imm(buf, is_f32 ? 2 : 3, Dd, Xaddr, /*imm12=*/0);
+         free_gpr(a1, Xaddr);
+@@ -222,8 +223,12 @@
+     // in-place ADD #0x800 would carry into C3 at TOP=7 — do not use it.
+     emit_bfi_top(buf, Wsw, Widx);
+
++    // The store rounding helper needs two GPRs. These index temporaries are dead.
++    free_gpr(a1, Wsh);
++    free_gpr(a1, Widx);
++
+     if (is_f32) {
+-        emit_fcvt_d_to_s(buf, Dd, Dd);
++        emit_x87_store_f32(a1, buf, Xbase, Dd, Dd);
+     }
+     emit_fstr_imm(buf, is_f32 ? 2 : 3, Dd, Xaddr, /*imm12=*/0);
+     free_gpr(a1, Xaddr);
+@@ -232,8 +237,6 @@
+     emit_ldur_stur(buf, /*size=*/2, /*opc=*/0 /*STUR*/, kX87StatusWordOff, Xbase, Wsw);
+
+     free_fpr(a1, Dd);
+-    free_gpr(a1, Wsh);
+-    free_gpr(a1, Widx);
+     free_gpr(a1, Wm);
+     free_gpr(a1, Wtop);
+     free_gpr(a1, Wsw);
+diff --git a/tests/test_rc_rounding.c b/tests/test_rc_rounding.c
+new file mode 100644
+index 0000000..a4e78f3
+--- /dev/null
++++ b/tests/test_rc_rounding.c
+@@ -0,0 +1,161 @@
++/* TMNF's racing thread uses x87 control word 0x007f: 24-bit precision.
++ * A translator that always uses double precision changes these results even
++ * if it handles FLDCW rounding directions and ordinary arithmetic correctly. */
++#include <stdio.h>
++#include <stdint.h>
++#include <string.h>
++
++/* Integer encodings are the oracle, not arithmetic run by the translator.
++ * 1 + 2^-53 is halfway between binary64 1 and its successor. */
++static unsigned rc_cases(void)
++{
++    unsigned failures = 0;
++    for (unsigned negative = 0; negative < 2; ++negative)
++        for (unsigned mode = 0; mode < 4; ++mode) {
++            uint64_t sign = (uint64_t)negative << 63;
++            uint64_t a_bits = UINT64_C(0x3ff0000000000000) | sign;
++            uint64_t b_bits = UINT64_C(0x3ca0000000000000) | sign;
++            double a, b, result;
++            unsigned short saved, cw = 0x027f | (mode << 10);
++            memcpy(&a, &a_bits, 8);
++            memcpy(&b, &b_bits, 8);
++            __asm__ volatile("fnstcw %0; fldcw %2; fldl %3; faddl %4; fstpl %1; fldcw %0"
++                             : "=m"(saved), "=m"(result)
++                             : "m"(cw), "m"(a), "m"(b) : "st", "memory");
++            uint64_t actual, expected = a_bits + (mode == (negative ? 1u : 2u));
++            memcpy(&actual, &result, 8);
++            printf("PC53 sign=%u RC=%u bits=%016llx expected=%016llx\n", negative, mode,
++                   (unsigned long long)actual, (unsigned long long)expected);
++            failures += actual != expected;
++
++            /* FLD m64 ignores PC24. Only FST m32 narrows this halfway value. */
++            a_bits = UINT64_C(0x3ff0000010000000) | sign;
++            memcpy(&a, &a_bits, 8);
++            for (unsigned pc = 0; pc < 3; ++pc) {
++                cw = 0x007f | (pc == 0 ? 0 : pc == 1 ? 0x0200 : 0x0300) | (mode << 10);
++                float out, nonpop;
++                __asm__ volatile("fnstcw %0; fldcw %3; fldl %4; fsts %2; fstps %1; fldcw %0"
++                                 : "=m"(saved), "=m"(out), "=m"(nonpop)
++                                 : "m"(cw), "m"(a) : "st", "memory");
++                uint32_t got, got_nonpop;
++                uint32_t want = (negative << 31) | (0x3f800000u + (mode == (negative ? 1u : 2u)));
++                memcpy(&got, &out, 4);
++                memcpy(&got_nonpop, &nonpop, 4);
++                printf("FST/FSTP PC=%u sign=%u RC=%u bits=%08x/%08x expected=%08x\n",
++                       pc == 0 ? 24 : pc == 1 ? 53 : 64, negative, mode, got_nonpop, got, want);
++                failures += got != want || got_nonpop != want;
++            }
++        }
++    return failures;
++}
++
++static unsigned operation_cases(void)
++{
++    /* All expectations follow integer significands: (1+2^-52)^2 lies
++     * strictly above 1+2^-51; 1/3 repeats binary 01; sqrt(2)'s adjacent
++     * significands square below/above 2, with the midpoint below sqrt(2). */
++    static const uint64_t lhs_bits[] = {0x3ff0000000000000ULL, 0x3ff0000000000001ULL,
++                                        0x3ff0000000000000ULL, 0x4000000000000000ULL};
++    static const uint64_t rhs_bits[] = {0xbca0000000000000ULL, 0x3ff0000000000001ULL,
++                                        0x4008000000000000ULL, 0};
++    static const uint64_t floor_bits[] = {0x3ff0000000000000ULL, 0x3ff0000000000002ULL,
++                                          0x3fd5555555555555ULL, 0x3ff6a09e667f3bccULL};
++    unsigned failures = 0;
++    for (unsigned op = 0; op < 4; ++op)
++        for (unsigned rc = 0; rc < 4; ++rc) {
++            unsigned short saved, cw = 0x027f | (rc << 10);
++            double a, b, out;
++            memcpy(&a, &lhs_bits[op], 8);
++            memcpy(&b, &rhs_bits[op], 8);
++#define CALCULATE(instruction) \
++            __asm__ volatile("fnstcw %0; fldcw %2; fldl %3; " instruction "; fstpl %1; fldcw %0" \
++                             : "=m"(saved), "=m"(out) : "m"(cw), "m"(a), "m"(b) : "st", "memory")
++            switch (op) {
++                case 0: CALCULATE("fsubl %4"); break;
++                case 1: CALCULATE("fmull %4"); break;
++                case 2: CALCULATE("fdivl %4"); break;
++                default: CALCULATE("fsqrt"); break;
++            }
++#undef CALCULATE
++            uint64_t got, want = floor_bits[op] + (rc == 2 || (op == 3 && rc == 0));
++            memcpy(&got, &out, 8);
++            printf("PC53 op=%u RC=%u bits=%016llx expected=%016llx\n", op, rc,
++                   (unsigned long long)got, (unsigned long long)want);
++            failures += got != want;
++        }
++    return failures;
++}
++
++static unsigned store_sequences(void)
++{
++    unsigned failures = 0;
++    const double a = 0x1.000001p0, zero = 0.;
++    for (unsigned shape = 0; shape < 8; ++shape)
++        for (unsigned rc = 0; rc < 4; ++rc) {
++            unsigned short saved, cw = 0x027f | (rc << 10);
++            float out;
++            double scratch;
++#define STORE(sequence) \
++            __asm__ volatile("fnstcw %0; fldcw %3; " sequence "; fldcw %0" \
++                             : "=m"(saved), "=m"(out), "=m"(scratch) \
++                             : "m"(cw), "m"(a), "m"(zero) : "st", "memory")
++            switch (shape) {
++                case 0: STORE("fldl %4; fstps %1"); break;
++                case 1: STORE("fldl %4; faddl %5; fstps %1"); break;
++                case 2: STORE("fldl %4; fldl %5; faddp; fstps %1"); break;
++                case 3: STORE("fldl %4; fldl %5; fxch; fstps %1; fstpl %2"); break;
++                case 4: STORE("fldl %4; fldl %5; fstpl %2; faddl %5; fstps %1"); break;
++                case 5: STORE("fldl %4; fstps %1; fldl %5; fstpl %2"); break;
++                case 6: STORE("fldl %4; fstps %1; fldl %4; fstps %1"); break;
++                /* Integer instruction splits the x87 run for single-op lowering. */
++                default: STORE("fldl %4; jmp 1f; 1: fstps %1"); break;
++            }
++#undef STORE
++            uint32_t got, want = 0x3f800000u + (rc == 2);
++            memcpy(&got, &out, 4);
++            printf("store shape=%u RC=%u bits=%08x expected=%08x\n", shape, rc, got, want);
++            failures += got != want;
++        }
++    return failures;
++}
++
++static double rounded_add(unsigned short control)
++{
++    const double one = 1.0, half_ulp = 0x1p-24;
++    unsigned short saved;
++    double result;
++
++    __asm__ volatile(
++        "fnstcw %0\n\t"
++        "fldcw %2\n\t"
++        "fldl %3\n\t"
++        "faddl %4\n\t"
++        "fsubl %3\n\t"
++        "fstpl %1\n\t"
++        "fldcw %0"
++        : "=m"(saved), "=m"(result)
++        : "m"(control), "m"(one), "m"(half_ulp)
++        : "st", "memory");
++    return result;
++}
++
++int main(void)
++{
++    const char *rounding[] = {"nearest", "down", "up", "truncate"};
++    unsigned failures = rc_cases() + operation_cases() + store_sequences();
++
++    for (unsigned precision = 0; precision < 2; ++precision)
++        for (unsigned mode = 0; mode < 4; ++mode)
++        {
++            unsigned short control = 0x007f | (precision ? 0x0200 : 0) | (mode << 10);
++            double expected = precision ? 0x1p-24 : mode == 2 ? 0x1p-23 : 0.0;
++            double actual = rounded_add(control);
++
++            printf("%s PC=%u rounding=%s result=%.17g expected=%.17g\n",
++                   actual == expected ? "PASS" : "FAIL", precision ? 53 : 24,
++                   rounding[mode], actual, expected);
++            failures += actual != expected;
++        }
++    printf("88 cases, %u failures\n", failures);
 +    return failures != 0;
 +}

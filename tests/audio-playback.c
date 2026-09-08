@@ -30,15 +30,19 @@ static DWORD WINAPI watchdog(void *done)
     return 0;
 }
 
-/* Exercise both the music and positional-effect paths used by D3D9 games.
+/* Exercise stereo playback clocks and mono 3D buffer/listener API state.
  * A moving DirectSound cursor depends on the actual CoreAudio render clock.
- * The quiet repeating triangle wave also permits an audible output check. */
+ * The quiet triangle wave permits a manual listening check, but this probe
+ * does not verify audibility or spatialization. */
 static int playback(IDirectSound8 *sound, WORD channels, DWORD rate)
 {
     WAVEFORMATEX format = {WAVE_FORMAT_PCM, channels, rate, rate * channels * 2,
                           channels * 2, 16, 0};
     DSBUFFERDESC description = {0};
     IDirectSoundBuffer *buffer = NULL;
+    IDirectSoundBuffer *primary = NULL;
+    IDirectSound3DBuffer *spatial = NULL;
+    IDirectSound3DListener *listener = NULL;
     void *first = NULL, *second = NULL;
     DWORD first_bytes, second_bytes, previous, position, status;
     DWORD advanced = 0;
@@ -55,6 +59,48 @@ static int playback(IDirectSound8 *sound, WORD channels, DWORD rate)
         return 1;
     printf("Created %lu Hz %u-channel buffer in %.1f ms\n", rate, channels, milliseconds() - begin);
     fflush(stdout);
+    if (channels == 1)
+    {
+        DSBUFFERDESC primary_description = {0};
+        DS3DBUFFER state = {0};
+        DS3DLISTENER listener_state = {0};
+        primary_description.dwSize = sizeof(primary_description);
+        primary_description.dwFlags = DSBCAPS_PRIMARYBUFFER | DSBCAPS_CTRL3D;
+        state.dwSize = sizeof(state);
+        listener_state.dwSize = sizeof(listener_state);
+        if (!check(IDirectSound8_CreateSoundBuffer(sound, &primary_description, &primary, NULL),
+                   "Create primary 3D buffer") ||
+            !check(IDirectSoundBuffer_QueryInterface(primary, &IID_IDirectSound3DListener,
+                   (void **)&listener), "Query 3D listener") ||
+            !check(IDirectSoundBuffer_QueryInterface(buffer, &IID_IDirectSound3DBuffer,
+                   (void **)&spatial), "Query 3D buffer")) goto done;
+        if (!check(IDirectSound3DBuffer_SetPosition(spatial, 3.0f, 0.0f, 4.0f, DS3D_IMMEDIATE), "Buffer SetPosition") ||
+            !check(IDirectSound3DBuffer_SetMinDistance(spatial, 2.0f, DS3D_IMMEDIATE), "Buffer SetMinDistance") ||
+            !check(IDirectSound3DBuffer_SetMaxDistance(spatial, 50.0f, DS3D_IMMEDIATE), "Buffer SetMaxDistance") ||
+            !check(IDirectSound3DBuffer_SetMode(spatial, DS3DMODE_HEADRELATIVE, DS3D_IMMEDIATE), "Buffer SetMode") ||
+            !check(IDirectSound3DBuffer_GetAllParameters(spatial, &state), "Buffer GetAllParameters")) goto done;
+        if (state.vPosition.x != 3.0f || state.vPosition.y != 0.0f || state.vPosition.z != 4.0f ||
+            state.flMinDistance != 2.0f || state.flMaxDistance != 50.0f || state.dwMode != DS3DMODE_HEADRELATIVE)
+        {
+            puts("FAIL: 3D buffer set/query state mismatch");
+            goto done;
+        }
+        if (!check(IDirectSound3DListener_SetPosition(listener, 1.0f, 2.0f, 3.0f, DS3D_DEFERRED), "Listener SetPosition") ||
+            !check(IDirectSound3DListener_SetOrientation(listener, 1.0f, 0.0f, 0.0f,
+                   0.0f, 1.0f, 0.0f, DS3D_DEFERRED), "Listener SetOrientation") ||
+            !check(IDirectSound3DListener_SetDistanceFactor(listener, 0.5f, DS3D_DEFERRED), "Listener SetDistanceFactor") ||
+            !check(IDirectSound3DListener_CommitDeferredSettings(listener), "Listener CommitDeferredSettings") ||
+            !check(IDirectSound3DListener_GetAllParameters(listener, &listener_state), "Listener GetAllParameters")) goto done;
+        if (listener_state.vPosition.x != 1.0f || listener_state.vPosition.y != 2.0f || listener_state.vPosition.z != 3.0f ||
+            listener_state.vOrientFront.x != 1.0f || listener_state.vOrientFront.y != 0.0f || listener_state.vOrientFront.z != 0.0f ||
+            listener_state.vOrientTop.x != 0.0f || listener_state.vOrientTop.y != 1.0f || listener_state.vOrientTop.z != 0.0f ||
+            listener_state.flDistanceFactor != 0.5f)
+        {
+            puts("FAIL: 3D listener set/commit/query state mismatch");
+            goto done;
+        }
+        puts("PASS: 3D buffer and listener set/query state (spatialization not verified)");
+    }
     if (!check(IDirectSoundBuffer_Lock(buffer, 0, description.dwBufferBytes, &first,
                                       &first_bytes, &second, &second_bytes, 0), "Lock")) goto done;
     for (DWORD i = 0; i < first_bytes / 2; ++i)
@@ -89,6 +135,9 @@ static int playback(IDirectSound8 *sound, WORD channels, DWORD rate)
            result ? "FAIL" : "PASS", rate, channels, played_ms, now - begin, max_stall);
 done:
     IDirectSoundBuffer_Stop(buffer);
+    if (spatial) IDirectSound3DBuffer_Release(spatial);
+    if (listener) IDirectSound3DListener_Release(listener);
+    if (primary) IDirectSoundBuffer_Release(primary);
     IDirectSoundBuffer_Release(buffer);
     return result;
 }

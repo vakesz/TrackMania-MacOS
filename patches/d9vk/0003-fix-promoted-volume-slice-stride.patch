@@ -1,0 +1,23 @@
+Subject: d3d9: Use the destination slice pitch for promoted volume uploads.
+
+The software 16-bit texture promotion path advances each depth slice by one
+row instead of one whole slice. For volume textures with height greater than
+one, later slices overwrite earlier rows and leave the rest uninitialized.
+Use the already computed destination slice pitch for the depth offset.
+
+Based on d9vk f229921c1b7f14edeadeccff04a9e65d0a016148.
+Regression: tests/d3d9-formats.c uploads a 4x3x3 A4R4G4B4 volume with distinct
+slice colors, then samples each slice through fixed-function D3D9 rendering.
+
+diff --git a/src/d3d9/d3d9_device.cpp b/src/d3d9/d3d9_device.cpp
+--- a/src/d3d9/d3d9_device.cpp
++++ b/src/d3d9/d3d9_device.cpp
+@@ -4972,7 +4972,7 @@
+               + (SrcOffset.x) * 2);
+             uint32_t* dstRow = reinterpret_cast<uint32_t*>(
+               reinterpret_cast<uint8_t*>(slice.mapPtr)
+-              + z * dstPitch
++              + z * dstSlicePitch
+               + y * dstPitch);
+ 
+             for (uint32_t x = 0; x < SrcExtent.width; x++) {

@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 . "${SCRIPT_DIR}/lib/common.sh"
 
@@ -23,7 +23,9 @@ initialize_prefix() {
   local wine_bin
   local wineboot_bin
 
-  is_safe_managed_path "$MACTMNF_PREFIX" || die "Unsafe Wine prefix path: $MACTMNF_PREFIX"
+  validate_managed_layout || die "Unsafe installation layout."
+  python3 "${SCRIPT_DIR}/lib/managed_paths.py" new-prefix "$MACTMNF_PREFIX" \
+    || die "Choose an empty prefix or a managed TMNF installation."
   mkdir -p "$MACTMNF_PREFIX"
   if test -f "${MACTMNF_PREFIX}/system.reg"; then
     test -f "${MACTMNF_PREFIX}/.mactmnf-prefix" || die "This prefix is not managed by MacTMNF. Choose a new MACTMNF_PREFIX."
@@ -36,51 +38,45 @@ initialize_prefix() {
   say "Initializing the Wine prefix"
   wine_bin="$(wine_binary)" || die "Wine is not installed."
   wineboot_bin="$(wineboot_binary "$wine_bin")" || die "Cannot locate wineboot."
-  touch "${MACTMNF_PREFIX}/.mactmnf-prefix" "${MACTMNF_PREFIX}/.mactmnf-initializing"
+  touch "${MACTMNF_PREFIX}/.mactmnf-initializing" || die "Cannot mark prefix initialization."
+  if test ! -f "${MACTMNF_PREFIX}/.mactmnf-prefix"; then
+    if ! printf 'tmnf:1\n' >"${MACTMNF_PREFIX}/.mactmnf-prefix"; then
+      rm -f "${MACTMNF_PREFIX}/.mactmnf-prefix" "${MACTMNF_PREFIX}/.mactmnf-initializing"
+      die "Cannot mark prefix ownership."
+    fi
+  fi
+  python3 "${SCRIPT_DIR}/lib/managed_paths.py" profile-baseline "$MACTMNF_PREFIX" \
+    || die "Cannot record pre-Wineboot profiles; initialization remains incomplete."
   # TMNF is native code. Skip optional Mono/Gecko registration so prefix setup
   # does not stop at download dialogs for unrelated .NET or browser runtimes.
-  env WINEPREFIX="$MACTMNF_PREFIX" WINEDEBUG=-all WINEDLLOVERRIDES='mscoree,mshtml=' "$wineboot_bin" --init
-  # A fresh prefix links the Windows profile folders to the real macOS home, so
-  # the game trips macOS privacy prompts for the Desktop, Downloads and media
-  # folders it never touches. Keep Documents on the game's own UserData, and
-  # replace the rest with plain folders inside the prefix. Never copy a personal
-  # profile or overwrite an existing installation's settings and saved replays.
-  local profile name link
+  without_operation_lock env WINEPREFIX="$MACTMNF_PREFIX" WINEDEBUG=-all WINEDLLOVERRIDES='mscoree,mshtml=' "$wineboot_bin" --init \
+    || die "Wine prefix initialization failed; rerun setup to retry."
+  # Redirect fresh Wine default links without touching host data. Preserve older
+  # profile arrangements and require explicit backup/repair when seeding is unsafe.
+  python3 "${SCRIPT_DIR}/lib/managed_paths.py" setup-documents "$MACTMNF_PREFIX" "$MACTMNF_USERDATA" \
+    || die "Documents setup is incomplete; no external settings were seeded."
   mkdir -p "${MACTMNF_USERDATA}/TmForever/Config"
-  for profile in "${MACTMNF_PREFIX}/drive_c/users/"*/; do
-    link="${profile}Documents"
-    if test -L "$link"; then
-      rm "$link"
-      ln -s "$MACTMNF_USERDATA" "$link"
-    fi
-    for name in Desktop Downloads Music Pictures Videos; do
-      link="${profile}${name}"
-      if test -L "$link"; then
-        rm "$link"
-        mkdir -p "$link"
-      fi
-    done
-  done
-  if test ! -e "${MACTMNF_USERDATA}/TmForever/Config/Default.SystemConfig.Gbx"; then
+  if test ! -e "${MACTMNF_USERDATA}/TmForever/Config/Default.SystemConfig.Gbx" \
+    && test ! -L "${MACTMNF_USERDATA}/TmForever/Config/Default.SystemConfig.Gbx"; then
     cp "${MACTMNF_RUNTIME}/config/Default.SystemConfig.Gbx" "${MACTMNF_USERDATA}/TmForever/Config/"
   fi
-  rm -f "${MACTMNF_PREFIX}/.mactmnf-initializing"
+  rm -f "${MACTMNF_PREFIX}/.mactmnf-profile-baseline" "${MACTMNF_PREFIX}/.mactmnf-initializing"
 }
 
-install_directx_runtime() {
-  local extract_dir="${MACTMNF_CACHE}/directx-jun2010-extract"
-  local wine_bin
-  local builtin_d3dx
+install_directx_runtime() (
+  local extract_dir cleanup
 
   if directx_is_current; then
+    repair_runtime_dlls
     say "DirectX End-User Runtimes $DIRECTX_VERSION are already installed"
     return
   fi
 
   download_verified "$DIRECTX_URL" "$DIRECTX_ARCHIVE" "$DIRECTX_SHA256"
-  is_safe_managed_path "$extract_dir" || die "Unsafe DirectX extraction path: $extract_dir"
-  rm -rf "$extract_dir"
-  mkdir -p "$extract_dir"
+  extract_dir="$(mktemp -d "${MACTMNF_CACHE}/directx-extract.XXXXXX")"
+  printf -v cleanup 'rm -rf -- %q' "$extract_dir"
+  # shellcheck disable=SC2064
+  trap "$cleanup" EXIT
   bsdtar -xf "$DIRECTX_ARCHIVE" -C "$extract_dir"
   test -f "${extract_dir}/DXSETUP.exe" || die "DirectX archive did not contain DXSETUP.exe."
 
@@ -93,19 +89,13 @@ install_directx_runtime() {
   # DirectX-only side-by-side components and COM registrations remain present.
   WINEDLLOVERRIDES='mscoree,mshtml=' run_wine wineboot --update
 
-  # DXSETUP replaces the 32-bit Wine d3dx9_30 image with Microsoft's DLL.
-  # TMNF then faults in WoW64 while compiling its startup shaders. Keep the
-  # rest of the installed legacy runtime, but restore Wine's tested compiler.
-  wine_bin="$(wine_binary)" || die "Wine is not installed."
-  builtin_d3dx="$(wine_builtin_d3dx9_30 "$wine_bin")" \
-    || die "Cannot locate Wine's 32-bit d3dx9_30.dll after DirectX setup."
-  cp "$builtin_d3dx" "${MACTMNF_PREFIX}/drive_c/windows/syswow64/d3dx9_30.dll"
+  repair_runtime_dlls
 
   printf '%s\n' "$DIRECTX_SHA256" >"$DIRECTX_MARKER"
   rm -rf "$extract_dir"
   directx_is_current || die "DirectX runtime installation failed."
   say "Installed DirectX End-User Runtimes $DIRECTX_VERSION"
-}
+)
 
 repair_runtime_dlls() {
   local wine_root arch dll source
@@ -158,7 +148,7 @@ install_game() {
       if test "$shutdown_wait" -ge 10; then
         say 'Game installation completed; stopping the legacy installer after its shutdown wait.'
         server_bin="$(wineserver_binary "$(wine_binary)")" || die "Cannot locate wineserver."
-        env WINEPREFIX="$MACTMNF_PREFIX" "$server_bin" -k || true
+        without_operation_lock env WINEPREFIX="$MACTMNF_PREFIX" "$server_bin" -k || true
         wait "$installer_pid" 2>/dev/null || true
         break
       fi
@@ -167,12 +157,12 @@ install_game() {
       if test -f "$installer_log" && grep -Fq 'Installation process succeeded.' "$installer_log"; then
         warn "The installer completed its file installation but did not exit after ${max_wait}s; stopping this prefix."
         server_bin="$(wineserver_binary "$(wine_binary)")" || die "Cannot locate wineserver."
-        env WINEPREFIX="$MACTMNF_PREFIX" "$server_bin" -k || true
+        without_operation_lock env WINEPREFIX="$MACTMNF_PREFIX" "$server_bin" -k || true
         wait "$installer_pid" 2>/dev/null || true
         break
       fi
       server_bin="$(wineserver_binary "$(wine_binary)")" || die "Cannot locate wineserver."
-      env WINEPREFIX="$MACTMNF_PREFIX" "$server_bin" -k || true
+      without_operation_lock env WINEPREFIX="$MACTMNF_PREFIX" "$server_bin" -k || true
       die "TMNF installation timed out. See $installer_log; rerun make install to retry."
     fi
     sleep 2
@@ -203,9 +193,8 @@ configure_competition_patch() {
     '  - id: CoreMod' >"${profile_dir}/competition.yaml"
 }
 
-install_competition_patch() {
-  local extract_dir="${MACTMNF_CACHE}/tmloader-extract"
-  local entry
+install_competition_patch() (
+  local extract_dir entry cleanup
 
   if competition_patch_is_current; then
     configure_competition_patch
@@ -214,17 +203,18 @@ install_competition_patch() {
   fi
 
   download_verified "$TMLOADER_URL" "$TMLOADER_ARCHIVE" "$TMLOADER_SHA256"
-  is_safe_managed_path "$extract_dir" || die "Unsafe ModLoader extraction path: $extract_dir"
   is_safe_managed_path "$TMLOADER_DIR" || die "Unsafe ModLoader path: $TMLOADER_DIR"
 
   while IFS= read -r entry; do
     case "$entry" in
-      /*|../*|*/../*) die "Unsafe path in ModLoader archive: $entry" ;;
+      /*|../*|*/../*|*/..) die "Unsafe path in ModLoader archive: $entry" ;;
     esac
   done < <(unzip -Z1 "$TMLOADER_ARCHIVE")
 
-  rm -rf "$extract_dir"
-  mkdir -p "$extract_dir"
+  extract_dir="$(mktemp -d "${MACTMNF_CACHE}/tmloader-extract.XXXXXX")"
+  printf -v cleanup 'rm -rf -- %q' "$extract_dir"
+  # shellcheck disable=SC2064
+  trap "$cleanup" EXIT
   unzip -q "$TMLOADER_ARCHIVE" -d "$extract_dir"
   verify_file "${extract_dir}/TMLoader.exe" "$TMLOADER_EXE_SHA256" \
     || die "ModLoader executable verification failed."
@@ -243,9 +233,19 @@ install_competition_patch() {
 
   competition_patch_is_current || die "Competition Patch installation failed."
   say "Installed Competition Patch $TMCOMP_VERSION with ModLoader bundle $TMLOADER_BUNDLE_VERSION"
-}
+)
 
 main() {
+  case "${1:-}" in
+    ''|directx) test "$#" -le 1 || die "Usage: install.sh [directx]" ;;
+    -h|--help) say 'Usage: install.sh [directx]'; return ;;
+    *) die "Unknown installation command: $1" ;;
+  esac
+  validate_launch_options
+  validate_managed_layout || die "Unsafe installation layout."
+  python3 "${SCRIPT_DIR}/lib/managed_paths.py" new-prefix "$MACTMNF_PREFIX" \
+    || die "Choose an empty prefix or a managed TMNF installation."
+  guard_prefix_operation "${SCRIPT_DIR}/install.sh" "$@"
   require_macos
   install_rosetta
   install_wine_runtime
@@ -260,7 +260,6 @@ main() {
 
   install_game
   install_directx_runtime
-  repair_runtime_dlls
   install_competition_patch
   "${SCRIPT_DIR}/bin/mactmnf" d9vk
   "${SCRIPT_DIR}/bin/mactmnf" app
@@ -268,4 +267,6 @@ main() {
   say "Run ./bin/mactmnf play to start the game."
 }
 
-main "$@"
+if test "${BASH_SOURCE[0]}" = "$0"; then
+  main "$@"
+fi

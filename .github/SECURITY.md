@@ -24,7 +24,12 @@ Forever. A report matters most for:
 - The installer and build scripts, which download archives over the network and
   check them by SHA-256 (`install.sh`, `tools/`, `config/sources.json`).
 - The Wine and D9VK patches under `patches/`.
-- The runtime archive published on the Releases page.
+- The runtime archive published on the Releases page, including redistributed
+  upstream Wine, D9VK, MoltenVK, x87sidecar and bundled libraries.
 
-The game, Microsoft DirectX and Wine upstream come from their own hosts and are
-not redistributed here. Report a flaw in that upstream code to its own project.
+The game and Microsoft DirectX are downloaded from their original hosts during
+installation and are not redistributed here. Report flaws in their code to
+their vendors. Wine is built from upstream source with local patches and bundled
+in our runtime, so vulnerabilities in the version we distribute are in scope.
+For flaws in bundled upstream components, coordinate with the upstream project
+as well; include the affected MacTMNF release so we can track a runtime update.

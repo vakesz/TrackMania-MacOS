@@ -1,12 +1,16 @@
 Subject: winmm: Give the multimedia timer thread its own lock.
 
-The timer service thread held the shared WINMM_cs across its callback and its
-condition-variable wait, so a callback that re-entered winmm could contend for
-that lock or deadlock during startup. Move the timer state under a dedicated
-TIME_cs and release only that lock around the callback.
+Keep multimedia timer state under a dedicated TIME_cs rather than the shared
+WINMM_cs used by other winmm state. The original code already released its
+lock around callbacks, and the condition-variable wait releases the lock while
+sleeping. This change isolates timer-state contention; it does not fix a lock
+being held throughout a callback or wait.
 
-Based on Wine 36b6a2cf679. Exercised by the audio and wait-handling probes
-(make smoke).
+Based on Wine 36b6a2cf679. tests/multimedia-timer.c exercises direct timer
+concurrency, callback reentry, synchronous cancellation and restart through
+./tools/smoke-sync.sh. Both architectures pass in an isolated pinned runtime;
+native Windows reference runs and a lock-contention performance comparison
+remain separate qualification steps.
 
 diff --git a/dlls/winmm/time.c b/dlls/winmm/time.c
 index e03bbac34c6..e2b8bace5a2 100644

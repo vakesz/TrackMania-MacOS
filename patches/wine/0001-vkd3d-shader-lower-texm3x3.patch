@@ -5,14 +5,16 @@ instructions. vkd3d left them unlowered, so those pixel shaders failed to
 compile and the affected materials did not render. Lower each into its dp3
 and sampling sequence during d3dbc instruction lowering.
 
-Based on Wine 36b6a2cf679. Exercised by the shader-profile probes
-(make smoke-shaders).
+Based on Wine 36b6a2cf679. Preserve E in R = 2*dot(N,E)/dot(N,N)*N-E;
+only N may be normalized. tests/legacy-shader-render.c checks this lowering
+through a scratch-built shader library separately from D9VK GPU rendering.
+Wine's own render path still needs GPU validation.
 
 diff --git a/libs/vkd3d/libs/vkd3d-shader/ir.c b/libs/vkd3d/libs/vkd3d-shader/ir.c
 index c8f8b8b7478..fbe9b3f1372 100644
 --- a/libs/vkd3d/libs/vkd3d-shader/ir.c
 +++ b/libs/vkd3d/libs/vkd3d-shader/ir.c
-@@ -3487,6 +3487,219 @@ static enum vkd3d_result vsir_program_lower_texbem(struct vsir_program *program,
+@@ -3487,6 +3487,209 @@ static enum vkd3d_result vsir_program_lower_texbem(struct vsir_program *program,
      return VKD3D_OK;
  }
  
@@ -131,7 +133,6 @@ index c8f8b8b7478..fbe9b3f1372 100644
 +     * mov    rEYE.y, tPAD1.w
 +     * mov    rEYE.z, tN.w
 +     * nrm    rMATRIX.xyz, rMATRIX.xyz
-+     * nrm    rEYE.xyz, rEYE.xyz
 +     * dp3    srDOT, rMATRIX.xyz, rEYE.xyz
 +     * add    srDOUBLE_DOT, srDOT, srDOT
 +     * mad    srREFLECTION, rMATRIX.xyz, srDOUBLE_DOT, -rEYE.xyz
@@ -142,7 +143,7 @@ index c8f8b8b7478..fbe9b3f1372 100644
 +        return VKD3D_ERROR_INVALID_SHADER;
 +
 +    eye_tmp_idx = program->temp_count++;
-+    if (!vsir_program_iterator_insert_after(it, 9))
++    if (!vsir_program_iterator_insert_after(it, 8))
 +        return VKD3D_ERROR_OUT_OF_MEMORY;
 +
 +    ins = vsir_program_iterator_current(it);
@@ -184,15 +185,6 @@ index c8f8b8b7478..fbe9b3f1372 100644
 +    vsir_src_operand_init_temp_f32v4(&ins->src[0], matrix_tmp_idx);
 +
 +    ins = vsir_program_iterator_next(&out_it);
-+    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_NRM, 1, 1))
-+        return VKD3D_ERROR_OUT_OF_MEMORY;
-+    vsir_dst_operand_init(&ins->dst[0], VSIR_REGISTER_TEMP, VSIR_DATA_F32, 1);
-+    ins->dst[0].reg.idx[0].offset = eye_tmp_idx;
-+    ins->dst[0].reg.dimension = VSIR_DIMENSION_VEC4;
-+    ins->dst[0].write_mask = VKD3DSP_WRITEMASK_0 | VKD3DSP_WRITEMASK_1 | VKD3DSP_WRITEMASK_2;
-+    vsir_src_operand_init_temp_f32v4(&ins->src[0], eye_tmp_idx);
-+
-+    ins = vsir_program_iterator_next(&out_it);
 +    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_DP3, 1, 2))
 +        return VKD3D_ERROR_OUT_OF_MEMORY;
 +    dot_id = program->ssa_count++;
@@ -232,7 +224,7 @@ index c8f8b8b7478..fbe9b3f1372 100644
  static enum vkd3d_result vsir_program_lower_dcl_input(struct vsir_program *program,
          struct vkd3d_shader_instruction *ins, struct vsir_transformation_context *ctx)
  {
-@@ -3741,6 +3954,9 @@ static enum vkd3d_result vsir_program_lower_d3dbc_instructions(struct vsir_progr
+@@ -3741,6 +3944,9 @@ static enum vkd3d_result vsir_program_lower_d3dbc_instructions(struct vsir_progr
      struct vsir_program_iterator it = vsir_program_iterator(&program->instructions);
      struct vkd3d_shader_message_context *message_context = ctx->message_context;
      struct vkd3d_shader_instruction *ins;
@@ -242,7 +234,7 @@ index c8f8b8b7478..fbe9b3f1372 100644
      unsigned int tmp_idx = ~0u;
  
      for (ins = vsir_program_iterator_head(&it); ins; ins = vsir_program_iterator_next(&it))
-@@ -3862,15 +4078,37 @@ static enum vkd3d_result vsir_program_lower_d3dbc_instructions(struct vsir_progr
+@@ -3862,15 +4068,37 @@ static enum vkd3d_result vsir_program_lower_d3dbc_instructions(struct vsir_progr
              case VSIR_OP_TEXM3x2PAD:
              case VSIR_OP_TEXM3x2TEX:
              case VSIR_OP_TEXM3x3DIFF:

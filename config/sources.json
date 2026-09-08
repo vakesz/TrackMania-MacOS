@@ -1,6 +1,6 @@
 {
   "wine": {"git": "https://github.com/wine-mirror/wine.git", "revision": "36b6a2cf679fb395f668a917b76537190e212d9c"},
-  "d9vk": {"git": "https://github.com/Sikarugir-App/d9vk.git", "revision": "905027e8e8cb45b7b54e54d3c3458ef61444949b", "submodules": true},
+  "d9vk": {"git": "https://github.com/Sikarugir-App/d9vk.git", "revision": "f229921c1b7f14edeadeccff04a9e65d0a016148", "submodules": true},
   "x87sidecar": {"git": "https://github.com/athei/x87sidecar.git", "revision": "4e9c7386d9253e838692c05015de9ae61bd6a11f"},
   "moltenvk": {"url": "https://github.com/KhronosGroup/MoltenVK/archive/refs/tags/v1.4.2.tar.gz", "sha256": "6864db532f1dbbdb621a8d0ec13f24edae318fd9269dd3dd0cdff791334bb1cb"},
   "freetype": {"url": "https://downloads.sourceforge.net/project/freetype/freetype2/2.14.3/freetype-2.14.3.tar.xz", "sha256": "36bc4f1cc413335368ee656c42afca65c5a3987e8768cc28cf11ba775e785a5f"},

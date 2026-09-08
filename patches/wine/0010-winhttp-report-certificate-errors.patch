@@ -1,0 +1,138 @@
+Subject: winhttp: Report certificate rejection reasons without weakening validation.
+
+Based on Wine 36b6a2cf679fb395f668a917b76537190e212d9c.
+
+The runtime 0.2 scratch tests reject untrusted, expired and hostname-mismatched
+certificates, but report ERROR_WINHTTP_SECURE_CHANNEL_ERROR without a certificate
+failure callback. Preserve the validator's error and allocation failures instead
+of overwriting them with the generic channel error. Translate only the seven
+certificate errors to a DWORD WINHTTP_CALLBACK_STATUS_SECURE_FAILURE reason and
+return ERROR_WINHTTP_SECURE_FAILURE. Credential acquisition and the existing
+async REQUEST_ERROR notification path are unchanged. Explicit transport and
+allocation errors are preserved; other SSPI failures remain channel errors.
+
+Release a rejected certificate chain even though the connection never became
+secure, and free any remaining SSPI output token on handshake exit, including
+send failure. Detach and release the failed connection and free its address
+before invoking the reentrant callback through send_callback, which preserves
+the notification mask and request context.
+
+This is a diagnostic compatibility fix: certificate rejection is maintained.
+Security ignore options and SSL validation policy are unchanged. The combined
+certificate-error ignore ladder is a separate backlog issue.
+
+Regression coverage is in tests/network.c and tests/test_network_runtime.py.
+After compiling both WinHTTP DLL architectures and integrating them into a
+disposable runtime overlay, run from the MacTMNF repository root:
+
+    MACTMNF_TEST_RUNTIME=/absolute/path/to/patched-runtime python3 tests/test_network_runtime.py
+
+Synchronous and asynchronous controls and rejection cases pass with isolated
+rebuilt DLLs for i686 and x86_64, loaded app-locally inside disposable prefixes.
+Async checks cover callback count, context, payload size, ordering and terminal
+REQUEST_ERROR. This does not qualify a complete runtime. Callback close/retry,
+allocation failures and the remaining certificate-error categories still need
+runtime coverage and native Windows comparison.
+
+diff --git a/dlls/winhttp/net.c b/dlls/winhttp/net.c
+index 05922ac..58dbef5 100644
+--- a/dlls/winhttp/net.c
++++ b/dlls/winhttp/net.c
+@@ -369,7 +369,7 @@ DWORD netconn_secure_connect( struct netconn *conn, WCHAR *hostname, DWORD secur
+ 
+             new_read_buf = realloc(read_buf, read_buf_size + 1024);
+             if(!new_read_buf) {
+-                status = E_OUTOFMEMORY;
++                res = ERROR_OUTOFMEMORY;
+                 break;
+             }
+ 
+@@ -427,16 +427,19 @@ DWORD netconn_secure_connect( struct netconn *conn, WCHAR *hostname, DWORD secur
+         }
+     }
+ 
++    if (out_buf.pvBuffer) FreeContextBuffer( out_buf.pvBuffer );
+     free(read_buf);
+ 
+     if(status != SEC_E_OK || res != ERROR_SUCCESS) {
+-        WARN( "Failed to initialize security context: %#lx\n", status );
++        WARN( "Secure connection failed: SSPI status %#lx, error %lu\n", status, res );
+         free(conn->ssl_read_buf);
+         conn->ssl_read_buf = NULL;
+         free(conn->ssl_write_buf);
+         conn->ssl_write_buf = NULL;
++        CertFreeCertificateChain( conn->chain );
++        conn->chain = NULL;
+         DeleteSecurityContext(&ctx);
+-        return ERROR_WINHTTP_SECURE_CHANNEL_ERROR;
++        return res != ERROR_SUCCESS ? res : ERROR_WINHTTP_SECURE_CHANNEL_ERROR;
+     }
+ 
+ 
+diff --git a/dlls/winhttp/request.c b/dlls/winhttp/request.c
+index 1691d05..0633b8f 100644
+--- a/dlls/winhttp/request.c
++++ b/dlls/winhttp/request.c
+@@ -2012,6 +2012,29 @@ static int get_receive_response_timeout( struct request *request )
+     return request->receive_response_timeout;
+ }
+ 
++static DWORD certificate_error_flags( DWORD error )
++{
++    switch (error)
++    {
++    case ERROR_WINHTTP_SECURE_CERT_REV_FAILED:
++        return WINHTTP_CALLBACK_STATUS_FLAG_CERT_REV_FAILED;
++    case ERROR_WINHTTP_SECURE_INVALID_CERT:
++        return WINHTTP_CALLBACK_STATUS_FLAG_INVALID_CERT;
++    case ERROR_WINHTTP_SECURE_CERT_REVOKED:
++        return WINHTTP_CALLBACK_STATUS_FLAG_CERT_REVOKED;
++    case ERROR_WINHTTP_SECURE_INVALID_CA:
++        return WINHTTP_CALLBACK_STATUS_FLAG_INVALID_CA;
++    case ERROR_WINHTTP_SECURE_CERT_CN_INVALID:
++        return WINHTTP_CALLBACK_STATUS_FLAG_CERT_CN_INVALID;
++    case ERROR_WINHTTP_SECURE_CERT_DATE_INVALID:
++        return WINHTTP_CALLBACK_STATUS_FLAG_CERT_DATE_INVALID;
++    case ERROR_WINHTTP_SECURE_CERT_WRONG_USAGE:
++        return WINHTTP_CALLBACK_STATUS_FLAG_CERT_WRONG_USAGE;
++    default:
++        return 0;
++    }
++}
++
+ static DWORD open_connection( struct request *request )
+ {
+     BOOL is_secure = request->hdr.flags & WINHTTP_FLAG_SECURE;
+@@ -2147,15 +2170,29 @@ static DWORD open_connection( struct request *request )
+             CertFreeCertificateContext( request->server_cert );
+             request->server_cert = NULL;
+ 
+-            if ((ret = ensure_cred_handle( request )) ||
+-                (ret = netconn_secure_connect( netconn, connect->hostname, request->security_flags,
+-                                               &request->cred_handle, request->check_revocation )))
++            if ((ret = ensure_cred_handle( request )))
+             {
+                 request->netconn = NULL;
+                 free( addressW );
+                 netconn_release( netconn );
+                 return ret;
+             }
++            if ((ret = netconn_secure_connect( netconn, connect->hostname, request->security_flags,
++                                               &request->cred_handle, request->check_revocation )))
++            {
++                DWORD flags = certificate_error_flags( ret );
++
++                /* The callback may close the request or retry the connection. */
++                request->netconn = NULL;
++                free( addressW );
++                netconn_release( netconn );
++                if (flags)
++                {
++                    send_callback( &request->hdr, WINHTTP_CALLBACK_STATUS_SECURE_FAILURE, &flags, sizeof(flags) );
++                    return ERROR_WINHTTP_SECURE_FAILURE;
++                }
++                return ret;
++            }
+         }
+ 
+         send_callback( &request->hdr, WINHTTP_CALLBACK_STATUS_CONNECTED_TO_SERVER, addressW, lstrlenW(addressW) + 1 );

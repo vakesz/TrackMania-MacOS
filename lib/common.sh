@@ -1,6 +1,9 @@
 #!/bin/bash
 # shellcheck disable=SC2034
 
+if test "${_MACTMNF_COMMON_SOURCED:-0}" = 1; then return 0; fi
+_MACTMNF_COMMON_SOURCED=1
+
 set -u
 
 MACTMNF_PROJECT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -122,83 +125,65 @@ directx_is_current() {
     && test "$(tr -d '\r\n' <"$DIRECTX_MARKER")" = "$DIRECTX_SHA256"
 }
 
-wine_builtin_d3dx9_30() {
-  local wine_bin="$1"
-  local wine_root
-  local candidate
-
-  wine_root="$(CDPATH='' cd -- "$(dirname -- "$wine_bin")/.." && pwd)"
-  for candidate in \
-    "${wine_root}/lib/wine/i386-windows/d3dx9_30.dll" \
-    "${wine_root}/dlls/d3dx9_30/i386-windows/d3dx9_30.dll"; do
-    if test -f "$candidate"; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-  return 1
-}
-
 d9vk_is_installed() {
   test -f "$MACTMNF_D9VK_DLL" || return 1
   test -f "$PREFIX_D9VK_DLL" || return 1
-  test "$(sha256_file "$MACTMNF_D9VK_DLL")" = "$(sha256_file "$PREFIX_D9VK_DLL")"
+  cmp -s "$MACTMNF_D9VK_DLL" "$PREFIX_D9VK_DLL"
 }
 
-# Print one environment assignment per line; callers read these into an array.
-renderer_overrides() {
+competition_patch_is_ready() {
+  competition_patch_is_current \
+    && test -s "${TMLOADER_DIR}/database/TmForever/products/TmForever/settings.yaml" \
+    && test -s "${TMLOADER_DIR}/database/TmForever/profiles/competition.yaml"
+}
+
+validate_launch_options() {
+  case "$MACTMNF_AUDIO" in on|off) ;; *) die "Unknown MACTMNF_AUDIO: $MACTMNF_AUDIO (use on or off)" ;; esac
+  case "$MACTMNF_X87" in on|off) ;; *) die "Unknown MACTMNF_X87: $MACTMNF_X87 (use on or off)" ;; esac
   case "$MACTMNF_RENDERER" in
-    d9vk) printf '%s' 'd3d9=n' ;;
-    wined3d-vulkan|wined3d-gl) printf '%s' 'd3d9=b' ;;
+    d9vk|wined3d-vulkan|wined3d-gl) ;;
     *) die "Unknown MACTMNF_RENDERER: $MACTMNF_RENDERER (use d9vk, wined3d-vulkan or wined3d-gl)" ;;
   esac
+  if test "$MACTMNF_WINDOW_SIZE" != fullscreen; then
+    if ! [[ "$MACTMNF_WINDOW_SIZE" =~ ^[1-9][0-9]{0,4}x[1-9][0-9]{0,4}$ ]] \
+      || test "${MACTMNF_WINDOW_SIZE%x*}" -gt 65535 \
+      || test "${MACTMNF_WINDOW_SIZE#*x}" -gt 65535; then
+      die "Invalid MACTMNF_WINDOW_SIZE: use fullscreen or WIDTHxHEIGHT, with dimensions 1..65535."
+    fi
+  fi
 }
 
-renderer_env() {
-  case "$MACTMNF_RENDERER" in
-    d9vk)
-      # TMNF and its launcher also call DirectDrawCreateEx at startup. Wine's
-      # ddraw would then bring up a wined3d OpenGL adapter that nothing renders
-      # with, and its GL context work on two threads intermittently derails
-      # 32-bit execution under Rosetta. Keep wined3d on its no-3D adapter.
-      printf '%s\n' \
-        "DXVK_CONFIG_FILE=${DXVK_CONFIG_FILE:-$DXVK_CONF}" \
-        "DXVK_STATE_CACHE_PATH=${DXVK_STATE_CACHE_PATH:-$MACTMNF_PREFIX}" \
-        "DXVK_LOG_LEVEL=${DXVK_LOG_LEVEL:-warn}" \
-        "DXVK_LOG_PATH=${DXVK_LOG_PATH:-none}" \
-        "WINE_D3D_CONFIG=renderer=gdi${WINE_D3D_CONFIG:+,$WINE_D3D_CONFIG}"
-      ;;
-    wined3d-vulkan) printf '%s\n' "WINE_D3D_CONFIG=renderer=vulkan${WINE_D3D_CONFIG:+,$WINE_D3D_CONFIG}" ;;
-    wined3d-gl) printf '%s\n' "WINE_D3D_CONFIG=renderer=gl${WINE_D3D_CONFIG:+,$WINE_D3D_CONFIG}" ;;
-  esac
-}
-
-download_verified() {
+download_verified() (
   local url="$1"
   local destination="$2"
   local expected="$3"
-  local partial="${destination}.partial"
+  local partial cleanup
 
+  [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || die "Invalid download SHA-256."
+  expected="$(printf '%s' "$expected" | tr 'A-F' 'a-f')"
   mkdir -p "$(dirname "$destination")"
   if verify_file "$destination" "$expected"; then
     say "Using cached $(basename "$destination")"
     return 0
   fi
 
-  if test -e "$destination"; then
-    warn "Discarding cached file with the wrong SHA-256: $destination"
-    rm -f "$destination"
-  fi
-
   say "Downloading $(basename "$destination")"
-  rm -f "$partial"
-  curl --fail --location --retry 3 --progress-bar --output "$partial" "$url"
+  partial="$(mktemp "${destination}.partial.XXXXXX")" || die "Cannot stage download."
+  printf -v cleanup 'rm -f -- %q' "$partial"
+  # shellcheck disable=SC2064
+  trap "$cleanup" EXIT
+  trap 'exit 1' HUP INT TERM
+  curl --fail --location --retry 3 --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
+    --progress-bar --output "$partial" "$url" || die "Download failed: $url"
   verify_file "$partial" "$expected" || {
     rm -f "$partial"
     die "SHA-256 verification failed for $url"
   }
-  mv "$partial" "$destination"
-}
+  # Concurrent callers download the same pinned artifact to independent files.
+  # Rename replaces a cache file, never its contents through a symlink.
+  test ! -d "$destination" || die "Download destination is a directory: $destination"
+  mv -f "$partial" "$destination"
+)
 
 wine_binary() {
   if test -n "${MACTMNF_WINE:-}"; then
@@ -210,6 +195,14 @@ wine_binary() {
   else
     return 1
   fi
+}
+
+session_helper() {
+  local wine_bin="$1" helper
+  helper="$(dirname "$(dirname "$wine_bin")")/libexec/mactmnf-session.exe"
+  test -f "$helper" || die "The runtime has no session supervisor. Build and install the current runtime."
+  test -x "$(dirname "$wine_bin")/wineserver" || die "The runtime is missing wineserver."
+  printf '%s\n' "$helper"
 }
 
 configure_translation() {
@@ -253,7 +246,7 @@ wineboot_binary() {
 run_wine() {
   local wine_bin
   wine_bin="$(wine_binary)" || die "Wine is not installed. Run ./install.sh first."
-  env WINEPREFIX="$MACTMNF_PREFIX" WINEDEBUG="${WINEDEBUG:--all}" "$wine_bin" "$@"
+  without_operation_lock env WINEPREFIX="$MACTMNF_PREFIX" WINEDEBUG="${WINEDEBUG:--all}" "$wine_bin" "$@"
 }
 
 configure_wine_audio() {
@@ -268,7 +261,7 @@ configure_wine_audio() {
 
   # Current mmdevapi loads the Unix audio library directly, bypassing DLL
   # overrides. An empty driver list is Wine's supported no-audio setting.
-  env WINEPREFIX="$MACTMNF_PREFIX" WINEDEBUG=-all "$wine_bin" reg add \
+  without_operation_lock env WINEPREFIX="$MACTMNF_PREFIX" WINEDEBUG=-all "$wine_bin" reg add \
     'HKCU\Software\Wine\Drivers' /v Audio /t REG_SZ /d "$driver" /f >/dev/null
 }
 
@@ -282,16 +275,35 @@ rosetta_is_ready() {
 }
 
 is_safe_managed_path() {
-  local path="$1"
-
-  test -n "$path" || return 1
-  test "$path" != "/" || return 1
-  test "$path" != "$HOME" || return 1
-  case "$path" in
-    */../*|*/..|*/./*|*/.) return 1 ;;
-  esac
-  case "$path" in
-    "$HOME"/*|/private/tmp/*|/tmp/*) return 0 ;;
-    *) return 1 ;;
-  esac
+  python3 "${MACTMNF_PROJECT_DIR}/lib/managed_paths.py" path "$1"
 }
+
+validate_managed_layout() {
+  python3 "${MACTMNF_PROJECT_DIR}/lib/managed_paths.py" layout \
+    "$MACTMNF_PREFIX" "$MACTMNF_RUNTIME" "$MACTMNF_LAUNCHER" "$MACTMNF_USERDATA"
+}
+
+require_owned_prefix() {
+  python3 "${MACTMNF_PROJECT_DIR}/lib/managed_paths.py" prefix "$MACTMNF_PREFIX"
+}
+
+guard_prefix_operation() {
+  validate_managed_layout || die "Unsafe installation layout."
+  if test "${MACTMNF_OPERATION_FD+x}" != x; then
+    mkdir -p "$(dirname "$MACTMNF_PREFIX")"
+    exec python3 "${MACTMNF_PROJECT_DIR}/lib/operation_guard.py" run "$MACTMNF_PREFIX" /bin/bash "$@"
+  fi
+  python3 "${MACTMNF_PROJECT_DIR}/lib/operation_guard.py" held "$MACTMNF_PREFIX" \
+    || die "Invalid inherited installation lock."
+}
+
+without_operation_lock() (
+  if test "${MACTMNF_OPERATION_FD+x}" = x; then
+    case "$MACTMNF_OPERATION_FD" in ''|*[!0-9]*) die "Invalid operation descriptor." ;; esac
+    # Bash 3.2 has no dynamic-FD redirection. The descriptor is digits only and
+    # the guarded entry point verified its identity before any Wine invocation.
+    eval "exec ${MACTMNF_OPERATION_FD}>&-"
+  fi
+  unset MACTMNF_OPERATION_FD
+  exec "$@"
+)

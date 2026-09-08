@@ -1,0 +1,20 @@
+Subject: dxso: Preserve the texm3x3vspec eye vector magnitude.
+
+Based on f229921c1b7f14edeadeccff04a9e65d0a016148, after 0003.
+R = 2 * dot(N, E) / dot(N, N) * N - E. Only N may be normalized;
+normalizing E changes volume coordinates even though cube directions agree.
+Keep the shared texm3x3spec path unchanged in this bounded fix.
+
+diff --git a/src/dxso/dxso_compiler.cpp b/src/dxso/dxso_compiler.cpp
+--- a/src/dxso/dxso_compiler.cpp
++++ b/src/dxso/dxso_compiler.cpp
+@@ -2811,7 +2811,8 @@
+         else
+           eyeRay = emitRegisterLoad(ctx.src[1], vec3Mask).id;
+ 
+-        eyeRay = m_module.opNormalize(vec3Type, eyeRay);
++        if (opcode != DxsoOpcode::TexM3x3VSpec)
++          eyeRay = m_module.opNormalize(vec3Type, eyeRay);
+         normal = m_module.opNormalize(vec3Type, normal);
+         uint32_t reflection = m_module.opReflect(vec3Type, eyeRay, normal);
+         reflection = m_module.opFNegate(vec3Type, reflection);

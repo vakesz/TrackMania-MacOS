@@ -492,6 +492,9 @@ def wine():
             'ac_cv_lib_soname_freetype=@rpath/libfreetype.6.dylib',
             'ac_cv_lib_soname_gnutls=@rpath/libgnutls.30.dylib',
             'ac_cv_lib_soname_MoltenVK=@rpath/libMoltenVK.dylib',
+            # pipe2 first appears in the macOS 27 SDK. Wine calls it unguarded, so a
+            # weak import resolved to NULL crashes every launch on older macOS.
+            'ac_cv_func_pipe2=no',
             f'LDFLAGS=-L{DEPS}/lib -Wl,-rpath,{DEPS}/lib -Wl,-headerpad_max_install_names']
     stamp = build / '.mactmnf-configure.json'
     identity = json.dumps({'source': LOCK['wine'], 'arguments': list(map(str, configuration)),

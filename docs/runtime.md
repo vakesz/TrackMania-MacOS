@@ -18,6 +18,9 @@ order to the exact revisions in `config/sources.json`.
 | D9VK 0004 | Preserve the eye vector in `texm3x3vspec` | GPU volume/cube reflection regressions |
 | MoltenVK 0001 | Reuse the dependency sources supplied in a source release | Source archive preparation |
 | x87sidecar 0001 | Scoped PC24/PC53 arithmetic and float-store rounding within a binary64-backed implementation, ported to 0b7c5e5 | Bit-exact numeric, allocator, host-state and interruption probes |
+| x87sidecar 0002 | Skip the scoped FPCR write when the guest rounds to nearest and the host FPCR already gives the same results | The same probes in all translator modes |
+| x87sidecar 0003 | Skip the f32 operand check for values loaded from a 32-bit float | The same probes in all translator modes |
+| x87sidecar 0004 | Run PC24 IR runs in native single precision, falling back to the exact body on any out-of-range value | The same probes with the fast bodies on and off (`X87_PC24_RUNS=0`) |
 
 The filename gaps are intentional. D9VK's two build patches were superseded by
 the pinned upstream update. Rejected experiments are not included in releases.
@@ -34,7 +37,10 @@ Since 0b7c5e5 the translator keeps x87 registers in their native 80-bit layout
 between translated runs and converts a slot to binary64 only where an
 instruction reads it as binary64. Arithmetic inside a run is binary64-backed.
 The verified PC24/PC53 rounding and float-store fixes do not provide general
-80-bit arithmetic or exponent retention.
+80-bit arithmetic or exponent retention. Patch 0004's single-precision bodies
+only run when every value is exactly an f32 and every result stays in the f32
+range; anything else continues in the exact binary64 body, so they compute
+the same results.
 PC64 remains an approximation; extreme underflow/overflow chains, full x87
 status-word exceptions and unmasked traps are not qualified. A value lost from
 the internal representation cannot be recovered by rounding its final store.

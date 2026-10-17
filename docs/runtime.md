@@ -17,7 +17,7 @@ order to the exact revisions in `config/sources.json`.
 | D9VK 0003 | Correct promoted volume-texture destination slice stride | GPU volume red/green and packed-format readback probes |
 | D9VK 0004 | Preserve the eye vector in `texm3x3vspec` | GPU volume/cube reflection regressions |
 | MoltenVK 0001 | Reuse the dependency sources supplied in a source release | Source archive preparation |
-| x87sidecar 0001 | Scoped PC24/PC53 arithmetic and float-store rounding within a binary64-backed implementation | Bit-exact numeric, allocator, host-state and interruption probes |
+| x87sidecar 0001 | Scoped PC24/PC53 arithmetic and float-store rounding within a binary64-backed implementation, ported to 0b7c5e5 | Bit-exact numeric, allocator, host-state and interruption probes |
 
 The filename gaps are intentional. D9VK's two build patches were superseded by
 the pinned upstream update. Rejected experiments are not included in releases.
@@ -30,8 +30,11 @@ output. That limitation is not hidden by the profile or GPU tests.
 
 ## Numeric limits
 
-The translator stores eight binary64 values. The verified PC24/PC53 rounding
-and float-store fixes do not provide general 80-bit state or exponent retention.
+Since 0b7c5e5 the translator keeps x87 registers in their native 80-bit layout
+between translated runs and converts a slot to binary64 only where an
+instruction reads it as binary64. Arithmetic inside a run is binary64-backed.
+The verified PC24/PC53 rounding and float-store fixes do not provide general
+80-bit arithmetic or exponent retention.
 PC64 remains an approximation; extreme underflow/overflow chains, full x87
 status-word exceptions and unmasked traps are not qualified. A value lost from
 the internal representation cannot be recovered by rounding its final store.

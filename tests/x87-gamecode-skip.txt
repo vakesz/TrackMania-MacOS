@@ -1,0 +1,17 @@
+?SetBlend@GmMat3@@QAEXABV1@0M@Z
+?SetBlend@GmIso4@@QAEXABV1@0M@Z
+?Set@GmQuat@@QAEXABVGmMat3@@@Z
+?GetRotation@GmQuat@@QAEXAAMAAVGmVec3@@@Z
+?GetYawPitchRoll@GmQuat@@QAEXAAM00@Z
+?ComputeSquad@GmQuat@@QAEXAAV1@000M@Z
+?SetLinearInterp@GmLocVal@@QAEXABV1@0M@Z
+?SetLinearInterp@GmCamVal@@QAEXABV1@0M@Z
+?GetLocFreeVal@GmLocVal@@QBEXAAVGmLocFreeVal@@@Z
+?GetCamFreeVal@GmCamVal@@QBEXAAVGmCamFreeVal@@@Z
+?GetAngle@GmVec3@@SAMABV1@0@Z
+?StaticInit@GmSurf@@SAXXZ
+?SetNull@GmBoxOriented@@QAEXXZ
+?GetCellAt@GmBinTree2@@ABEKABVGmNat2@@@Z
+?GetInnerAngle@GmVec3@@SAMABV1@0@Z
+?GetBoundingBox@GmSurf@@QBEXAAVGmBoxAligned@@@Z
+?ClipSegment@GmSurf@@SAHABVGmVec3@@0ABV1@ABVGmIso4@@AAM@Z

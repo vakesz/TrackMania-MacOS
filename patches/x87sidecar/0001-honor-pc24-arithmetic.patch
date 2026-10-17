@@ -1,6 +1,6 @@
 Subject: x87: Honor PC24/PC53 arithmetic and floating-store rounding.
 
-Based on athei/x87sidecar 4e9c7386d9253e838692c05015de9ae61bd6a11f.
+Based on athei/x87sidecar 0b7c5e54dad37f6ed8374b91443e2d2083652452 (ported from 4e9c738).
 TMNF uses control word 0x007f. Always computing in f64 ignores its PC field.
 
 Share arithmetic emission across IR, direct, and peephole paths. Native f32
@@ -29,20 +29,29 @@ exception reporting or unmasked traps. PC64 still uses upstream's f64
 approximation. Full80 exponent handling and PC24 extreme underflow are not
 addressed here. Store rounding is independent of the precision-control field.
 
+Port notes for 0b7c5e5: upstream now keeps x87 registers in their native
+80-bit slots across replies (#44). StoreF32 from such a slot keeps upstream's
+narrowing (the 80-bit value converted with round-to-odd) and then applies the
+guest-RC store rounding of this patch, so the value is still rounded once.
+The GPR pressure estimate for that StoreF32 case is unchanged at 3.
+
+diff --git a/rosetta_core/CMakeLists.txt b/rosetta_core/CMakeLists.txt
+index 2d865f0..960dec8 100644
+--- a/rosetta_core/CMakeLists.txt
++++ b/rosetta_core/CMakeLists.txt
+@@ -21,6 +21,7 @@ add_library(rosetta_core STATIC
+     src/X87Cache.cpp
+     src/X87IRBuild.cpp
+     src/X87IRLower.cpp
++    src/X87Precision.cpp
+     src/X87IROptimize.cpp
+     src/IRInstr.cpp
+     src/OpcodeCompatibility.cpp
 diff --git a/rosetta_core/include/rosetta_core/TranslatorX87Helpers.hpp b/rosetta_core/include/rosetta_core/TranslatorX87Helpers.hpp
-index 127d55e..dcf484b 100644
+index 70af964..05995b1 100644
 --- a/rosetta_core/include/rosetta_core/TranslatorX87Helpers.hpp
 +++ b/rosetta_core/include/rosetta_core/TranslatorX87Helpers.hpp
-@@ -33,7 +33,7 @@
- // =============================================================================
- // X87State layout constants  (all offsets within X87State, relative to Xbase)
- //
--//   X87State (packed, 0x56 bytes)
-+//   X87State (packed, 0x48 bytes)
- //   +0x00  uint16_t  control_word
- //   +0x02  uint16_t  status_word    ← TOP in bits [13:11]
- //   +0x04  int16_t   tag_word
-@@ -110,12 +110,11 @@
+@@ -166,12 +166,11 @@ auto emit_store_top(AssemblerBuffer& buf, int Xbase, int Wd_new_top, int Wd_tmp)
  // =============================================================================
  // 2d — ST(i) byte offset computation
  //
@@ -58,20 +67,28 @@ index 127d55e..dcf484b 100644
  //
  // Wd_index and Wd_offset may be the same register.
  // =============================================================================
-diff --git a/rosetta_core/CMakeLists.txt b/rosetta_core/CMakeLists.txt
-index 868e218..7e16498 100644
---- a/rosetta_core/CMakeLists.txt
-+++ b/rosetta_core/CMakeLists.txt
-@@ -20,6 +20,7 @@
-     src/X87Cache.cpp
-     src/X87IRBuild.cpp
-     src/X87IRLower.cpp
-+    src/X87Precision.cpp
-     src/X87IROptimize.cpp
-     src/IRInstr.cpp
-     src/OpcodeCompatibility.cpp
+diff --git a/rosetta_core/include/rosetta_core/X87Precision.hpp b/rosetta_core/include/rosetta_core/X87Precision.hpp
+new file mode 100644
+index 0000000..c2beb22
+--- /dev/null
++++ b/rosetta_core/include/rosetta_core/X87Precision.hpp
+@@ -0,0 +1,14 @@
++#pragma once
++
++struct TranslationResult;
++struct AssemblerBuffer;
++
++// Three transient GPRs; two FPRs for Sqrt, three for binary arithmetic.
++// The borrowed GPR and guest NZCV survive.
++enum class X87Arithmetic { Mul = 0, Div = 1, Add = 2, Sub = 3, Sqrt = 4 };
++void emit_x87_arithmetic(TranslationResult& result, AssemblerBuffer& buf, int base, int scratch,
++                         X87Arithmetic op, int dst, int lhs, int rhs = -1);
++
++// Two transient GPRs, no FPRs. Preserves FPCR/NZCV; accumulates FPSR flags.
++void emit_x87_store_f32(TranslationResult& result, AssemblerBuffer& buf, int base,
++                        int dst, int src);
 diff --git a/rosetta_core/src/TranslatorX87.cpp b/rosetta_core/src/TranslatorX87.cpp
-index d4e1b3b..e5dfded 100644
+index c8d8808..910ddb2 100644
 --- a/rosetta_core/src/TranslatorX87.cpp
 +++ b/rosetta_core/src/TranslatorX87.cpp
 @@ -1,3 +1,4 @@
@@ -79,7 +96,7 @@ index d4e1b3b..e5dfded 100644
  #include "rosetta_core/TranslatorX87.h"
  
  #include <bit>
-@@ -579,7 +580,7 @@
+@@ -622,7 +623,7 @@ auto translate_fadd(TranslationResult* a1, IRInstr* a2) -> void {
          emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, depth_src), Wd_tmp, Dd_src, Xst_base);
          const int Wk = emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, depth_dst), Wd_tmp,
                                      Dd_dst, Xst_base);
@@ -88,7 +105,7 @@ index d4e1b3b..e5dfded 100644
          emit_store_st_at_offset(buf, Xbase, Wk, Dd_dst, Xst_base);
      } else {
          // -----------------------------------------------------------------
-@@ -614,7 +615,7 @@
+@@ -657,7 +658,7 @@ auto translate_fadd(TranslationResult* a1, IRInstr* a2) -> void {
          }
  
          // Step 5: add
@@ -97,7 +114,7 @@ index d4e1b3b..e5dfded 100644
  
          // Step 6: store back to ST(0).
          // Opt 3: addr_reg is a different free-pool register, so Wd_tmp still
-@@ -668,7 +669,7 @@
+@@ -711,7 +712,7 @@ auto translate_faddp(TranslationResult* a1, IRInstr* a2) -> void {
      emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, 0), Wd_tmp, Dd_src, Xst_base);
      const int Wk3 =
          emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, depth_dst), Wd_tmp, Dd_dst, Xst_base);
@@ -106,7 +123,7 @@ index d4e1b3b..e5dfded 100644
      emit_store_st_at_offset(buf, Xbase, Wk3, Dd_dst, Xst_base);
  
      // Pop: TOP = (TOP + 1) & 7.  Wd_tmp is dead after emit_store_st_at_offset,
-@@ -747,9 +748,9 @@
+@@ -790,9 +791,9 @@ auto translate_fsub(TranslationResult* a1, IRInstr* a2) -> void {
                                       Dd_dst, Xst_base);
  
          if (is_fsubr) {
@@ -118,7 +135,7 @@ index d4e1b3b..e5dfded 100644
          }
  
          emit_store_st_at_offset(buf, Xbase, Wk4, Dd_dst, Xst_base);
-@@ -777,9 +778,9 @@
+@@ -820,9 +821,9 @@ auto translate_fsub(TranslationResult* a1, IRInstr* a2) -> void {
          }
  
          if (is_fsubr) {
@@ -130,7 +147,7 @@ index d4e1b3b..e5dfded 100644
          }
  
          // Opt 3: addr_reg is a separate free-pool register; Wd_tmp still holds
-@@ -839,9 +840,9 @@
+@@ -882,9 +883,9 @@ auto translate_fsubp(TranslationResult* a1, IRInstr* a2) -> void {
          emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, depth_dst), Wd_tmp, Dd_dst, Xst_base);
  
      if (is_fsubrp) {
@@ -142,7 +159,7 @@ index d4e1b3b..e5dfded 100644
      }
  
      emit_store_st_at_offset(buf, Xbase, Wk6, Dd_dst, Xst_base);
-@@ -922,9 +923,9 @@
+@@ -965,9 +966,9 @@ auto translate_fdiv(TranslationResult* a1, IRInstr* a2) -> void {
                                       Dd_dst, Xst_base);
  
          if (is_fdivr) {
@@ -154,7 +171,7 @@ index d4e1b3b..e5dfded 100644
          }
  
          emit_store_st_at_offset(buf, Xbase, Wk7, Dd_dst, Xst_base);
-@@ -952,9 +953,9 @@
+@@ -995,9 +996,9 @@ auto translate_fdiv(TranslationResult* a1, IRInstr* a2) -> void {
          }
  
          if (is_fdivr) {
@@ -166,7 +183,7 @@ index d4e1b3b..e5dfded 100644
          }
  
          // Opt 3: addr_reg is a separate free-pool register; Wd_tmp still holds
-@@ -1014,9 +1015,9 @@
+@@ -1057,9 +1058,9 @@ auto translate_fdivp(TranslationResult* a1, IRInstr* a2) -> void {
          emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, depth_dst), Wd_tmp, Dd_dst, Xst_base);
  
      if (is_fdivrp) {
@@ -178,8 +195,8 @@ index d4e1b3b..e5dfded 100644
      }
  
      emit_store_st_at_offset(buf, Xbase, Wk9, Dd_dst, Xst_base);
-@@ -1112,7 +1113,7 @@
-     free_gpr(*a1, addr_reg);
+@@ -1171,7 +1172,7 @@ auto translate_fiadd(TranslationResult* a1, IRInstr* a2) -> void {
+     emit_load_int_operand(*a1, buf, &a2->operands[0], is_m16, Dd_int);
  
      // Step 5: add
 -    emit_fadd_f64(buf, Dd_st0, Dd_st0, Dd_int);
@@ -187,7 +204,7 @@ index d4e1b3b..e5dfded 100644
  
      // Step 6: store result back to ST(0).
      // Opt 3: Wd_tmp still holds the ST(0) byte offset from emit_load_st above.
-@@ -1192,7 +1193,7 @@
+@@ -1251,7 +1252,7 @@ auto translate_fmul(TranslationResult* a1, IRInstr* a2) -> void {
          emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, 0), Wd_tmp, Dd_src, Xst_base);
          const int Wk11 = emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, depth_dst), Wd_tmp,
                                        Dd_dst, Xst_base);
@@ -196,7 +213,7 @@ index d4e1b3b..e5dfded 100644
          emit_store_st_at_offset(buf, Xbase, Wk11, Dd_dst, Xst_base);
  
          // Pop: TOP = (TOP + 1) & 7.  Wd_tmp is dead after emit_store_st_at_offset.
-@@ -1215,7 +1216,7 @@
+@@ -1274,7 +1275,7 @@ auto translate_fmul(TranslationResult* a1, IRInstr* a2) -> void {
          emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, depth_src), Wd_tmp, Dd_src, Xst_base);
          const int Wk12 = emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, depth_dst), Wd_tmp,
                                        Dd_dst, Xst_base);
@@ -205,7 +222,7 @@ index d4e1b3b..e5dfded 100644
          emit_store_st_at_offset(buf, Xbase, Wk12, Dd_dst, Xst_base);
      } else {
          // ---------------------------------------------------------------------
-@@ -1248,7 +1249,7 @@
+@@ -1307,7 +1308,7 @@ auto translate_fmul(TranslationResult* a1, IRInstr* a2) -> void {
          }
  
          // Step 5: multiply
@@ -214,16 +231,16 @@ index d4e1b3b..e5dfded 100644
  
          // Step 6: store back to ST(0).
          // Opt 3: addr_reg is a separate free-pool register; Wd_tmp still holds
-@@ -1400,7 +1401,7 @@
-         // Load ST(0) as f64, then narrow to f32 if needed.
-         emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, 0), Wd_tmp, Dd_src, Xst_base);
+@@ -1512,7 +1513,7 @@ auto translate_fst(TranslationResult* a1, IRInstr* a2) -> void {
+             emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, 0), Wd_tmp, Dd_src, Xst_base);
+         }
          if (is_f32) {
 -            emit_fcvt_d_to_s(buf, Dd_src, Dd_src);
 +            emit_x87_store_f32(*a1, buf, Xbase, Dd_src, Dd_src);
          }
-
+ 
          const int addr_reg =
-@@ -2039,7 +2040,7 @@
+@@ -2179,7 +2180,7 @@ auto translate_fsqrt(TranslationResult* a1, IRInstr* /*a2*/) -> void {
      const int Dd = alloc_free_fpr(*a1);
  
      const int Wk18 = emit_load_st(buf, Xbase, Wd_top, resolve_depth(*a1, 0), Wd_tmp, Dd, Xst_base);
@@ -232,8 +249,8 @@ index d4e1b3b..e5dfded 100644
      // Opt 3: Wd_tmp still holds the ST(0) byte offset from emit_load_st above.
      emit_store_st_at_offset(buf, Xbase, Wk18, Dd, Xst_base);
  
-@@ -2355,7 +2356,7 @@
-     free_gpr(*a1, addr_reg);
+@@ -2501,7 +2502,7 @@ auto translate_fidiv(TranslationResult* a1, IRInstr* a2) -> void {
+     emit_load_int_operand(*a1, buf, &a2->operands[0], is_m16, Dd_int);
  
      // Step 5: FDIV ST(0), integer
 -    emit_fdiv_f64(buf, Dd_st0, Dd_st0, Dd_int);
@@ -241,8 +258,8 @@ index d4e1b3b..e5dfded 100644
  
      // Step 6: store result back to ST(0).
      // Opt 3: Wd_tmp still holds the ST(0) byte offset from emit_load_st above.
-@@ -2419,7 +2420,7 @@
-     free_gpr(*a1, addr_reg);
+@@ -2547,7 +2548,7 @@ auto translate_fimul(TranslationResult* a1, IRInstr* a2) -> void {
+     emit_load_int_operand(*a1, buf, &a2->operands[0], is_m16, Dd_int);
  
      // Step 5: FMUL ST(0), integer
 -    emit_fmul_f64(buf, Dd_st0, Dd_st0, Dd_int);
@@ -250,8 +267,8 @@ index d4e1b3b..e5dfded 100644
  
      // Step 6: store result back to ST(0).
      // Opt 3: Wd_tmp still holds the ST(0) byte offset from emit_load_st above.
-@@ -2481,7 +2482,7 @@
-     free_gpr(*a1, addr_reg);
+@@ -2592,7 +2593,7 @@ auto translate_fisub(TranslationResult* a1, IRInstr* a2) -> void {
+     emit_load_int_operand(*a1, buf, &a2->operands[0], is_m16, Dd_int);
  
      // Step 5: FSUB ST(0) = ST(0) - integer
 -    emit_fsub_f64(buf, Dd_st0, Dd_st0, Dd_int);
@@ -259,8 +276,8 @@ index d4e1b3b..e5dfded 100644
  
      // Step 6: store result back to ST(0).
      // Opt 3: Wd_tmp still holds the ST(0) byte offset from emit_load_st above.
-@@ -2545,7 +2546,7 @@
-     free_gpr(*a1, addr_reg);
+@@ -2639,7 +2640,7 @@ auto translate_fidivr(TranslationResult* a1, IRInstr* a2) -> void {
+     emit_load_int_operand(*a1, buf, &a2->operands[0], is_m16, Dd_int);
  
      // Step 5: FDIV Dd_st0, Dd_int, Dd_st0  — integer / ST(0)  (reversed)
 -    emit_fdiv_f64(buf, Dd_st0, Dd_int, Dd_st0);
@@ -268,8 +285,8 @@ index d4e1b3b..e5dfded 100644
  
      // Step 6: store result back to ST(0).
      // Opt 3: Wd_tmp still holds the ST(0) byte offset from emit_load_st above.
-@@ -2987,7 +2988,7 @@
-     free_gpr(*a1, addr_reg);
+@@ -3149,7 +3150,7 @@ auto translate_fisubr(TranslationResult* a1, IRInstr* a2) -> void {
+     emit_load_int_operand(*a1, buf, &a2->operands[0], is_m16, Dd_int);
  
      // Step 5: FSUB Dd_st0, Dd_int, Dd_st0 — integer - ST(0) (REVERSED)
 -    emit_fsub_f64(buf, Dd_st0, Dd_int, Dd_st0);
@@ -278,7 +295,7 @@ index d4e1b3b..e5dfded 100644
      // Step 6: store result
      emit_store_st_at_offset(buf, Xbase, Wk, Dd_st0, Xst_base);
 diff --git a/rosetta_core/src/TranslatorX87Fusion.cpp b/rosetta_core/src/TranslatorX87Fusion.cpp
-index 051a33e..a2280b9 100644
+index c146d7e..5b3a8d8 100644
 --- a/rosetta_core/src/TranslatorX87Fusion.cpp
 +++ b/rosetta_core/src/TranslatorX87Fusion.cpp
 @@ -1,3 +1,4 @@
@@ -286,7 +303,7 @@ index 051a33e..a2280b9 100644
  #include "rosetta_core/TranslatorX87Fusion.h"
  
  #include <cstdint>
-@@ -271,22 +272,22 @@
+@@ -275,22 +276,22 @@ static auto try_fuse_fld_arithp(TranslationResult* a1, IRInstr* fld_instr, IRIns
  
      switch (arith) {
          case kAdd:
@@ -315,7 +332,7 @@ index 051a33e..a2280b9 100644
              break;
      }
  
-@@ -386,22 +387,22 @@
+@@ -390,22 +391,22 @@ static auto try_fuse_fld_arith(TranslationResult* a1, IRInstr* fld_instr, IRInst
      // 3. FOP into Dd_a.
      switch (arith) {
          case kAdd:
@@ -344,7 +361,7 @@ index 051a33e..a2280b9 100644
              break;
      }
      free_fpr(*a1, Dd_b);
-@@ -461,11 +462,11 @@
+@@ -465,11 +466,11 @@ static auto try_fuse_fxch_arithp(TranslationResult* a1, IRInstr* fxch_instr, IRI
          return std::nullopt;
      }
  
@@ -361,7 +378,7 @@ index 051a33e..a2280b9 100644
          a1->x87_cache.run_remaining--;
      }
  
-@@ -501,9 +502,11 @@
+@@ -505,9 +506,11 @@ static auto try_fuse_fxch_arithp(TranslationResult* a1, IRInstr* fxch_instr, IRI
              break;
          }
          default:
@@ -373,16 +390,16 @@ index 051a33e..a2280b9 100644
      return 2;
  }
  
-@@ -568,7 +571,7 @@
+@@ -572,7 +575,7 @@ static auto try_fuse_fld_fstp(TranslationResult* a1, IRInstr* fld_instr, IRInstr
      } else {
          const bool is_f32 = (fstp_instr->operands[0].mem.size == IROperandSize::S32);
          if (is_f32) {
 -            emit_fcvt_d_to_s(buf, Dd_val, Dd_val);
 +            emit_x87_store_f32(*a1, buf, Xbase, Dd_val, Dd_val);
          }
-
+ 
          const int addr =
-@@ -802,22 +805,23 @@
+@@ -1046,22 +1049,23 @@ static auto try_fuse_fxch_fcom_fstsw(TranslationResult* a1, IRInstr* fxch_instr,
      // OPT-G: Apply FXCH as compile-time perm swap before delegating.
      // resolve_depth() in the inner emit will honour the swapped perm so
      // ST(0) loads from the old slot i and ST(j) (for j∉{0,i}) is unchanged.
@@ -411,7 +428,7 @@ index 051a33e..a2280b9 100644
          return std::nullopt;
      }
      return *inner + 1;
-@@ -855,11 +859,13 @@
+@@ -1099,11 +1103,13 @@ static auto try_fuse_fxch_fcom(TranslationResult* a1, IRInstr* fxch_instr, IRIns
      std::swap(a1->x87_cache.perm[0], a1->x87_cache.perm[depth]);
      a1->x87_cache.perm_dirty = 1;
  
@@ -426,7 +443,7 @@ index 051a33e..a2280b9 100644
      return 2;
  }
  
-@@ -995,22 +1001,22 @@
+@@ -1239,22 +1245,22 @@ static auto try_fuse_fld_arith_fstp(TranslationResult* a1, IRInstr* fld_instr, I
  
      switch (arith) {
          case kAdd:
@@ -455,16 +472,16 @@ index 051a33e..a2280b9 100644
              break;
      }
  
-@@ -1031,7 +1037,7 @@
+@@ -1275,7 +1281,7 @@ static auto try_fuse_fld_arith_fstp(TranslationResult* a1, IRInstr* fld_instr, I
      } else {
          const bool is_f32 = (fstp_instr->operands[0].mem.size == IROperandSize::S32);
          if (is_f32) {
 -            emit_fcvt_d_to_s(buf, Dd_fld, Dd_fld);
 +            emit_x87_store_f32(*a1, buf, Xbase, Dd_fld, Dd_fld);
          }
-
+ 
          const int addr =
-@@ -1245,44 +1251,44 @@
+@@ -1489,44 +1495,44 @@ static auto try_fuse_fld_arith_arithp(TranslationResult* a1, IRInstr* fld_instr,
              }
              switch (arith1) {
                  case kAdd:
@@ -521,7 +538,7 @@ index 051a33e..a2280b9 100644
                      break;
              }
          }
-@@ -1290,22 +1296,22 @@
+@@ -1534,22 +1540,22 @@ static auto try_fuse_fld_arith_arithp(TranslationResult* a1, IRInstr* fld_instr,
          // Step 4d: Final popping arithmetic — Dd_st0 = op2(Dd_st0, Dd_fld).
          switch (arith2) {
              case kAdd:
@@ -550,7 +567,7 @@ index 051a33e..a2280b9 100644
                  break;
          }
      }
-@@ -1911,28 +1917,28 @@
+@@ -2172,28 +2178,28 @@ static auto try_fuse_arithp_fstp(TranslationResult* a1, IRInstr* arithp_instr, I
      //   fdivrp: ST(1) = ST(0) / ST(1)
      switch (arith) {
          case kAdd:
@@ -584,9 +601,9 @@ index 051a33e..a2280b9 100644
 -        emit_fcvt_d_to_s(buf, Dd_dst, Dd_dst);
 +        emit_x87_store_f32(*a1, buf, Xbase, Dd_dst, Dd_dst);
      }
-
+ 
      const int addr_reg =
-@@ -2068,22 +2074,22 @@
+@@ -2329,22 +2335,22 @@ static auto try_fuse_arith_fstp(TranslationResult* a1, IRInstr* arith_instr, IRI
  
          switch (arith) {
              case kAdd:
@@ -615,7 +632,7 @@ index 051a33e..a2280b9 100644
                  break;
          }
      } else {
-@@ -2094,29 +2100,29 @@
+@@ -2355,29 +2361,29 @@ static auto try_fuse_arith_fstp(TranslationResult* a1, IRInstr* arith_instr, IRI
  
          switch (arith) {
              case kAdd:
@@ -644,15 +661,15 @@ index 051a33e..a2280b9 100644
                  break;
          }
      }
-
+ 
      // Convert and store to FSTP memory destination — result goes directly.
      if (is_f32) {
 -        emit_fcvt_d_to_s(buf, Dd_dst, Dd_dst);
 +        emit_x87_store_f32(*a1, buf, Xbase, Dd_dst, Dd_dst);
      }
-
+ 
      const int addr_fstp =
-@@ -2234,7 +2240,7 @@
+@@ -2495,7 +2501,7 @@ static auto try_fuse_fstp_arith_fstp(TranslationResult* a1, IRInstr* fstp1_instr
      {
          const bool is_f32 = (fstp1_instr->operands[0].mem.size == IROperandSize::S32);
          if (is_f32) {
@@ -661,7 +678,7 @@ index 051a33e..a2280b9 100644
          }
          const int addr1 =
              compute_operand_address(*a1, /*is_64bit=*/true, &fstp1_instr->operands[0], GPR::XZR);
-@@ -2263,22 +2269,22 @@
+@@ -2524,22 +2530,22 @@ static auto try_fuse_fstp_arith_fstp(TranslationResult* a1, IRInstr* fstp1_instr
      // 4d: Arithmetic.
      switch (arith) {
          case kAdd:
@@ -690,7 +707,7 @@ index 051a33e..a2280b9 100644
              break;
      }
      free_fpr(*a1, Dd_c);
-@@ -2287,7 +2293,7 @@
+@@ -2548,7 +2554,7 @@ static auto try_fuse_fstp_arith_fstp(TranslationResult* a1, IRInstr* fstp1_instr
      {
          const bool is_f32 = (fstp2_instr->operands[0].mem.size == IROperandSize::S32);
          if (is_f32) {
@@ -699,17 +716,58 @@ index 051a33e..a2280b9 100644
          }
          const int addr2 =
              compute_operand_address(*a1, /*is_64bit=*/true, &fstp2_instr->operands[0], GPR::XZR);
-@@ -2557,7 +2563,7 @@
-
+@@ -2818,7 +2824,7 @@ static auto try_fuse_fstp_fld(TranslationResult* a1, IRInstr* fstp_instr, IRInst
+ 
          const bool is_f32 = (fstp_instr->operands[0].mem.size == IROperandSize::S32);
          if (is_f32) {
 -            emit_fcvt_d_to_s(buf, Dd_st0, Dd_st0);
 +            emit_x87_store_f32(*a1, buf, Xbase, Dd_st0, Dd_st0);
          }
-
+ 
          const int addr =
+diff --git a/rosetta_core/src/TranslatorX87Single.cpp b/rosetta_core/src/TranslatorX87Single.cpp
+index 41a3c15..9c5b7ec 100644
+--- a/rosetta_core/src/TranslatorX87Single.cpp
++++ b/rosetta_core/src/TranslatorX87Single.cpp
+@@ -1,3 +1,4 @@
++#include "rosetta_core/X87Precision.hpp"
+ #include <cstdint>
+ 
+ #include "TranslatorX87Internal.hpp"
+@@ -259,7 +260,7 @@ void translate_fst_single(TranslationResult& a1, IRInstr* a2, bool is_fstp) {
+         const int Xaddr =
+             compute_operand_address(a1, /*is_64bit=*/true, &a2->operands[0], GPR::XZR);
+         if (is_f32) {
+-            emit_fcvt_d_to_s(buf, Dd, Dd);
++            emit_x87_store_f32(a1, buf, Xbase, Dd, Dd);
+         }
+         emit_fstr_imm(buf, is_f32 ? 2 : 3, Dd, Xaddr, /*imm12=*/0);
+         free_gpr(a1, Xaddr);
+@@ -321,8 +322,12 @@ void translate_fst_single(TranslationResult& a1, IRInstr* a2, bool is_fstp) {
+     // in-place ADD #0x800 would carry into C3 at TOP=7 — do not use it.
+     emit_bfi_top(buf, Wsw, Widx);
+ 
++    // The store rounding helper needs two GPRs. These index temporaries are dead.
++    free_gpr(a1, Wsh);
++    free_gpr(a1, Widx);
++
+     if (is_f32) {
+-        emit_fcvt_d_to_s(buf, Dd, Dd);
++        emit_x87_store_f32(a1, buf, Xbase, Dd, Dd);
+     }
+     emit_fstr_imm(buf, is_f32 ? 2 : 3, Dd, Xaddr, /*imm12=*/0);
+     free_gpr(a1, Xaddr);
+@@ -332,8 +337,6 @@ void translate_fst_single(TranslationResult& a1, IRInstr* a2, bool is_fstp) {
+     x87_slot_note_pop(1);
+ 
+     free_fpr(a1, Dd);
+-    free_gpr(a1, Wsh);
+-    free_gpr(a1, Widx);
+     free_gpr(a1, Wm);
+     free_gpr(a1, Wtop);
+     free_gpr(a1, Wsw);
 diff --git a/rosetta_core/src/X87IRLower.cpp b/rosetta_core/src/X87IRLower.cpp
-index a60b32b..3294e39 100644
+index 2b15de7..e77462f 100644
 --- a/rosetta_core/src/X87IRLower.cpp
 +++ b/rosetta_core/src/X87IRLower.cpp
 @@ -1,3 +1,4 @@
@@ -717,7 +775,7 @@ index a60b32b..3294e39 100644
  #include <algorithm>
  #include <cstdint>
  #include <cstdio>
-@@ -721,7 +722,7 @@
+@@ -773,7 +774,7 @@ void lower(Context& ctx, TranslationResult* result) {
                      Dd = alloc_free_fpr(*result);
                  }
                  fprs.node_fpr[i] = static_cast<int8_t>(Dd);
@@ -726,7 +784,7 @@ index a60b32b..3294e39 100644
                  break;
              }
              case Op::FSub: {
-@@ -732,7 +733,7 @@
+@@ -784,7 +785,7 @@ void lower(Context& ctx, TranslationResult* result) {
                      Dd = alloc_free_fpr(*result);
                  }
                  fprs.node_fpr[i] = static_cast<int8_t>(Dd);
@@ -735,7 +793,7 @@ index a60b32b..3294e39 100644
                  break;
              }
              case Op::FMul: {
-@@ -743,7 +744,7 @@
+@@ -795,7 +796,7 @@ void lower(Context& ctx, TranslationResult* result) {
                      Dd = alloc_free_fpr(*result);
                  }
                  fprs.node_fpr[i] = static_cast<int8_t>(Dd);
@@ -744,7 +802,7 @@ index a60b32b..3294e39 100644
                  break;
              }
              case Op::FDiv: {
-@@ -754,7 +755,7 @@
+@@ -806,7 +807,7 @@ void lower(Context& ctx, TranslationResult* result) {
                      Dd = alloc_free_fpr(*result);
                  }
                  fprs.node_fpr[i] = static_cast<int8_t>(Dd);
@@ -753,7 +811,7 @@ index a60b32b..3294e39 100644
                  break;
              }
  
-@@ -836,7 +837,7 @@
+@@ -888,7 +889,7 @@ void lower(Context& ctx, TranslationResult* result) {
                      Dd = alloc_free_fpr(*result);
                  }
                  fprs.node_fpr[i] = static_cast<int8_t>(Dd);
@@ -762,29 +820,49 @@ index a60b32b..3294e39 100644
                  break;
              }
              case Op::FRndInt: {
-@@ -1025,7 +1026,7 @@
-                 // for STP S / STR S, and as the source lane for the broadcast
-                 // DUP that feeds STR Q.
+@@ -1081,8 +1082,8 @@ void lower(Context& ctx, TranslationResult* result) {
                  const int Ds_narrow = alloc_free_fpr(*result);
--                emit_fcvt_d_to_s(buf, Ds_narrow, fprs.get(src_node));
-+                emit_x87_store_f32(*result, buf, Xbase, Ds_narrow, fprs.get(src_node));
-
+                 if (narrows_native_slot(ctx, n)) {
+                     // X87_NATIVE_SLOTS: narrow from the slot's 80-bit value,
+-                    // converted rounding to odd, so the value is rounded once
+-                    // (the ReadSt's binary64 copy would round it twice).
++                    // converted rounding to odd, so the guest-RC store below
++                    // rounds it exactly once.
+                     const int depth = ctx.nodes[src_node].initial_depth;
+                     emit_native_st_addr(buf, Xbase, Wd_top, depth, Wd_tmp, Xst_base);
+                     const int Xm = alloc_free_gpr(*result);
+@@ -1096,9 +1097,9 @@ void lower(Context& ctx, TranslationResult* result) {
+                     free_gpr(*result, Xt2);
+                     free_gpr(*result, Wx);
+                     free_gpr(*result, Xm);
+-                    emit_fcvt_d_to_s(buf, Ds_narrow, Ds_narrow);
++                    emit_x87_store_f32(*result, buf, Xbase, Ds_narrow, Ds_narrow);
+                 } else {
+-                    emit_fcvt_d_to_s(buf, Ds_narrow, fprs.get(src_node));
++                    emit_x87_store_f32(*result, buf, Xbase, Ds_narrow, fprs.get(src_node));
+                 }
+ 
                  // Allocate the broadcast Q register lazily — only if at least
-                 // one STR Q group fires.  Most benches that take the STP S or
-@@ -1534,8 +1535,10 @@
- //   - Wd_rc_cached (pool 3) when RC caching is active = +1
+@@ -1626,13 +1627,15 @@ void lower(Context& ctx, TranslationResult* result) {
+ // (Wd_tmp2 + Wd_tagw).  preamble_gprs carries that from the cache state.
  //
  // Per-node transient GPR demand (mirrors the lowering code exactly):
--//   - ReadSt, Const*, FAdd/FSub/FMul/FDiv, FMA*, FNeg/FAbs/FSqrt, FCSel: 0
--//   - LoadF64, LoadF32, StoreF64, StoreF32: 1 (addr from compute_operand_address)
-+//   - ReadSt, Const*, FMA*, FNeg/FAbs, FCSel: 0
+-//   - ReadSt, Const*, FAdd/FSub/FMul/FDiv, FMA*, FNeg/FAbs/FSqrt: 0
++//   - ReadSt, Const*, FNeg/FAbs, FMSub/FNMSub: 0
 +//   - FAdd/FSub/FMul/FDiv/FSqrt: 3 (PC24 helper; Wd_tmp is borrowed)
+ //   - ReadSt of an 80-bit slot (ctx.native_depths): 3 (Xm, Wx, Xt2 of the
+ //     conversion; Wd_tmp is permanent)
+ //   - FCSel: 0, or 1 for FCMOVU/FCMOVNU (the MRS that reads PF)
+ //   - FMAdd FMA-reduce head: 1 (load address inside lower_fma_reduce)
+-//   - LoadF64, LoadF32, StoreF64, StoreF32: 1 (addr from compute_operand_address);
+-//     3 for a StoreF32 narrowing an 80-bit slot (narrows_native_slot)
 +//   - LoadF64, LoadF32, StoreF64: 1 (addr from compute_operand_address)
-+//   - StoreF32: 2 (scoped rounding before address allocation)
++//   - StoreF32: 2 (guest-RC rounding before address allocation); 3 when
++//     narrowing an 80-bit slot (narrows_native_slot), freed before the rounding
  //   - LoadI16/I32/I64: 2 (addr + Wd_val)
- //   - StoreI16/I32/I64: 2 (Wd_int + addr)
- //   - FRndInt without RC cache: 1 (Wd_rc via alloc_gpr(3))
-@@ -1617,17 +1620,20 @@
+ //   - StoreI16/I32/I64: 2 (Wd_int + the indefinite guard's Xt, then Wd_int + addr);
+ //     4 for an exact store of an 80-bit slot (stores_native_slot)
+@@ -1731,15 +1734,10 @@ int peak_live_gprs(const Context& ctx, int budget, int* first_over_node, bool fa
              case Op::ConstZero:
              case Op::ConstOne:
              case Op::ConstF64:
@@ -792,25 +870,30 @@ index a60b32b..3294e39 100644
 -            case Op::FSub:
 -            case Op::FMul:
 -            case Op::FDiv:
-             case Op::FMAdd:
              case Op::FMSub:
              case Op::FNMSub:
              case Op::FNeg:
              case Op::FAbs:
-+            case Op::FCSel:
-+                break;
-+
+-            case Op::FSqrt:
+                 break;
+ 
+             // FCSel: 0, except FCMOVU/FCMOVNU, which read NZCV into one
+@@ -1759,6 +1757,14 @@ int peak_live_gprs(const Context& ctx, int budget, int* first_over_node, bool fa
+                 }
+                 break;
+ 
 +            case Op::FAdd:
 +            case Op::FSub:
 +            case Op::FMul:
 +            case Op::FDiv:
-             case Op::FSqrt:
--            case Op::FCSel:
++            case Op::FSqrt:
 +                transient = 3; // PC24 helper borrows Wd_tmp in addition.
-                 break;
-
++                break;
++
              // Transcendentals — peak GPR demand inside emit_inline_<op>_core
-@@ -1654,8 +1660,11 @@
+             // (the NZCV save GPR that guards guest EFLAGS in the flag-
+             // clobbering cores is included in each count):
+@@ -1785,10 +1791,13 @@ int peak_live_gprs(const Context& ctx, int budget, int* first_over_node, bool fa
              case Op::LoadF64:
              case Op::LoadF32:
              case Op::StoreF64:
@@ -818,22 +901,25 @@ index a60b32b..3294e39 100644
 +                break;
 +
              case Op::StoreF32:
--                transient = 1;
-+                transient = 2;
+                 // Narrowing an 80-bit slot takes Xm, Wx and Xt2 before the
+-                // address.
+-                transient = narrows_native_slot(ctx, n) ? 3 : 1;
++                // guest-RC rounding (2), which precedes the address.
++                transient = narrows_native_slot(ctx, n) ? 3 : 2;
                  break;
  
              // 2 GPRs: Loads need addr + Wd_val; stores need Wd_int + addr.
-@@ -1784,7 +1793,8 @@
+@@ -1922,7 +1931,8 @@ int peak_live_gprs(const Context& ctx, int budget, int* first_over_node, bool fa
  //   - free_dead_inputs() fires at the end of each node, so the transient peak
  //     *during* a node is: (currently live) + 1 for the new output, before dead
  //     inputs are freed.  try_reuse_input() can avoid the +1 by recycling a
 -//     dying input's FPR, but we conservatively ignore reuse here.
 +//     dying input's FPR. Model reuse for PC24 arithmetic; conservatively
 +//     ignore it for other operations.
- //   - StoreF32 allocates one extra transient FPR (Ds_tmp) that is freed before
- //     the node ends.  Model as a +1 spike.
- //   - StoreI*, FCmp, FTst, FStsw produce no FPR output and need no extra FPRs.
-@@ -1878,10 +1888,28 @@
+ //   - StoreF32 allocates Ds_narrow, plus Vq_broadcast for a STR Q group, and
+ //     frees them before the node ends.  Model as a +1 or +2 spike.
+ //   - StoreI* allocates one transient FPR (Dscr in the indefinite guard)
+@@ -2018,12 +2028,30 @@ int peak_live_fprs(const Context& ctx, int budget, int* first_over_node) {
          // emitted as part of the chain head's lower_fma_reduce body — no
          // FPR is allocated for them.  Skip the produces_fpr accounting.
          const bool absorbed_member = (n.flags & kFmaReduceMember) && !(n.flags & kFmaReduceHead);
@@ -854,194 +940,16 @@ index a60b32b..3294e39 100644
              live++;
              holding[i] = true;
              raise_peak(live, i);
-+        }
-+
+         }
+ 
 +        if (pc24_arithmetic) {
 +            // Narrowed operand(s) and the saved borrowed GPR.
 +            raise_peak(live + (n.op == Op::FSqrt ? 2 : 3), i);
-         }
-
++        }
++
          // FMA-reduction head: the whole chain emits as one fused body at the
-diff --git a/scripts/run_tests.sh b/scripts/run_tests.sh
-index 218e067..34161d6 100755
---- a/scripts/run_tests.sh
-+++ b/scripts/run_tests.sh
-@@ -57,6 +57,9 @@
- TESTS_BIN="$BIN/tests"
- 
- ALL_TESTS=(
-+    test_precision_control
-+    test_pc24_arithmetic
-+    test_pc24_host_state
-     test_fldconst
-     test_fld
-     test_fld_m80fp
-diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
-index 4532f1b..507c4f8 100644
---- a/tests/CMakeLists.txt
-+++ b/tests/CMakeLists.txt
-@@ -92,3 +92,11 @@
- add_x86_sample(test_decoder_fcomp_st)
- add_x86_sample_lowzero(test_decoder_arpl)
- add_x86_sample(test_x87_signal_storm)
-+
-+add_x86_sample(test_precision_control)
-+
-+set(X86_SAMPLE_EXTRA_DEPS "${CMAKE_CURRENT_SOURCE_DIR}/pc24_cases.h")
-+add_x86_sample(test_pc24_arithmetic)
-+unset(X86_SAMPLE_EXTRA_DEPS)
-+add_x86_sample(test_pc24_host_state)
-+add_x86_sample(test_rc_rounding)
-diff --git a/tests/test_arith.c b/tests/test_arith.c
-index 69d1872..c695d30 100644
---- a/tests/test_arith.c
-+++ b/tests/test_arith.c
-@@ -13,6 +13,7 @@
- #include <math.h>
- #include <stdint.h>
- #include <stdio.h>
-+#include <stdlib.h>
- #include <string.h>
- 
- static int failures = 0;
-@@ -348,6 +349,10 @@
- }
- 
- int main(void) {
-+    if (getenv("TEST_PC24")) {
-+        unsigned short cw = 0x007f;
-+        __asm__ volatile("fldcw %0" :: "m"(cw));
-+    }
-     printf("=== FADD variants ===\n");
-     check("FADD ST(0),ST(1)  1+2=3", fadd_st0_st1(), 3.0);
-     check("FADD ST(1),ST(0)  2+1=3", fadd_sti_st0(), 3.0);
-@@ -374,7 +379,7 @@
- 
-     printf("\n=== FDIV / FDIVR variants ===\n");
-     check("FDIV ST(0),ST(1)  6/2=3", fdiv_st0_sti(), 3.0);
--    check("FDIVR ST(0),ST(1)  2/6=0.333", fdivr_st0_sti(), 2.0 / 6.0);
-+    check("FDIVR ST(0),ST(1)  2/6=0.333", fdivr_st0_sti(), getenv("TEST_PC24") ? 0x1.555556p-2 : 2.0 / 6.0);
-     check("FDIV m64fp  8/4=2", fdiv_m64(), 2.0);
-     check("FDIVP (GAS=FDIVRP)  6/3=2", fdivp_gas(), 2.0);
-     check("FDIVRP (GAS=FDIVP)  3/6=0.5", fdivrp_gas(), 0.5);
-diff --git a/tests/test_flags_across_x87.c b/tests/test_flags_across_x87.c
-index 08f70b9..a58f2f7 100644
---- a/tests/test_flags_across_x87.c
-+++ b/tests/test_flags_across_x87.c
-@@ -15,6 +15,7 @@
-  * (5,5) -> eq=1 lt=0; (3,9) -> eq=0 lt=1; (9,3) -> eq=0 lt=0.
-  */
- #include <stdio.h>
-+#include <stdlib.h>
- 
- static volatile double vx = 0.5, vy = 1.5;
- static double r1, r2;
-@@ -209,6 +210,10 @@
-     return (eq << 1) | lt;
- }
- int main(void) {
-+    if (getenv("TEST_PC24")) {
-+        unsigned short cw = 0x007f;
-+        __asm__ volatile("fldcw %0" :: "m"(cw));
-+    }
-     int fails = 0;
-     struct {
-         unsigned a, b;
-diff --git a/tests/test_fxch.c b/tests/test_fxch.c
-index 1f93f45..b538e0a 100644
---- a/tests/test_fxch.c
-+++ b/tests/test_fxch.c
-@@ -8,6 +8,7 @@
-  */
- #include <stdint.h>
- #include <stdio.h>
-+#include <stdlib.h>
- #include <string.h>
- 
- static int failures = 0;
-@@ -181,6 +182,29 @@
-     return r;
- }
- 
-+/* Keep an accumulator live across several FXCH-prefixed comparison fusions.
-+ * Run with X87_FPR_POOL_LIMIT=5 to exercise fallback after an IR split. */
-+#define DEFINE_FXCH_COMPARE_LOOP(name, status) \
-+    static double name(void) {                 \
-+        double r;                              \
-+        __asm__ volatile(                      \
-+            "fldz\n"                           \
-+            ".rept 5\n"                        \
-+            "fld1\n"                           \
-+            "fxch %%st(1)\n"                   \
-+            "fcom %%st(1)\n" status            \
-+            "faddp\n"                          \
-+            ".endr\n"                          \
-+            "fstpl %0\n"                       \
-+            : "=m"(r)                          \
-+            :                                  \
-+            : "ax");                           \
-+        return r;                              \
-+    }
-+DEFINE_FXCH_COMPARE_LOOP(fxch_compare_loop, "")
-+DEFINE_FXCH_COMPARE_LOOP(fxch_compare_status_loop, "fnstsw %%ax\n")
-+#undef DEFINE_FXCH_COMPARE_LOOP
-+
- /* ==== FXCH double swap (swap back = no-op) ==== */
- static double fxch_double_swap(void) {
-     double r;
-@@ -218,6 +242,10 @@
- }
- 
- int main(void) {
-+    if (getenv("TEST_PC24")) {
-+        const uint16_t cw = 0x007f;
-+        __asm__ volatile("fldcw %0" : : "m"(cw));
-+    }
-     /* FXCH ST(0) no-op */
-     check("fxch_st0_noop", fxch_st0_noop(), 3.14);
- 
-@@ -265,6 +293,8 @@
- 
-     /* FXCH in loop */
-     check("fxch_loop (5 iterations)", fxch_loop(), 5.0);
-+    check("fxch_compare_loop (5 iterations)", fxch_compare_loop(), 5.0);
-+    check("fxch_compare_status_loop (5 iterations)", fxch_compare_status_loop(), 5.0);
- 
-     /* FXCH double swap (no-op) */
-     check("fxch_double_swap", fxch_double_swap(), 99.0);
-diff --git a/tests/test_x87_signal_storm.c b/tests/test_x87_signal_storm.c
-index a1b39eb..51d6989 100644
---- a/tests/test_x87_signal_storm.c
-+++ b/tests/test_x87_signal_storm.c
-@@ -418,7 +418,7 @@
-     g_in.f80 = 2.5L;
-     g_in.bcd[0] = 0x34; /* 1234 */
-     g_in.bcd[1] = 0x12;
--    g_in.cw = 0x037F;
-+    g_in.cw = getenv("STORM_PC24") ? 0x007F : 0x037F;
-     g_in.d2 = 3.0;
-     g_in.small = 0.125;
- }
-diff --git a/rosetta_core/include/rosetta_core/X87Precision.hpp b/rosetta_core/include/rosetta_core/X87Precision.hpp
-new file mode 100644
-index 0000000..c2beb22
---- /dev/null
-+++ b/rosetta_core/include/rosetta_core/X87Precision.hpp
-@@ -0,0 +1,14 @@
-+#pragma once
-+
-+struct TranslationResult;
-+struct AssemblerBuffer;
-+
-+// Three transient GPRs; two FPRs for Sqrt, three for binary arithmetic.
-+// The borrowed GPR and guest NZCV survive.
-+enum class X87Arithmetic { Mul = 0, Div = 1, Add = 2, Sub = 3, Sqrt = 4 };
-+void emit_x87_arithmetic(TranslationResult& result, AssemblerBuffer& buf, int base, int scratch,
-+                         X87Arithmetic op, int dst, int lhs, int rhs = -1);
-+
-+// Two transient GPRs, no FPRs. Preserves FPCR/NZCV; accumulates FPSR flags.
-+void emit_x87_store_f32(TranslationResult& result, AssemblerBuffer& buf, int base,
-+                        int dst, int src);
+         // head.  lower_fma_reduce allocates 2 transient vector FPRs (V_data,
+         // V_w) on top of the held accumulator V_acc (counted by produces_fpr
 diff --git a/rosetta_core/src/X87Precision.cpp b/rosetta_core/src/X87Precision.cpp
 new file mode 100644
 index 0000000..c9c09bb
@@ -1321,6 +1229,36 @@ index 0000000..c9c09bb
 +    free_gpr(result, bits);
 +    free_gpr(result, rc);
 +}
+diff --git a/scripts/run_tests.sh b/scripts/run_tests.sh
+index 9e403ba..6d86c17 100755
+--- a/scripts/run_tests.sh
++++ b/scripts/run_tests.sh
+@@ -123,6 +123,9 @@ LOADER="$BIN/x87sidecar_entitled"
+ TESTS_BIN="$BIN/tests"
+ 
+ ALL_TESTS=(
++    test_precision_control
++    test_pc24_arithmetic
++    test_pc24_host_state
+     test_fldconst
+     test_detach_signals
+     test_fld
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index 88669bc..7d08a69 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -116,3 +116,11 @@ add_x86_sample(test_x87_ftz_daz)
+ # Invoked by the opt-in tracing regression, not the arithmetic phase matrix.
+ add_x86_sample(test_x87_trace_threads)
+ add_x86_sample(test_x87_trace_freeze)
++
++add_x86_sample(test_precision_control)
++
++set(X86_SAMPLE_EXTRA_DEPS "${CMAKE_CURRENT_SOURCE_DIR}/pc24_cases.h")
++add_x86_sample(test_pc24_arithmetic)
++unset(X86_SAMPLE_EXTRA_DEPS)
++add_x86_sample(test_pc24_host_state)
++add_x86_sample(test_rc_rounding)
 diff --git a/tests/generate_pc24_cases.py b/tests/generate_pc24_cases.py
 new file mode 100644
 index 0000000..8b42c1f
@@ -2399,6 +2337,123 @@ index 0000000..8f5a14b
 +    {4, UINT64_C(0x0000000400000000), UINT64_C(0x0000000000000400), {UINT64_C(0x1f70000000000000), UINT64_C(0x1f70000000000000), UINT64_C(0x1f70000000000000), UINT64_C(0x1f70000000000000)}},
 +    {4, UINT64_C(0x0000000400000000), UINT64_C(0x4008000000000000), {UINT64_C(0x1f70000000000000), UINT64_C(0x1f70000000000000), UINT64_C(0x1f70000000000000), UINT64_C(0x1f70000000000000)}},
 +};
+diff --git a/tests/test_arith.c b/tests/test_arith.c
+index 69d1872..c695d30 100644
+--- a/tests/test_arith.c
++++ b/tests/test_arith.c
+@@ -13,6 +13,7 @@
+ #include <math.h>
+ #include <stdint.h>
+ #include <stdio.h>
++#include <stdlib.h>
+ #include <string.h>
+ 
+ static int failures = 0;
+@@ -348,6 +349,10 @@ static double fisub_m32(void) {
+ }
+ 
+ int main(void) {
++    if (getenv("TEST_PC24")) {
++        unsigned short cw = 0x007f;
++        __asm__ volatile("fldcw %0" :: "m"(cw));
++    }
+     printf("=== FADD variants ===\n");
+     check("FADD ST(0),ST(1)  1+2=3", fadd_st0_st1(), 3.0);
+     check("FADD ST(1),ST(0)  2+1=3", fadd_sti_st0(), 3.0);
+@@ -374,7 +379,7 @@ int main(void) {
+ 
+     printf("\n=== FDIV / FDIVR variants ===\n");
+     check("FDIV ST(0),ST(1)  6/2=3", fdiv_st0_sti(), 3.0);
+-    check("FDIVR ST(0),ST(1)  2/6=0.333", fdivr_st0_sti(), 2.0 / 6.0);
++    check("FDIVR ST(0),ST(1)  2/6=0.333", fdivr_st0_sti(), getenv("TEST_PC24") ? 0x1.555556p-2 : 2.0 / 6.0);
+     check("FDIV m64fp  8/4=2", fdiv_m64(), 2.0);
+     check("FDIVP (GAS=FDIVRP)  6/3=2", fdivp_gas(), 2.0);
+     check("FDIVRP (GAS=FDIVP)  3/6=0.5", fdivrp_gas(), 0.5);
+diff --git a/tests/test_flags_across_x87.c b/tests/test_flags_across_x87.c
+index 08f70b9..a58f2f7 100644
+--- a/tests/test_flags_across_x87.c
++++ b/tests/test_flags_across_x87.c
+@@ -15,6 +15,7 @@
+  * (5,5) -> eq=1 lt=0; (3,9) -> eq=0 lt=1; (9,3) -> eq=0 lt=0.
+  */
+ #include <stdio.h>
++#include <stdlib.h>
+ 
+ static volatile double vx = 0.5, vy = 1.5;
+ static double r1, r2;
+@@ -209,6 +210,10 @@ static int probe_fadd(unsigned a, unsigned b) {
+     return (eq << 1) | lt;
+ }
+ int main(void) {
++    if (getenv("TEST_PC24")) {
++        unsigned short cw = 0x007f;
++        __asm__ volatile("fldcw %0" :: "m"(cw));
++    }
+     int fails = 0;
+     struct {
+         unsigned a, b;
+diff --git a/tests/test_fxch.c b/tests/test_fxch.c
+index 1f93f45..b538e0a 100644
+--- a/tests/test_fxch.c
++++ b/tests/test_fxch.c
+@@ -8,6 +8,7 @@
+  */
+ #include <stdint.h>
+ #include <stdio.h>
++#include <stdlib.h>
+ #include <string.h>
+ 
+ static int failures = 0;
+@@ -181,6 +182,29 @@ static double fxch_loop(void) {
+     return r;
+ }
+ 
++/* Keep an accumulator live across several FXCH-prefixed comparison fusions.
++ * Run with X87_FPR_POOL_LIMIT=5 to exercise fallback after an IR split. */
++#define DEFINE_FXCH_COMPARE_LOOP(name, status) \
++    static double name(void) {                 \
++        double r;                              \
++        __asm__ volatile(                      \
++            "fldz\n"                           \
++            ".rept 5\n"                        \
++            "fld1\n"                           \
++            "fxch %%st(1)\n"                   \
++            "fcom %%st(1)\n" status            \
++            "faddp\n"                          \
++            ".endr\n"                          \
++            "fstpl %0\n"                       \
++            : "=m"(r)                          \
++            :                                  \
++            : "ax");                           \
++        return r;                              \
++    }
++DEFINE_FXCH_COMPARE_LOOP(fxch_compare_loop, "")
++DEFINE_FXCH_COMPARE_LOOP(fxch_compare_status_loop, "fnstsw %%ax\n")
++#undef DEFINE_FXCH_COMPARE_LOOP
++
+ /* ==== FXCH double swap (swap back = no-op) ==== */
+ static double fxch_double_swap(void) {
+     double r;
+@@ -218,6 +242,10 @@ static void fxch_fcom(double* out_sw) {
+ }
+ 
+ int main(void) {
++    if (getenv("TEST_PC24")) {
++        const uint16_t cw = 0x007f;
++        __asm__ volatile("fldcw %0" : : "m"(cw));
++    }
+     /* FXCH ST(0) no-op */
+     check("fxch_st0_noop", fxch_st0_noop(), 3.14);
+ 
+@@ -265,6 +293,8 @@ int main(void) {
+ 
+     /* FXCH in loop */
+     check("fxch_loop (5 iterations)", fxch_loop(), 5.0);
++    check("fxch_compare_loop (5 iterations)", fxch_compare_loop(), 5.0);
++    check("fxch_compare_status_loop (5 iterations)", fxch_compare_status_loop(), 5.0);
+ 
+     /* FXCH double swap (no-op) */
+     check("fxch_double_swap", fxch_double_swap(), 99.0);
 diff --git a/tests/test_pc24_arithmetic.c b/tests/test_pc24_arithmetic.c
 new file mode 100644
 index 0000000..1e203c1
@@ -2577,47 +2632,6 @@ index 0000000..fbe2533
 +    printf("8 cases, %u failures\n", failures);
 +    return failures != 0;
 +}
-diff --git a/rosetta_core/src/TranslatorX87Single.cpp b/rosetta_core/src/TranslatorX87Single.cpp
-index 0b60904..872ed19 100644
---- a/rosetta_core/src/TranslatorX87Single.cpp
-+++ b/rosetta_core/src/TranslatorX87Single.cpp
-@@ -1,3 +1,4 @@
-+#include "rosetta_core/X87Precision.hpp"
- #include <cstdint>
-
- #include "TranslatorX87Internal.hpp"
-@@ -182,7 +183,7 @@
-         const int Xaddr =
-             compute_operand_address(a1, /*is_64bit=*/true, &a2->operands[0], GPR::XZR);
-         if (is_f32) {
--            emit_fcvt_d_to_s(buf, Dd, Dd);
-+            emit_x87_store_f32(a1, buf, Xbase, Dd, Dd);
-         }
-         emit_fstr_imm(buf, is_f32 ? 2 : 3, Dd, Xaddr, /*imm12=*/0);
-         free_gpr(a1, Xaddr);
-@@ -222,8 +223,12 @@
-     // in-place ADD #0x800 would carry into C3 at TOP=7 — do not use it.
-     emit_bfi_top(buf, Wsw, Widx);
-
-+    // The store rounding helper needs two GPRs. These index temporaries are dead.
-+    free_gpr(a1, Wsh);
-+    free_gpr(a1, Widx);
-+
-     if (is_f32) {
--        emit_fcvt_d_to_s(buf, Dd, Dd);
-+        emit_x87_store_f32(a1, buf, Xbase, Dd, Dd);
-     }
-     emit_fstr_imm(buf, is_f32 ? 2 : 3, Dd, Xaddr, /*imm12=*/0);
-     free_gpr(a1, Xaddr);
-@@ -232,8 +237,6 @@
-     emit_ldur_stur(buf, /*size=*/2, /*opc=*/0 /*STUR*/, kX87StatusWordOff, Xbase, Wsw);
-
-     free_fpr(a1, Dd);
--    free_gpr(a1, Wsh);
--    free_gpr(a1, Widx);
-     free_gpr(a1, Wm);
-     free_gpr(a1, Wtop);
-     free_gpr(a1, Wsw);
 diff --git a/tests/test_rc_rounding.c b/tests/test_rc_rounding.c
 new file mode 100644
 index 0000000..a4e78f3
@@ -2785,3 +2799,16 @@ index 0000000..a4e78f3
 +    printf("88 cases, %u failures\n", failures);
 +    return failures != 0;
 +}
+diff --git a/tests/test_x87_signal_storm.c b/tests/test_x87_signal_storm.c
+index 87dfa64..8b9295d 100644
+--- a/tests/test_x87_signal_storm.c
++++ b/tests/test_x87_signal_storm.c
+@@ -524,7 +524,7 @@ static void init_input(double x) {
+     g_in.f80 = 2.5L;
+     g_in.bcd[0] = 0x34; /* 1234 */
+     g_in.bcd[1] = 0x12;
+-    g_in.cw = 0x037F;
++    g_in.cw = getenv("STORM_PC24") ? 0x007F : 0x037F;
+     g_in.d2 = 3.0;
+     g_in.small = 0.125;
+ }

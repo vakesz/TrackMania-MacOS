@@ -149,7 +149,7 @@ class SmokeScripts(unittest.TestCase):
             "'fma': os.getenv('X87_ENABLE_FMA_CONTRACT'), 'fast_round': os.getenv('X87_FAST_ROUND'), "
             "'ir_disabled': os.getenv('X87_DISABLE_X87_IR'), "
             "'fusions_disabled': os.getenv('X87_DISABLE_ALL_FUSIONS'), "
-            "'fpr_limit': os.getenv('X87_FPR_POOL_LIMIT')}) + '\\n')\n"
+            "'fpr_limit': os.getenv('X87_FPR_POOL_LIMIT'), 'pc24_runs': os.getenv('X87_PC24_RUNS')}) + '\\n')\n"
         )
         stub.chmod(0o755)
         for name in ("wine", "x87sidecar", "i686-w64-mingw32-gcc", "x86_64-w64-mingw32-gcc"):
@@ -195,18 +195,20 @@ class SmokeScripts(unittest.TestCase):
                 self.assertEqual("SKIP: source-only" in result.stdout, not source_present)
                 calls = [json.loads(line) for line in self.log.read_text().splitlines()]
                 probes = [call for call in calls if call["name"] in ("wine", "x87sidecar")]
-                self.assertEqual(len(probes), 35 if source_present else 2)
+                self.assertEqual(len(probes), 43 if source_present else 2)
                 storms = [call for call in probes if call['args'] and
                           call['args'][-1].endswith('/test_x87_signal_storm')]
-                self.assertEqual(len(storms), 4 if source_present else 0)
-                for call, settings in zip(storms, [('0', '0', None), ('1', '0', None),
-                                                  ('1', '1', None), ('0', '0', '5')]):
+                self.assertEqual(len(storms), 5 if source_present else 0)
+                # default, exact (fast single-precision runs off), direct, unfused, pressure
+                for call, settings in zip(storms, [('0', '0', None, None), ('0', '0', None, '0'),
+                                                  ('1', '0', None, None), ('1', '1', None, None),
+                                                  ('0', '0', '5', None)]):
                     self.assertEqual(call['args'][0], '--cooperative')
                     self.assertEqual(call['storm_pc24'], '1')
                     self.assertIsNone(call['storm_case'])
                     self.assertEqual((call['fma'], call['fast_round']), ('0', '0'))
                     self.assertEqual((call['ir_disabled'], call['fusions_disabled'],
-                                      call['fpr_limit']), settings)
+                                      call['fpr_limit'], call['pc24_runs']), settings)
                 hook = str(source) if source_present else self.env["MACTMNF_SIDECAR"]
                 self.assertTrue(all(call["x87"] == "on" and call["hook"] == hook for call in probes))
                 self.assertTrue(all(call["pgid"] != os.getpgrp() for call in probes))

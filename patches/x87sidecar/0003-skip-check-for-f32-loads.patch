@@ -1,0 +1,146 @@
+Subject: x87: Skip the PC24 operand check for values loaded from an f32.
+
+Requires 0001. The native f32 fast path of 0001 first checks that each operand
+is exactly representable as an f32. An operand that is a LoadF32 node in the
+same run is a 32-bit float from memory, so it is exact by construction. The
+check is skipped for such operands; subnormal, infinite and NaN values still
+reach the precise path through the result check. Because an unchecked operand
+may be subnormal, the fast path then also requires FIZ to be clear.
+
+diff --git a/rosetta_core/include/rosetta_core/X87Precision.hpp b/rosetta_core/include/rosetta_core/X87Precision.hpp
+index c2beb22..0a8aa45 100644
+--- a/rosetta_core/include/rosetta_core/X87Precision.hpp
++++ b/rosetta_core/include/rosetta_core/X87Precision.hpp
+@@ -6,8 +6,12 @@ struct AssemblerBuffer;
+ // Three transient GPRs; two FPRs for Sqrt, three for binary arithmetic.
+ // The borrowed GPR and guest NZCV survive.
+ enum class X87Arithmetic { Mul = 0, Div = 1, Add = 2, Sub = 3, Sqrt = 4 };
++// exact_f32: bit 0 (lhs) / bit 1 (rhs) set when the operand is known at
++// translation time to be a value loaded from a 32-bit float, so the PC24 fast
++// path can skip its exactness check for it.
+ void emit_x87_arithmetic(TranslationResult& result, AssemblerBuffer& buf, int base, int scratch,
+-                         X87Arithmetic op, int dst, int lhs, int rhs = -1);
++                         X87Arithmetic op, int dst, int lhs, int rhs = -1,
++                         unsigned exact_f32 = 0);
+ 
+ // Two transient GPRs, no FPRs. Preserves FPCR/NZCV; accumulates FPSR flags.
+ void emit_x87_store_f32(TranslationResult& result, AssemblerBuffer& buf, int base,
+diff --git a/rosetta_core/src/X87IRLower.cpp b/rosetta_core/src/X87IRLower.cpp
+index e77462f..a111063 100644
+--- a/rosetta_core/src/X87IRLower.cpp
++++ b/rosetta_core/src/X87IRLower.cpp
+@@ -120,6 +120,19 @@ static bool narrows_native_slot(const Context& ctx, const Node& n) {
+     return src.op == Op::ReadSt && ((ctx.native_depths >> src.initial_depth) & 1U) != 0;
+ }
+ 
++// Bit 0 / bit 1: inputs[0] / inputs[1] is a LoadF32, so its value is exactly
++// representable as an f32 and the PC24 fast path need not check it.
++static unsigned loaded_f32_inputs(const Context& ctx, const Node& n) {
++    unsigned mask = 0;
++    for (int k = 0; k < 2; k++) {
++        const int input = n.inputs[k];
++        if (input >= 0 && input < ctx.num_nodes && ctx.nodes[input].op == Op::LoadF32) {
++            mask |= 1U << k;
++        }
++    }
++    return mask;
++}
++
+ // ── FPR assignment ──────────────────────────────────────────────────────────
+ 
+ struct FPRState {
+@@ -774,7 +787,8 @@ void lower(Context& ctx, TranslationResult* result) {
+                     Dd = alloc_free_fpr(*result);
+                 }
+                 fprs.node_fpr[i] = static_cast<int8_t>(Dd);
+-                emit_x87_arithmetic(*result, buf, Xbase, Wd_tmp, X87Arithmetic::Add, Dd, Dn, Dm);
++                emit_x87_arithmetic(*result, buf, Xbase, Wd_tmp, X87Arithmetic::Add, Dd, Dn, Dm,
++                                    loaded_f32_inputs(ctx, n));
+                 break;
+             }
+             case Op::FSub: {
+@@ -785,7 +799,8 @@ void lower(Context& ctx, TranslationResult* result) {
+                     Dd = alloc_free_fpr(*result);
+                 }
+                 fprs.node_fpr[i] = static_cast<int8_t>(Dd);
+-                emit_x87_arithmetic(*result, buf, Xbase, Wd_tmp, X87Arithmetic::Sub, Dd, Dn, Dm);
++                emit_x87_arithmetic(*result, buf, Xbase, Wd_tmp, X87Arithmetic::Sub, Dd, Dn, Dm,
++                                    loaded_f32_inputs(ctx, n));
+                 break;
+             }
+             case Op::FMul: {
+@@ -796,7 +811,8 @@ void lower(Context& ctx, TranslationResult* result) {
+                     Dd = alloc_free_fpr(*result);
+                 }
+                 fprs.node_fpr[i] = static_cast<int8_t>(Dd);
+-                emit_x87_arithmetic(*result, buf, Xbase, Wd_tmp, X87Arithmetic::Mul, Dd, Dn, Dm);
++                emit_x87_arithmetic(*result, buf, Xbase, Wd_tmp, X87Arithmetic::Mul, Dd, Dn, Dm,
++                                    loaded_f32_inputs(ctx, n));
+                 break;
+             }
+             case Op::FDiv: {
+@@ -807,7 +823,8 @@ void lower(Context& ctx, TranslationResult* result) {
+                     Dd = alloc_free_fpr(*result);
+                 }
+                 fprs.node_fpr[i] = static_cast<int8_t>(Dd);
+-                emit_x87_arithmetic(*result, buf, Xbase, Wd_tmp, X87Arithmetic::Div, Dd, Dn, Dm);
++                emit_x87_arithmetic(*result, buf, Xbase, Wd_tmp, X87Arithmetic::Div, Dd, Dn, Dm,
++                                    loaded_f32_inputs(ctx, n));
+                 break;
+             }
+ 
+@@ -889,7 +906,8 @@ void lower(Context& ctx, TranslationResult* result) {
+                     Dd = alloc_free_fpr(*result);
+                 }
+                 fprs.node_fpr[i] = static_cast<int8_t>(Dd);
+-                emit_x87_arithmetic(*result, buf, Xbase, Wd_tmp, X87Arithmetic::Sqrt, Dd, Dn);
++                emit_x87_arithmetic(*result, buf, Xbase, Wd_tmp, X87Arithmetic::Sqrt, Dd, Dn, -1,
++                                    loaded_f32_inputs(ctx, n) & 1U);
+                 break;
+             }
+             case Op::FRndInt: {
+diff --git a/rosetta_core/src/X87Precision.cpp b/rosetta_core/src/X87Precision.cpp
+index acfa86a..007f227 100644
+--- a/rosetta_core/src/X87Precision.cpp
++++ b/rosetta_core/src/X87Precision.cpp
+@@ -121,7 +121,7 @@ void emit_x87_store_f32(TranslationResult& result, AssemblerBuffer& b, int base,
+ }
+ 
+ void emit_x87_arithmetic(TranslationResult& result, AssemblerBuffer& b, int base, int tmp,
+-                         X87Arithmetic op, int dst, int lhs, int rhs) {
++                         X87Arithmetic op, int dst, int lhs, int rhs, unsigned exact_f32) {
+     const int saved_tmp = alloc_free_fpr(result);
+     b.emit(0x9e670000 | (tmp << 5) | saved_tmp);  // preserve borrowed GPR
+     const int rc = alloc_free_gpr(result);
+@@ -142,6 +142,8 @@ void emit_x87_arithmetic(TranslationResult& result, AssemblerBuffer& b, int base
+     Label precise, fast_restore, fast_zero_lhs, fast_zero_rhs;
+     precise.zero(b, rc, true);
+     b.emit(0xd53b4400 | tmp);
++    if (exact_f32 != 0)
++        precise.bit(b, tmp, 0, true);  // FIZ: unchecked f32 operands may be subnormal
+     mask(b, tmp, tmp, 0x01c00000);  // host nearest, no flush-to-zero
+     precise.zero(b, tmp, true);
+     auto check_operand = [&](int input, Label& zero) {
+@@ -159,9 +161,19 @@ void emit_x87_arithmetic(TranslationResult& result, AssemblerBuffer& b, int base
+         precise.zero(b, discard, true);  // exclude exponents 128 and 129
+         zero.bind(b);
+     };
+-    check_operand(lhs, fast_zero_lhs);
+-    if (op != X87Arithmetic::Sqrt)
+-        check_operand(rhs, fast_zero_rhs);
++    // A value loaded from an f32 is exactly representable; a subnormal, infinite
++    // or NaN one yields a result outside the normal f32 range, which the result
++    // check below sends to the precise path.
++    if (exact_f32 & 1U)
++        fast_zero_lhs.bind(b);
++    else
++        check_operand(lhs, fast_zero_lhs);
++    if (op != X87Arithmetic::Sqrt) {
++        if (exact_f32 & 2U)
++            fast_zero_rhs.bind(b);
++        else
++            check_operand(rhs, fast_zero_rhs);
++    }
+     const int single_lhs = alloc_free_fpr(result);
+     b.emit(0xd53b4420 | discard);  // restore status if the f32 range was exceeded
+     emit_fcvt_d_to_s(b, single_lhs, lhs);

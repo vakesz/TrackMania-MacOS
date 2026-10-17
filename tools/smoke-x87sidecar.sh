@@ -21,9 +21,10 @@ if test ! -x "$sidecar"; then
 fi
 export ROSETTA_X87_PATH="$sidecar"
 python3 "${SCRIPT_DIR}/run-probe.py" 60 "$sidecar" --probe
-for mode in default direct unfused pressure; do
+for mode in default exact direct unfused pressure; do
   mode_vars=(X87_DISABLE_X87_IR=0 X87_DISABLE_ALL_FUSIONS=0)
   case "$mode" in
+    exact) mode_vars=(X87_DISABLE_X87_IR=0 X87_DISABLE_ALL_FUSIONS=0 X87_PC24_RUNS=0) ;;
     direct) mode_vars=(X87_DISABLE_X87_IR=1 X87_DISABLE_ALL_FUSIONS=0) ;;
     unfused) mode_vars=(X87_DISABLE_X87_IR=1 X87_DISABLE_ALL_FUSIONS=1) ;;
     pressure) mode_vars=(X87_DISABLE_X87_IR=0 X87_DISABLE_ALL_FUSIONS=0 X87_FPR_POOL_LIMIT=5) ;;
@@ -34,7 +35,7 @@ for mode in default direct unfused pressure; do
     test_arith test_flags_across_x87 test_fxch test_x87_signal_storm; do
     say "Testing $probe ($mode)"
     python3 "${SCRIPT_DIR}/run-probe.py" 60 \
-      env -u X87_FPR_POOL_LIMIT -u STORM_CASE STORM_PC24=1 TEST_PC24=1 X87_ENABLE_IR_SPLIT=1 X87_ENABLE_IR_REMAT=1 X87_ENABLE_FMA_CONTRACT=0 X87_FAST_ROUND=0 \
+      env -u X87_FPR_POOL_LIMIT -u X87_PC24_RUNS -u STORM_CASE STORM_PC24=1 TEST_PC24=1 X87_ENABLE_IR_SPLIT=1 X87_ENABLE_IR_REMAT=1 X87_ENABLE_FMA_CONTRACT=0 X87_FAST_ROUND=0 \
       "${mode_vars[@]}" "$sidecar" --cooperative "${source_dir}/bin/tests/$probe"
   done
 done

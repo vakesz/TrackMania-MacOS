@@ -147,6 +147,36 @@ The native-test DLLs load only beside the scratch probes. They are not release
 artifacts. See `tests/fixtures/tls/README.md`; do not install its test CA in a
 real prefix or macOS Keychain.
 
+Two tools compare x87sidecar builds. Like `make smoke`, they run in the selected
+prefix and need the i686 MinGW compiler; close the game first. Name each build
+with `NAME=PATH`:
+
+```sh
+python3 tools/bench-x87.py --sidecar old=PATH --sidecar new=PATH
+python3 tools/physics-gate-x87.py --sidecar old=PATH --sidecar new=PATH
+```
+
+`bench-x87.py` times `tests/x87-bench.c` (a 4x4 matrix chain in PC24 and PC53,
+particle-sprite vertices in PC24, and an integer control) under stock Rosetta and
+each build, and prints nanoseconds per iteration. It uses no game files.
+
+`physics-gate-x87.py` needs the installed game. It builds a call table for about
+230 `Gm*` math functions from `TmForever.map`, maps `TmForever.exe` without running
+it, and calls each function with deterministic random and edge-case inputs in PC24
+with all four rounding modes and in PC53. Every later build must give the same
+hash per function and mode as the first, or the gate fails. Each build is also
+compared with stock Rosetta, for information. The differences from stock predate
+the fast paths: runtime 0.3.0's translator (4e9c738 with the old patch) differs in
+125 of 1150 results, 0b7c5e5 with patch 0001 in 113, and patches 0002-0004 change
+none of them. No result that matched stock in 0.3.0 differs now. All remaining
+differences need inputs a race does not produce: angles of 2.7e9 radians and more
+(fsin, fcos and fptan match stock below that, checked with 30 million random
+angles), overflowing squares and degenerate camera frustums.
+
+`--explain NAME` prints the values one function computes differently, with their
+inputs. Functions that need game state the harness does not set up are listed in
+`tests/x87-gamecode-skip.txt`.
+
 ## Release files
 
 Update `VERSION` before the full build used for release qualification when the

@@ -230,7 +230,7 @@ elif args and Path(args[0]).name == 'mactmnf-session.exe':
                  ('0x720', '1280x0', '1280x720junk', ' 1280x720', '-1x720', '1280xx720',
                   '65536x720', '720x65536', '999999999999999999999x720')]
         cases += [('MACTMNF_AUDIO', 'invalid'), ('MACTMNF_X87', 'invalid'),
-                  ('MACTMNF_RENDERER', 'invalid')]
+                  ('MACTMNF_RENDERER', 'invalid'), ('MACTMNF_DIAG', 'invalid')]
         for key, value in cases:
             with self.subTest(key=key, value=value):
                 result = self.shell('./bin/mactmnf configure', **{key: value})

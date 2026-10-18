@@ -190,6 +190,18 @@ launcher; external Wine invocations do not participate in its operation lock.
 - For frame-time observation, use `DXVK_HUD=fps,frametimes make play`. Compare
   warmed laps on the same track and resolution. Loading time and menu FPS are
   not race benchmarks.
+- For a frame-rate report by game state, play with `make diag` and read the
+  report it prints when the game exits (`make report` shows it again,
+  `python3 tools/session-report.py --list` lists earlier sessions). The session
+  goes to `play.log` with Wine's `+fps` channel, about one line a second, and
+  `lib/monitor.py` adds window focus, power state and the busiest threads every
+  five seconds. A small helper, `src/game-state.c`, reads the game's own state
+  (menu, race, finish, replay and others) and the current map's name from its
+  memory, so the report also groups races by map; MinGW builds it on
+  first use (`brew install mingw-w64`). It knows the layout of TMNF 2.11.26,
+  which the Competition Patch build shares; with another build, or without
+  MinGW, the state is reported as unknown. `MACTMNF_DIAG=on` enables the same
+  logging for any launch.
 - Avoid verbose Wine traces and MoltenVK performance logging during ordinary
   play. Earlier diagnostic runs reduced menu performance severely.
 

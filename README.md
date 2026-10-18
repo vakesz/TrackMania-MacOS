@@ -110,6 +110,8 @@ Rosetta version; its compatibility probe must pass. See
 | Command | Action |
 | --- | --- |
 | `make play` | Start the same game as the app |
+| `make diag` | Play with session diagnostics, then report frame rate by game state |
+| `make report` | Show the report of the last diagnostic session again |
 | `make configure` | Open the original settings launcher |
 | `make doctor` | Check runtime, game, renderer, audio and mod installation |
 | `make stop` | Stop Wine processes in this game's prefix |

@@ -163,7 +163,9 @@ output goes directly to a file, not a pipe that could interrupt a surviving game
 For a diagnostic comparison, `MACTMNF_X87=off make play` uses stock Rosetta math.
 `MACTMNF_AUDIO=off make play` disables sound. Normal installs enable both audio
 and the patched translator. These temporary overrides do not change saved game
-settings.
+settings. `make install` replaces the game's Creative OpenAL with OpenAL Soft;
+`MACTMNF_OPENAL=creative make install` puts the original back and keeps it on
+later installs.
 
 ## Development
 
@@ -178,7 +180,9 @@ See [docs/building.md](docs/building.md) before distributing them.
 
 This project's own scripts and tests use the MIT license. Patches and bundled third-party
 code retain their upstream licenses. See [LICENSE](LICENSE) and the `licenses`
-directory in each runtime archive.
+directory in each runtime archive. OpenAL Soft (LGPL 2.1 or later) is downloaded
+from its official release during installation, not bundled; its license is
+installed next to it in the game directory.
 
 ## Acknowledgements
 
@@ -187,6 +191,7 @@ This runtime is thin glue over other people's hard work. With gratitude to:
 - [Wine](https://www.winehq.org) for the Windows compatibility layer everything here is built on.
 - [DXVK](https://github.com/doitsujin/dxvk) and the [d9vk fork](https://github.com/Sikarugir-App/d9vk) that turn the game's Direct3D 9 calls into Vulkan.
 - [MoltenVK](https://github.com/KhronosGroup/MoltenVK) for running Vulkan on Apple's Metal.
+- [OpenAL Soft](https://openal-soft.org) for the game's audio mixing.
 - Apple's Rosetta 2 for translating the game's x86 code on Apple Silicon.
 - [athei](https://github.com/athei)'s [x87sidecar](https://github.com/athei/x87sidecar) and cooperative Wine handshake, which keep TMNF's 24-bit x87 math intact under Rosetta.
 - [tomashu](https://tomashu.pages.dev)'s TMLoader, and the TrackMania Competition Patch and CoreMod that make online play current.

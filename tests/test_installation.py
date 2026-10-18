@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
+import zipfile
 
 from lib.managed_paths import check_layout, check_prefix, check_uninstall, record_profile_baseline, safe_path, setup_documents
 from lib.runtime_manifest import EXECUTABLES, REQUIRED_FILES, digest, verify_runtime
@@ -230,12 +231,93 @@ elif args and Path(args[0]).name == 'mactmnf-session.exe':
                  ('0x720', '1280x0', '1280x720junk', ' 1280x720', '-1x720', '1280xx720',
                   '65536x720', '720x65536', '999999999999999999999x720')]
         cases += [('MACTMNF_AUDIO', 'invalid'), ('MACTMNF_X87', 'invalid'),
-                  ('MACTMNF_RENDERER', 'invalid')]
+                  ('MACTMNF_RENDERER', 'invalid'), ('MACTMNF_OPENAL', 'invalid')]
         for key, value in cases:
             with self.subTest(key=key, value=value):
                 result = self.shell('./bin/mactmnf configure', **{key: value})
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(self.log.exists())
+
+    def openal_fixture(self, archive_dll=b'fake OpenAL Soft library'):
+        """A project copy pinned to fake Creative and OpenAL Soft payloads, archive cached."""
+        project = self.home / 'openal project'
+        project.mkdir()
+        for name in ('bin', 'lib', 'config'):
+            shutil.copytree(ROOT / name, project / name)
+        for name in ('VERSION', 'install.sh'):
+            shutil.copy2(ROOT / name, project / name)
+        result = self.shell('. ./lib/common.sh; printf "%s\\n" "$GAME_OPENAL" "$OPENAL_SOFT_ARCHIVE" '
+                            '"$OPENAL_SOFT_VERSION"', cwd=project)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        game_openal, archive, version = result.stdout.splitlines()
+        game_openal, archive = Path(game_openal), Path(archive)
+        game_openal.parent.mkdir(parents=True)
+        game_openal.write_bytes(b'fake Creative OpenAL router')
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(archive, 'w') as zf:
+            zf.writestr(f'openal-soft-{version}-bin/bin/Win32/soft_oal.dll', archive_dll)
+            zf.writestr(f'openal-soft-{version}-bin/COPYING', 'fake LGPL text')
+            zf.writestr(f'openal-soft-{version}-bin/alsoft-config/alsoft-config.exe', 'not installed')
+        common = project / 'lib/common.sh'
+        source = common.read_text()
+        for constant, payload in (('OPENAL_SOFT_SHA256', archive.read_bytes()),
+                                  ('OPENAL_SOFT_DLL_SHA256', b'fake OpenAL Soft library'),
+                                  ('CREATIVE_OPENAL_SHA256', b'fake Creative OpenAL router')):
+            fake = self.home / ('payload-' + constant)
+            fake.write_bytes(payload)
+            source, count = re.subn(r'^' + constant + r'="[0-9a-f]{64}"$',
+                                    '{}="{}"'.format(constant, digest(fake)), source, flags=re.MULTILINE)
+            self.assertEqual(count, 1)
+        common.write_text(source)
+        return project, game_openal
+
+    def test_openal_soft_replaces_and_restores_creative(self):
+        project, game_openal = self.openal_fixture()
+        result = self.shell('. ./install.sh; install_openal; game_openal', cwd=project)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines()[-1], 'soft')
+        self.assertEqual(game_openal.read_bytes(), b'fake OpenAL Soft library')
+        self.assertEqual((game_openal.parent / 'OpenAL32.creative.dll').read_bytes(), b'fake Creative OpenAL router')
+        self.assertEqual((game_openal.parent / 'OpenAL32.COPYING.txt').read_text(), 'fake LGPL text')
+        self.assertFalse((game_openal.parent / 'alsoft-config.exe').exists())
+
+        result = self.shell('. ./install.sh; install_openal', cwd=project)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('already installed', result.stdout)
+
+        result = self.shell('. ./install.sh; install_openal; game_openal', cwd=project,
+                            MACTMNF_OPENAL='creative')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines()[-1], 'creative')
+        self.assertEqual(game_openal.read_bytes(), b'fake Creative OpenAL router')
+        self.assertFalse((game_openal.parent / 'OpenAL32.COPYING.txt').exists())
+
+        # The choice is remembered: a later install or update keeps Creative OpenAL.
+        result = self.shell('. ./install.sh; install_openal; game_openal; openal_is_current', cwd=project)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Using the game', result.stdout)
+        self.assertEqual(result.stdout.splitlines()[-1], 'creative')
+        result = self.shell('. ./install.sh; install_openal; game_openal', cwd=project,
+                            MACTMNF_OPENAL='soft')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines()[-1], 'soft')
+        self.assertFalse(self.log.exists())  # no Wine process is needed
+
+    def test_openal_leaves_an_unknown_library_alone(self):
+        project, game_openal = self.openal_fixture()
+        game_openal.write_bytes(b'a library the user installed')
+        result = self.shell('. ./install.sh; install_openal', cwd=project)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Leaving', result.stderr)
+        self.assertEqual(game_openal.read_bytes(), b'a library the user installed')
+
+    def test_openal_rejects_an_unverified_library(self):
+        project, game_openal = self.openal_fixture(archive_dll=b'a tampered library')
+        result = self.shell('. ./install.sh; install_openal', cwd=project)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('verification failed', result.stderr)
+        self.assertEqual(game_openal.read_bytes(), b'fake Creative OpenAL router')
+        self.assertFalse((game_openal.parent / 'OpenAL32.creative.dll').exists())
 
     def test_reused_directx_repairs_all_compilers_without_wine(self):
         self.prefix.mkdir(parents=True)

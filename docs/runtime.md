@@ -125,6 +125,23 @@ mixing. Listen in game to verify those. x87sidecar runs
 with FMA contraction and fast rounding disabled. It uses cooperative attachment;
 no system Rosetta files, privileged service or debugger entitlement is needed.
 
+TMNF plays its sound through `OpenAL32.dll` in the game directory. The game ships
+Creative's OpenAL router with its `wrap_oal.dll` software mixer, which on macOS 27
+keeps a real-time thread busy for much of a core and lowers race frame rates.
+`make install` replaces it with OpenAL Soft's official 32-bit `soft_oal.dll`
+(pinned version and SHA-256), keeps the original as `OpenAL32.creative.dll` and
+puts OpenAL Soft's license beside it as `OpenAL32.COPYING.txt`. OpenAL Soft runs
+with its defaults: its resampler and HRTF settings change its own mixing cost by
+a few percent of one core at most, on its own thread. An `%AppData%\alsoft.ini` in
+the prefix still applies. Wine's CoreAudio driver reports every output device as
+speakers, so OpenAL Soft's automatic HRTF never turns on for headphones; for
+binaural sound on headphones, put `stereo-encoding = hrtf` under `[general]` in
+the prefix user's `AppData/Roaming/alsoft.ini`.
+
+`MACTMNF_OPENAL=creative make install` restores Creative's library; later installs
+and updates keep that choice until `MACTMNF_OPENAL=soft make install`. A different
+`OpenAL32.dll` placed there by the user is left unchanged.
+
 The original graphics launcher receives a known Nvidia PCI identity (GeForce
 8800 GT) for that executable only. The wined3d renderers read it from the
 launcher's per-application registry keys; D9VK reads it from the

@@ -235,6 +235,64 @@ install_competition_patch() (
   say "Installed Competition Patch $TMCOMP_VERSION with ModLoader bundle $TMLOADER_BUNDLE_VERSION"
 )
 
+install_openal() (
+  local extract_dir entry cleanup current
+
+  current="$(game_openal)"
+  case "$current" in
+    missing)
+      warn "The game has no OpenAL32.dll; skipping the OpenAL step. Reinstall the game to restore it."
+      return ;;
+    other)
+      warn "Leaving $GAME_OPENAL unchanged: it is neither the game's Creative OpenAL nor OpenAL Soft $OPENAL_SOFT_VERSION"
+      return ;;
+  esac
+  if test "$MACTMNF_OPENAL" = creative; then
+    if test "$current" = soft; then
+      verify_file "$GAME_OPENAL_CREATIVE" "$CREATIVE_OPENAL_SHA256" \
+        || die "Cannot restore Creative OpenAL: $GAME_OPENAL_CREATIVE is missing. Reinstall the game with update."
+      cp "$GAME_OPENAL_CREATIVE" "$GAME_OPENAL"
+      rm -f "$GAME_OPENAL_COPYING"
+      say "Restored the game's Creative OpenAL"
+    else
+      say "Using the game's Creative OpenAL"
+    fi
+    printf 'creative\n' >"$OPENAL_MARKER"
+    return
+  fi
+
+  if test "$current" = soft; then
+    printf 'soft\n' >"$OPENAL_MARKER"
+    say "OpenAL Soft $OPENAL_SOFT_VERSION is already installed"
+    return
+  fi
+
+  download_verified "$OPENAL_SOFT_URL" "$OPENAL_SOFT_ARCHIVE" "$OPENAL_SOFT_SHA256"
+  while IFS= read -r entry; do
+    case "$entry" in
+      /*|../*|*/../*|*/..) die "Unsafe path in OpenAL Soft archive: $entry" ;;
+    esac
+  done < <(unzip -Z1 "$OPENAL_SOFT_ARCHIVE")
+
+  extract_dir="$(mktemp -d "${MACTMNF_CACHE}/openal-extract.XXXXXX")"
+  printf -v cleanup 'rm -rf -- %q' "$extract_dir"
+  # shellcheck disable=SC2064
+  trap "$cleanup" EXIT
+  unzip -q "$OPENAL_SOFT_ARCHIVE" "openal-soft-${OPENAL_SOFT_VERSION}-bin/bin/Win32/soft_oal.dll" \
+    "openal-soft-${OPENAL_SOFT_VERSION}-bin/COPYING" -d "$extract_dir"
+  verify_file "${extract_dir}/openal-soft-${OPENAL_SOFT_VERSION}-bin/bin/Win32/soft_oal.dll" "$OPENAL_SOFT_DLL_SHA256" \
+    || die "OpenAL Soft library verification failed."
+
+  # Keep the original, so MACTMNF_OPENAL=creative restores it without a game reinstall.
+  cp "$GAME_OPENAL" "$GAME_OPENAL_CREATIVE"
+  cp "${extract_dir}/openal-soft-${OPENAL_SOFT_VERSION}-bin/bin/Win32/soft_oal.dll" "$GAME_OPENAL"
+  cp "${extract_dir}/openal-soft-${OPENAL_SOFT_VERSION}-bin/COPYING" "$GAME_OPENAL_COPYING"
+
+  openal_soft_is_installed || die "OpenAL Soft installation failed."
+  printf 'soft\n' >"$OPENAL_MARKER"
+  say "Installed OpenAL Soft $OPENAL_SOFT_VERSION as the game's OpenAL32.dll (MACTMNF_OPENAL=creative restores the original)"
+)
+
 main() {
   case "${1:-}" in
     ''|directx) test "$#" -le 1 || die "Usage: install.sh [directx]" ;;
@@ -261,6 +319,7 @@ main() {
   install_game
   install_directx_runtime
   install_competition_patch
+  install_openal
   "${SCRIPT_DIR}/bin/mactmnf" d9vk
   "${SCRIPT_DIR}/bin/mactmnf" app
   "${SCRIPT_DIR}/bin/mactmnf" doctor

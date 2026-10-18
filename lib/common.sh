@@ -34,6 +34,14 @@ RUNTIME_ARCHIVE_NAME="mactmnf-${RUNTIME_VERSION}-runtime.tar.xz"
 DIRECTX_VERSION="9.29.1974.1 (June 2010)"
 DIRECTX_URL="https://download.microsoft.com/download/8/4/a/84a35bf1-dafe-4ae8-82af-ad2ae20b6b14/directx_Jun2010_redist.exe"
 DIRECTX_SHA256="053f76dcbb28802e23341b6a787e3b0791c0fa5c8d4d011b1044172dbf89c73b"
+# OpenAL Soft's official Windows binaries replace the Creative OpenAL router that
+# TMNF ships; its software mixer costs much more CPU under Wine on macOS 27.
+OPENAL_SOFT_VERSION="1.25.2"
+OPENAL_SOFT_URL="https://openal-soft.org/openal-binaries/openal-soft-${OPENAL_SOFT_VERSION}-bin.zip"
+OPENAL_SOFT_SHA256="67a0c4b800bd860c93c04f38caf8cbe4875f9c84700ac430efc451f70e265434"
+OPENAL_SOFT_DLL_SHA256="606cf8b4c22c7ae00813585279ac045115907bc66d1483eb26355907021ea4b0"
+# OpenAL32.dll as installed by the pinned TMNF release.
+CREATIVE_OPENAL_SHA256="26ba695d73fdf78ff133ab9c0e12300c26076441627a25ffba80c8b8aedb10ec"
 
 : "${MACTMNF_ROOT:=${HOME}/Games/TMNF}"
 : "${MACTMNF_CACHE:=${HOME}/Library/Caches/MacTMNF}"
@@ -56,6 +64,13 @@ fi
 : "${MACTMNF_AUDIO:=on}"
 : "${MACTMNF_X87:=on}"
 : "${MACTMNF_PREFIX:=${MACTMNF_ROOT}/prefix}"
+# Game's OpenAL implementation, applied by make install: soft or creative. The
+# last applied choice stays until MACTMNF_OPENAL selects another one.
+readonly OPENAL_MARKER="${MACTMNF_PREFIX}/.mactmnf-openal"
+if test -z "${MACTMNF_OPENAL:-}" && test -f "$OPENAL_MARKER"; then
+  MACTMNF_OPENAL="$(tr -d '\r\n' <"$OPENAL_MARKER")"
+fi
+: "${MACTMNF_OPENAL:=soft}"
 : "${MACTMNF_USERDATA:=${MACTMNF_ROOT}/UserData}"
 # Direct3D 9 renderer: d9vk (DXVK on MoltenVK/Metal), wined3d-vulkan, wined3d-gl
 : "${MACTMNF_RENDERER:=d9vk}"
@@ -81,6 +96,10 @@ readonly TMLOADER_GAME_EXE="${TMLOADER_DIR}/database/TmForever/products/TmForeve
 readonly PREFIX_D9VK_DLL="${MACTMNF_PREFIX}/drive_c/windows/syswow64/d3d9.dll"
 readonly DXVK_CONF="${MACTMNF_PROJECT_DIR}/config/dxvk.conf"
 readonly TMLOADER_COREMOD_DLL="${TMLOADER_DIR}/database/TmForever/products/CoreMod/${TMLOADER_COREMOD_VERSION}/CoreMod.dll"
+readonly OPENAL_SOFT_ARCHIVE="${MACTMNF_CACHE}/openal-soft-${OPENAL_SOFT_VERSION}-bin.zip"
+readonly GAME_OPENAL="${GAME_DIR}/OpenAL32.dll"
+readonly GAME_OPENAL_CREATIVE="${GAME_DIR}/OpenAL32.creative.dll"
+readonly GAME_OPENAL_COPYING="${GAME_DIR}/OpenAL32.COPYING.txt"
 
 say() {
   printf '%s\n' "$*"
@@ -131,6 +150,31 @@ d9vk_is_installed() {
   cmp -s "$MACTMNF_D9VK_DLL" "$PREFIX_D9VK_DLL"
 }
 
+openal_soft_is_installed() {
+  verify_file "$GAME_OPENAL" "$OPENAL_SOFT_DLL_SHA256"
+}
+
+# soft, creative, other or missing: the OpenAL32.dll the game loads from its directory.
+game_openal() {
+  if test ! -f "$GAME_OPENAL"; then
+    printf 'missing\n'
+  elif openal_soft_is_installed; then
+    printf 'soft\n'
+  elif verify_file "$GAME_OPENAL" "$CREATIVE_OPENAL_SHA256"; then
+    printf 'creative\n'
+  else
+    printf 'other\n'
+  fi
+}
+
+# make install applied MACTMNF_OPENAL. It leaves a missing or unrecognised DLL alone.
+openal_is_current() {
+  case "$(game_openal)" in
+    "$MACTMNF_OPENAL"|other|missing) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 competition_patch_is_ready() {
   competition_patch_is_current \
     && test -s "${TMLOADER_DIR}/database/TmForever/products/TmForever/settings.yaml" \
@@ -140,6 +184,7 @@ competition_patch_is_ready() {
 validate_launch_options() {
   case "$MACTMNF_AUDIO" in on|off) ;; *) die "Unknown MACTMNF_AUDIO: $MACTMNF_AUDIO (use on or off)" ;; esac
   case "$MACTMNF_X87" in on|off) ;; *) die "Unknown MACTMNF_X87: $MACTMNF_X87 (use on or off)" ;; esac
+  case "$MACTMNF_OPENAL" in soft|creative) ;; *) die "Unknown MACTMNF_OPENAL: $MACTMNF_OPENAL (use soft or creative)" ;; esac
   case "$MACTMNF_RENDERER" in
     d9vk|wined3d-vulkan|wined3d-gl) ;;
     *) die "Unknown MACTMNF_RENDERER: $MACTMNF_RENDERER (use d9vk, wined3d-vulkan or wined3d-gl)" ;;

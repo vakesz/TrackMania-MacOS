@@ -126,8 +126,9 @@ configure_game() {
 }
 
 update_game() {
-  if verify_file "$GAME_EXE" "$TMNF_EXE_SHA256" && competition_patch_is_ready && directx_is_current; then
-    say "TMNF $TMNF_GAME_VERSION, DirectX $DIRECTX_VERSION, and Competition Patch $TMCOMP_VERSION are current."
+  if verify_file "$GAME_EXE" "$TMNF_EXE_SHA256" && competition_patch_is_ready && directx_is_current \
+      && openal_is_current; then
+    say "TMNF $TMNF_GAME_VERSION, DirectX $DIRECTX_VERSION, Competition Patch $TMCOMP_VERSION and OpenAL are current."
     return
   fi
 
@@ -154,6 +155,15 @@ doctor() {
   say "MacTMNF $MACTMNF_VERSION"
   say "macOS: $(sw_vers -productVersion 2>/dev/null || echo unknown) ($(uname -m))"
   say "Audio on next launch: $MACTMNF_AUDIO (MACTMNF_AUDIO=off disables sound)"
+  if test -f "$GAME_EXE"; then
+    case "$(game_openal)" in
+      soft) say "OpenAL: OpenAL Soft $OPENAL_SOFT_VERSION" ;;
+      creative) say "OpenAL: the game's Creative OpenAL" ;;
+      other) say "OpenAL: a replaced OpenAL32.dll ($(sha256_file "$GAME_OPENAL" | cut -c1-12))" ;;
+      missing) warn "OpenAL32.dll is missing from the game directory; run update" ;;
+    esac
+    openal_is_current || warn "MACTMNF_OPENAL=$MACTMNF_OPENAL is not applied yet; run make install"
+  fi
   say "Patched x87 translation: $MACTMNF_X87"
   if test "$MACTMNF_X87" = on; then
     if test -x "$sidecar" && "$sidecar" --probe >/dev/null 2>&1; then

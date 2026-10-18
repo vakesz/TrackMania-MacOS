@@ -54,6 +54,8 @@ fi
 # wanted.
 : "${MACTMNF_WINDOW_SIZE:=fullscreen}"
 : "${MACTMNF_AUDIO:=on}"
+# Session diagnostics for make diag: game state, frame rate and CPU in the play log
+: "${MACTMNF_DIAG:=off}"
 : "${MACTMNF_X87:=on}"
 : "${MACTMNF_PREFIX:=${MACTMNF_ROOT}/prefix}"
 : "${MACTMNF_USERDATA:=${MACTMNF_ROOT}/UserData}"
@@ -140,6 +142,7 @@ competition_patch_is_ready() {
 validate_launch_options() {
   case "$MACTMNF_AUDIO" in on|off) ;; *) die "Unknown MACTMNF_AUDIO: $MACTMNF_AUDIO (use on or off)" ;; esac
   case "$MACTMNF_X87" in on|off) ;; *) die "Unknown MACTMNF_X87: $MACTMNF_X87 (use on or off)" ;; esac
+  case "$MACTMNF_DIAG" in on|off) ;; *) die "Unknown MACTMNF_DIAG: $MACTMNF_DIAG (use on or off)" ;; esac
   case "$MACTMNF_RENDERER" in
     d9vk|wined3d-vulkan|wined3d-gl) ;;
     *) die "Unknown MACTMNF_RENDERER: $MACTMNF_RENDERER (use d9vk, wined3d-vulkan or wined3d-gl)" ;;

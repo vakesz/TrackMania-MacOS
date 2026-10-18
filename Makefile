@@ -1,10 +1,12 @@
 .DEFAULT_GOAL := help
-.PHONY: help install build package play configure doctor stop app check smoke
+.PHONY: help install build package play diag report configure doctor stop app check smoke
 
 help:
 	@echo 'make install     Install the runtime, game and Applications launchers'
 	@echo 'make build       Download pinned sources and build the complete runtime'
 	@echo 'make play        Play with Competition Patch and all runtime fixes'
+	@echo 'make diag        Play with session diagnostics, then report frame rate by game state'
+	@echo 'make report      Report the last diagnostic session again'
 	@echo 'make configure   Open the original graphics/settings launcher'
 	@echo 'make doctor      Check the installed game and runtime'
 	@echo 'make stop        Stop Wine processes in the selected prefix'
@@ -23,6 +25,14 @@ package:
 
 play configure doctor stop app:
 	./bin/mactmnf $@
+
+# The session log is the apps' play log, written directly to the file.
+diag:
+	@MACTMNF_DIAG=on python3 lib/app_launch.py "$(CURDIR)/bin/mactmnf" play "$(HOME)/Library/Logs/MacTMNF/play.log"; \
+	status=$$?; python3 tools/session-report.py; exit $$status
+
+report:
+	@python3 tools/session-report.py
 
 check:
 	@for file in install.sh bin/mactmnf lib/*.sh tools/*.sh tests/*.sh; do bash -n "$$file" || exit $$?; done

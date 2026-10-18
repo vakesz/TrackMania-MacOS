@@ -81,12 +81,22 @@ play_target() {
   if test "$MACTMNF_WINDOW_SIZE" != fullscreen; then
     session_args+=(--desktop "$MACTMNF_WINDOW_SIZE")
   fi
+  local debug="${WINEDEBUG:--all}"
+  if test "$MACTMNF_DIAG" = on; then
+    # Wine's frame rate and timestamps, read with lib/monitor.py's lines by
+    # tools/session-report.py. The monitor follows this process ID, which the
+    # session supervisor keeps after exec.
+    debug="${WINEDEBUG:--all,+fps,+timestamp}"
+    say "mactmnf-run: version=$MACTMNF_VERSION macos=$(sw_vers -productVersion 2>/dev/null) model=$(sysctl -n hw.model 2>/dev/null) x87=$MACTMNF_X87 audio=$MACTMNF_AUDIO renderer=$MACTMNF_RENDERER target=${watch##*/}"
+    without_operation_lock python3 "${PROJECT_DIR}/lib/monitor.py" --parent "$$" --prefix "$MACTMNF_PREFIX" \
+      --wine "$wine_bin" --cache "$MACTMNF_CACHE" &
+  fi
   cd "$GAME_DIR"
   # Keep the operation descriptor in the host supervisor. Its child processes
   # close inherited descriptors, so neither Wine nor a detached server owns it.
   exec env \
     WINEPREFIX="$MACTMNF_PREFIX" \
-    WINEDEBUG="${WINEDEBUG:--all}" \
+    WINEDEBUG="$debug" \
     WINEDLLOVERRIDES="$overrides" \
     "${renderer_vars[@]}" \
     python3 "${PROJECT_DIR}/lib/session.py" run \

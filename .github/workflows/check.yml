@@ -10,6 +10,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install validation tools
-        run: brew install shellcheck python@3.14
+        run: brew install shellcheck uv
       - name: Validate
         run: make check

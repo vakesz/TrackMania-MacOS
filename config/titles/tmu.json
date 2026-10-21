@@ -1,0 +1,22 @@
+{
+  "id": "tmu",
+  "name": "TrackMania United Forever",
+  "short_name": "TMU",
+  "engine": "tmf-classic",
+  "installer": "disk-image",
+  "status": "provisional",
+  "prefix_subdir": "TMNF/United",
+  "prefix_marker": "tmu:1",
+  "app_name": "TrackMania United Forever.app",
+  "settings_app_name": "TrackMania United Settings.app",
+  "bundle_id_game": "local.tmnf.tmu.game",
+  "bundle_id_settings": "local.tmnf.tmu.settings",
+  "game_dir_name": "TmUnitedForever",
+  "game_exe": "TmForever.exe",
+  "launcher_exe": "TmForeverLauncher.exe",
+  "save_dirs": ["TmForever", "TmUnited", "TrackMania United"],
+  "needs_directx": true,
+  "needs_tmloader": false,
+  "cache_installer": null,
+  "notes": "Provisional pending user-supplied retail disk image. Installer flags, exe hashes and patch chain TBD once images are provided. No keys stored."
+}

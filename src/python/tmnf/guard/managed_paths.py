@@ -22,6 +22,31 @@ def safe_path(value):
     return resolved
 
 
+_TITLE_MARKERS = None
+
+
+def title_markers():
+    """Prefix ownership markers from config/titles/*.json, next to this file."""
+    global _TITLE_MARKERS
+    if _TITLE_MARKERS is None:
+        markers = set()
+        titles = Path(__file__).resolve().parents[4] / 'config' / 'titles'
+        try:
+            entries = titles.glob('*.json')
+        except OSError:
+            entries = ()
+        for path in entries:
+            try:
+                data = json.loads(path.read_text())
+            except (OSError, ValueError):
+                continue
+            marker = data.get('prefix_marker')
+            if isinstance(marker, str) and marker:
+                markers.add(marker)
+        _TITLE_MARKERS = markers
+    return _TITLE_MARKERS
+
+
 def check_layout(values, apps=False):
     if apps and any(not Path(value).is_absolute() for value in values):
         raise ValueError('App destinations must be absolute paths')
@@ -42,20 +67,20 @@ def check_prefix(value, creating=False):
         raise ValueError('Wine prefix is missing: {}'.format(path))
     if not path.is_dir():
         raise ValueError('Wine prefix is not a directory: {}'.format(path))
-    marker = path / '.mactmnf-prefix'
-    initializing = path / '.mactmnf-initializing'
+    marker = path / '.tmnf-prefix'
+    initializing = path / '.tmnf-initializing'
     if initializing.is_symlink() or (initializing.exists() and not initializing.is_file()):
         raise ValueError('Invalid prefix initialization marker')
     if marker.is_symlink():
         raise ValueError('Prefix ownership marker must not be a symlink')
     if marker.is_file():
         identity = marker.read_text().strip()
-        if identity == 'tmnf:1':
+        if identity in title_markers():
             return
         # Shipped TMNF installations used an empty marker. Require Wine layout
         # or the existing interrupted-initialization marker before accepting it.
         if not identity and any((path / name).is_file() and not (path / name).is_symlink()
-                                for name in ('system.reg', '.mactmnf-initializing')):
+                                for name in ('system.reg', '.tmnf-initializing')):
             return
         raise ValueError('Unrecognized prefix ownership: {}'.format(path))
     if creating and not any(path.iterdir()):
@@ -117,7 +142,8 @@ def check_uninstall(prefix, userdata):
             inspect(documents)
         else:
             # Outside Documents may contain a save-folder alias back into Wine.
-            for name in ('TmForever', 'Config', 'Replays', 'Tracks'):
+            for name in ('TmForever', 'TmUnited', 'TrackMania', 'TrackMania United',
+                         'ManiaPlanet', 'Canyon', 'Turbo', 'Config', 'Replays', 'Tracks'):
                 child = documents / name
                 if os.path.lexists(child):
                     inspect(child)
@@ -128,7 +154,7 @@ def setup_documents(prefix, userdata):
     check_layout([str(prefix), str(userdata)])
     check_prefix(str(prefix))
     prefix, userdata = Path(prefix).resolve(), Path(userdata).resolve()
-    baseline = prefix / '.mactmnf-profile-baseline'
+    baseline = prefix / '.tmnf-profile-baseline'
     provenance = None
     if os.path.lexists(baseline):
         if baseline.is_symlink() or not baseline.is_file():
@@ -205,7 +231,7 @@ def record_profile_baseline(prefix):
     """Persist pre-Wineboot profiles once so retries recognize our default links."""
     check_prefix(str(prefix))
     prefix = Path(prefix).resolve()
-    baseline = prefix / '.mactmnf-profile-baseline'
+    baseline = prefix / '.tmnf-profile-baseline'
     if os.path.lexists(baseline):
         if baseline.is_symlink() or not baseline.is_file():
             raise ValueError('Invalid profile initialization provenance')

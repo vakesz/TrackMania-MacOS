@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Host supervision for src/session.c. Wine output is inherited, not captured.
+"""Host supervision for src/c/session.c. Wine output is inherited, not captured.
 
 run requires the operation_guard token and FD. stop deliberately takes no
 operation lock: it is explicit permission to stop the selected owned prefix.
@@ -22,12 +22,8 @@ import sys
 import tempfile
 import time
 
-try:
-    from . import operation_guard
-    from .managed_paths import check_prefix, safe_path
-except ImportError:
-    import operation_guard
-    from managed_paths import check_prefix, safe_path
+from tmnf.guard import operation_guard
+from tmnf.guard.managed_paths import check_prefix, safe_path
 
 
 POLL_SECONDS = 0.05

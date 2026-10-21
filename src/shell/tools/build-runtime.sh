@@ -1,7 +1,7 @@
 #!/bin/bash
 # Homebrew supplies build tools only. Runtime libraries are built from source.
 set -euo pipefail
-project="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
+project="$(CDPATH='' cd -- "$(dirname -- "$0")/../../.." && pwd)"
 # Help and packaging need only Python, never Homebrew, Xcode or Rosetta.
 readonly_action=0
 for argument in "$@"; do
@@ -16,7 +16,8 @@ fi
 if test "$readonly_action" = 1; then
   python="$(command -v python3.14 || command -v python3 || true)"
   test -n "$python" || { echo 'Python 3.9 or newer is required for help and packaging.' >&2; exit 1; }
-  exec "$python" "${project}/tools/build.py" "$@"
+  PYTHONPATH="${project}/src/python${PYTHONPATH:+:${PYTHONPATH}}" \
+    exec "$python" -m tmnf.build.runtime_builder "$@"
 fi
 session_only=0
 if { test "$#" = 1 && test "$1" = --only=session; } ||
@@ -24,8 +25,8 @@ if { test "$#" = 1 && test "$1" = --only=session; } ||
   session_only=1
 fi
 # Default to every core; Python applies the same default.
-if ! [[ "${MACTMNF_JOBS-$(sysctl -n hw.ncpu)}" =~ ^[0-9]*[1-9][0-9]*$ ]]; then
-  echo 'MACTMNF_JOBS must be a positive integer' >&2
+if ! [[ "${TMNF_JOBS-$(sysctl -n hw.ncpu)}" =~ ^[0-9]*[1-9][0-9]*$ ]]; then
+  echo 'TMNF_JOBS must be a positive integer' >&2
   exit 1
 fi
 # Python invalidates completion under the release lock, after bootstrap succeeds.
@@ -50,4 +51,5 @@ if test "$session_only" = 0; then
   PATH="$(brew --prefix bison)/bin:$(brew --prefix flex)/bin:$PATH"
 fi
 export PATH
-exec "$(brew --prefix python@3.14)/bin/python3.14" "${project}/tools/build.py" "$@"
+PYTHONPATH="${project}/src/python${PYTHONPATH:+:${PYTHONPATH}}" \
+  exec "$(brew --prefix python@3.14)/bin/python3.14" -m tmnf.build.runtime_builder "$@"

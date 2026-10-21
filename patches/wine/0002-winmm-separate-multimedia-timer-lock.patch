@@ -8,7 +8,7 @@ being held throughout a callback or wait.
 
 Based on Wine 36b6a2cf679. tests/multimedia-timer.c exercises direct timer
 concurrency, callback reentry, synchronous cancellation and restart through
-./tools/smoke-sync.sh. Both architectures pass in an isolated pinned runtime;
+./src/shell/tools/probes/smoke-sync.sh. Both architectures pass in an isolated pinned runtime;
 native Windows reference runs and a lock-contention performance comparison
 remain separate qualification steps.
 

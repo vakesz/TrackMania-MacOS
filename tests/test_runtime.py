@@ -13,14 +13,14 @@ import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location('runtime_manifest', ROOT / 'lib/runtime_manifest.py')
+SPEC = importlib.util.spec_from_file_location('runtime_manifest', ROOT / 'src/python/tmnf/install/runtime_manifest.py')
 runtime_manifest = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(runtime_manifest)
 
 
 class RuntimeInstall(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='mactmnf-release-test-',
+        self.temp = tempfile.TemporaryDirectory(prefix='tmnf-release-test-',
                                                 dir='/private/tmp')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
@@ -36,9 +36,9 @@ class RuntimeInstall(unittest.TestCase):
             executable.chmod(0o755)
         (self.bundle / 'bin/wineboot').symlink_to('wine')
         self.version = (ROOT / 'VERSION').read_text().strip()
-        (self.bundle / '.mactmnf-runtime').write_text(self.version + '\n')
+        (self.bundle / '.tmnf-runtime').write_text(self.version + '\n')
         for name in runtime_manifest.REQUIRED_FILES + ('licenses/fixture.txt',):
-            if name == '.mactmnf-runtime':
+            if name == '.tmnf-runtime':
                 continue
             path = self.bundle / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -54,16 +54,24 @@ class RuntimeInstall(unittest.TestCase):
         curl = commands / 'curl'
         curl.write_text('#!/bin/bash\nprintf "Unexpected fixture network request\\n" >&2\nexit 97\n')
         curl.chmod(0o755)
-        # Deliberately do not inherit HOME, MACTMNF_*, Wine, Python, or shell settings.
+        # Deliberately do not inherit HOME, TMNF_*, Wine, Python, or shell settings.
         self.env = {'HOME': str(self.home), 'PATH': str(commands) + ':/usr/bin:/bin:/usr/sbin:/sbin',
                     'LC_ALL': 'C', 'TMPDIR': str(self.root), 'PYTHONDONTWRITEBYTECODE': '1',
-                    'MACTMNF_RUNTIME': str(self.destination),
-                    'MACTMNF_CACHE': str(self.home / 'cache'),
-                    'MACTMNF_APPS_DIR': str(self.home / 'Applications')}
+                    'TMNF_RUNTIME': str(self.destination),
+                    'TMNF_CACHE': str(self.home / 'cache'),
+                    'TMNF_APPS_DIR': str(self.home / 'Applications')}
         self.project = self.root / 'project'
-        (self.project / 'lib').mkdir(parents=True)
-        for name in ('runtime.sh', 'runtime_manifest.py', 'managed_paths.py'):
-            shutil.copy2(ROOT / 'lib' / name, self.project / 'lib' / name)
+        (self.project / 'src/shell/lib/install').mkdir(parents=True)
+        (self.project / 'src/python/tmnf/install').mkdir(parents=True)
+        (self.project / 'src/python/tmnf/guard').mkdir(parents=True)
+        for package in ('src/python/tmnf', 'src/python/tmnf/install', 'src/python/tmnf/guard'):
+            (self.project / package / '__init__.py').write_text('')
+        shutil.copy2(ROOT / 'src/shell/lib/install/runtime.sh',
+                     self.project / 'src/shell/lib/install/runtime.sh')
+        shutil.copy2(ROOT / 'src/python/tmnf/install/runtime_manifest.py',
+                     self.project / 'src/python/tmnf/install/runtime_manifest.py')
+        shutil.copy2(ROOT / 'src/python/tmnf/guard/managed_paths.py',
+                     self.project / 'src/python/tmnf/guard/managed_paths.py')
 
     def write_manifest(self, root=None):
         root = root or self.bundle
@@ -82,12 +90,12 @@ class RuntimeInstall(unittest.TestCase):
     def install(self, checksum=None, explicit=True, conditional=False, umask='022'):
         env = dict(self.env)
         if explicit:
-            env.update(MACTMNF_RUNTIME_ARCHIVE=str(self.archive),
-                       MACTMNF_RUNTIME_SHA256=checksum if checksum is not None else
+            env.update(TMNF_RUNTIME_ARCHIVE=str(self.archive),
+                       TMNF_RUNTIME_SHA256=checksum if checksum is not None else
                        hashlib.sha256(self.archive.read_bytes()).hexdigest())
         return subprocess.run(
-            ['bash', '-euc', 'umask "$2"; . lib/common.sh; MACTMNF_PROJECT_DIR="$1"; '
-             '. "$MACTMNF_PROJECT_DIR/lib/runtime.sh"; ' +
+            ['bash', '-euc', 'umask "$2"; . src/shell/lib/common.sh; TMNF_PROJECT_DIR="$1"; '
+             '. "$TMNF_PROJECT_DIR/src/shell/lib/install/runtime.sh"; ' +
              ('if install_wine_runtime; then exit 0; else exit 1; fi' if conditional else
               'install_wine_runtime'), 'fixture', str(self.project), umask],
             cwd=ROOT, env=env, text=True, capture_output=True, check=False)
@@ -181,13 +189,13 @@ class RuntimeInstall(unittest.TestCase):
         self.assert_rejected(self.install())
 
     def test_session_pe_helper_does_not_need_unix_execute_permissions(self):
-        helper = self.bundle / 'libexec/mactmnf-session.exe'
+        helper = self.bundle / 'libexec/tmnf-session.exe'
         helper.chmod(0o644)
         self.assertFalse(os.access(helper, os.X_OK))
         self.package()
         result = self.install()
         self.assertEqual(result.returncode, 0, result.stderr)
-        installed = self.destination / 'libexec/mactmnf-session.exe'
+        installed = self.destination / 'libexec/tmnf-session.exe'
         self.assertEqual(installed.read_bytes(), b'fixture')
         self.assertFalse(os.access(installed, os.X_OK))
 

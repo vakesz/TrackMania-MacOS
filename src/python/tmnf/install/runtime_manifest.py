@@ -24,9 +24,9 @@ import unicodedata
 
 EXECUTABLES = ('bin/wine', 'bin/wineserver', 'bin/wineboot', 'bin/x87sidecar')
 REQUIRED_FILES = (
-    '.mactmnf-runtime', 'lib/d9vk/d3d9.dll', 'lib/libMoltenVK.dylib',
+    '.tmnf-runtime', 'lib/d9vk/d3d9.dll', 'lib/libMoltenVK.dylib',
     'config/dxvk.conf', 'config/Default.SystemConfig.Gbx',
-    'lib/wine/x86_64-windows/wineboot.exe', 'libexec/mactmnf-session.exe',
+    'lib/wine/x86_64-windows/wineboot.exe', 'libexec/tmnf-session.exe',
     'lib/wine/x86_64-windows/conhost.exe',
 ) + tuple('lib/wine/{}/{}'.format(arch, name)
           for arch in ('i386-windows', 'x86_64-windows')
@@ -97,10 +97,10 @@ def verify_runtime(root, version):
             else:
                 raise ValueError('Unsupported runtime file type: {}'.format(name))
 
-    for name in ('.mactmnf-runtime', 'SHA256SUMS'):
+    for name in ('.tmnf-runtime', 'SHA256SUMS'):
         if inventory.get(name, (None,))[0] != 'file':
             raise ValueError('Missing regular runtime metadata: {}'.format(name))
-    if (root / '.mactmnf-runtime').read_text().rstrip('\n') != version:
+    if (root / '.tmnf-runtime').read_text().rstrip('\n') != version:
         raise ValueError('Runtime has the wrong version')
     for name in REQUIRED_FILES + EXECUTABLES:
         path = root / name

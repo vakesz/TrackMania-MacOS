@@ -30,7 +30,7 @@ From the repository root:
 
 ```sh
 python3 -m unittest discover -s tests -p test_network.py
-python3 tools/tls-test-server.py
+python3 src/python/tmnf/probes/tls_test_server.py
 ```
 
 The server prints one JSON object containing a URL for each leaf listed above,
@@ -42,7 +42,7 @@ fixtures requires Python 3.9 or newer, with no dependencies or external network.
 Regenerate the public test material with OpenSSL 1.1.1 or newer:
 
 ```sh
-python3 tools/tls-test-server.py --generate-fixtures tests/fixtures/tls
+python3 src/python/tmnf/probes/tls_test_server.py --generate-fixtures tests/fixtures/tls
 ```
 
 Regeneration replaces both roots and all leaves. An old imported root will no
@@ -60,7 +60,7 @@ MACTMNF_TEST_RUNTIME="$PWD/.build/release/runtime" \
 
 Without an overlay, this runs the existing binaries in that runtime, not the current source tree.
 The runner prints its path and installed version. It never calls the CDN smoke
-test and does not use `MACTMNF_PREFIX`, `WINEPREFIX`, the game installation, or a
+test and does not use `TMNF_PREFIX`, `WINEPREFIX`, the game installation, or a
 caller-supplied prefix. The no-argument `smoke-network.sh` remains the separate
 live-CDN check in the selected user prefix; it never installs test roots.
 
@@ -75,7 +75,7 @@ files. The Python TLS server supplies only loopback URLs through its JSON output
 ### Optional app-local WinHTTP overlay
 
 Set `MACTMNF_TEST_WINHTTP_DLLS` to the `native` directory produced by
-`tools/build-winhttp-probe.py` to test isolated DLLs over the existing runtime:
+`src/python/tmnf/build/winhttp_probe_builder.py` to test isolated DLLs over the existing runtime:
 
 ```sh
 MACTMNF_TEST_RUNTIME="$PWD/.build/release/runtime" \
@@ -290,7 +290,7 @@ qualifies a complete 0.3.0 runtime or release package.
 ## Observed isolated patch 0011 results
 
 On 2026-09-07, all fixtures were regenerated together using
-`tools/tls-test-server.py --generate-fixtures tests/fixtures/tls`. Both CA signing
+`src/python/tmnf/probes/tls_test_server.py --generate-fixtures tests/fixtures/tls`. Both CA signing
 keys were discarded. No old imported root was reused. Offline tests independently
 check the eight leaves' issuers, names, validity windows, serverAuth signatures
 at a fixed in-range time, and absence of network retrieval extensions.
@@ -391,7 +391,7 @@ SHA-256 is `5bb857d67463a13df88309e4c197a4900aba54fe9f3ee1ecbf4e35b3a290b1bb`.
 | i686 | `080a6090d26b2e319bcd966fdd213257d04d7a5a05a7e5b1d580e5f0373275f1` |
 | x86_64 | `d9bfabb7250e293cee1aed5add1bb7b42817dc007da2fd9b0be59014d042a635` |
 
-`tools/build-winhttp-probe.py --fault-base BASE --output NEW_DIRECTORY` builds
+`src/python/tmnf/build/winhttp_probe_builder.py --fault-base BASE --output NEW_DIRECTORY` builds
 separate, explicitly instrumented test DLLs. It reuses the base's recorded
 compilation and native-link recipes, compiling one wrapper object with Wine's
 headers and placing it before the import libraries. It links with

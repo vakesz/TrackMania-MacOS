@@ -8,7 +8,7 @@ import tempfile
 import time
 import unittest
 
-from lib import operation_guard as guard
+from tmnf.guard import operation_guard as guard
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,15 +16,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class AppInstallTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix='mactmnf-app-', dir='/private/tmp')
+        temporary = tempfile.TemporaryDirectory(prefix='tmnf-app-', dir='/private/tmp')
         self.addCleanup(temporary.cleanup)
         self.home = Path(temporary.name)
         self.project = self.home / 'current project'
         self.project.mkdir()
-        for name in ('bin', 'lib', 'config'):
+        for name in ('src', 'config'):
             shutil.copytree(ROOT / name, self.project / name)
-        for name in ('VERSION', 'install.sh'):
-            shutil.copy2(ROOT / name, self.project / name)
+        shutil.copy2(ROOT / 'VERSION', self.project / 'VERSION')
         tools = self.home / 'tools'
         tools.mkdir()
         (tools / 'python3').symlink_to(sys.executable)
@@ -33,13 +32,13 @@ class AppInstallTests(unittest.TestCase):
         self.app = self.home / 'apps/Game.app'
         self.settings = self.home / 'apps/Settings.app'
         self.env = dict(HOME=str(self.home), PATH=str(tools) + ':' + os.environ['PATH'],
-                        PYTHONDONTWRITEBYTECODE='1', MACTMNF_ROOT=str(self.home / 'game'),
-                        MACTMNF_PREFIX=str(self.prefix), MACTMNF_RUNTIME=str(self.home / 'runtime'),
-                        MACTMNF_SUPPORT=str(self.home / 'support'), MACTMNF_CACHE=str(self.home / 'cache'),
-                        MACTMNF_USERDATA=str(self.home / 'userdata'), MACTMNF_LAUNCHER=str(self.launcher),
-                        MACTMNF_APP=str(self.app), MACTMNF_SETTINGS_APP=str(self.settings),
-                        MACTMNF_APPS_DIR=str(self.home / 'apps'), MACTMNF_X87='off')
-        self.cli = ['/bin/bash', str(self.project / 'bin/mactmnf'), 'app']
+                        PYTHONDONTWRITEBYTECODE='1', TMNF_ROOT=str(self.home / 'game'),
+                        TMNF_PREFIX=str(self.prefix), TMNF_RUNTIME=str(self.home / 'runtime'),
+                        TMNF_SUPPORT=str(self.home / 'support'), TMNF_CACHE=str(self.home / 'cache'),
+                        TMNF_USERDATA=str(self.home / 'userdata'), TMNF_LAUNCHER=str(self.launcher),
+                        TMNF_APP=str(self.app), TMNF_SETTINGS_APP=str(self.settings),
+                        TMNF_APPS_DIR=str(self.home / 'apps'), TMNF_X87='off')
+        self.cli = ['/bin/bash', str(self.project / 'src/shell/cli/tmnf'), 'app']
         result = self.run_app()
         self.assertEqual(result.returncode, 0, result.stderr)
         (self.app / 'keep').write_text('old game content')
@@ -57,10 +56,10 @@ class AppInstallTests(unittest.TestCase):
 
     def blocking_icon(self):
         ready = self.home / 'icon-ready'
-        (self.project / 'lib/app_icon.py').write_text(
+        (self.project / 'src/python/tmnf/app/app_icon.py').write_text(
             'import os, pathlib, time\n'
-            'assert "MACTMNF_OPERATION_FD" not in os.environ\n'
-            'assert "MACTMNF_APP_OPERATION_FD" not in os.environ\n'
+            'assert "TMNF_OPERATION_FD" not in os.environ\n'
+            'assert "TMNF_APP_OPERATION_FD" not in os.environ\n'
             f'pathlib.Path({str(ready)!r}).touch()\n'
             'time.sleep(60)\n')
         return ready
@@ -71,7 +70,7 @@ class AppInstallTests(unittest.TestCase):
         self.addCleanup(os.close, fd)
         env = dict(self.env, **{guard.TOKEN: str(fd)})
         process = subprocess.Popen(
-            [sys.executable, str(self.project / 'lib/operation_guard.py'), 'app-run',
+            [sys.executable, str(self.project / 'src/python/tmnf/guard/operation_guard.py'), 'app-run',
              str(self.prefix), *self.cli], env=env, pass_fds=(fd,),
             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
@@ -81,7 +80,7 @@ class AppInstallTests(unittest.TestCase):
                     self.fail(str(process.communicate()))
                 self.assertLess(time.monotonic(), deadline, 'Icon extractor did not start')
                 time.sleep(0.01)
-            result = self.run_app(MACTMNF_PREFIX=str(self.home / 'second-prefix'))
+            result = self.run_app(TMNF_PREFIX=str(self.home / 'second-prefix'))
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('Another app installation', result.stderr)
             self.assertEqual(self.snapshot(), self.before)
@@ -91,8 +90,8 @@ class AppInstallTests(unittest.TestCase):
             self.assertEqual(self.snapshot(), self.before)
             with self.assertRaisesRegex(ValueError, 'Another operation'):
                 guard.acquire(self.prefix)
-            (self.project / 'lib/app_icon.py').write_text('raise SystemExit(1)\n')
-            result = self.run_app(MACTMNF_PREFIX=str(self.home / 'second-prefix'))
+            (self.project / 'src/python/tmnf/app/app_icon.py').write_text('raise SystemExit(1)\n')
+            result = self.run_app(TMNF_PREFIX=str(self.home / 'second-prefix'))
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((self.app / 'keep').read_text(), 'old game content')
             self.assertEqual((self.settings / 'keep').read_text(), 'old settings content')
@@ -102,9 +101,9 @@ class AppInstallTests(unittest.TestCase):
             process.communicate(timeout=8)
 
     def test_overlap_and_forged_token_preserve_existing_content(self):
-        for overrides in ({'MACTMNF_APP': str(self.launcher / 'Game.app')},
-                          {'MACTMNF_LAUNCHER': str(self.app / 'support')},
-                          {'MACTMNF_SETTINGS_APP': str(self.app)},
+        for overrides in ({'TMNF_APP': str(self.launcher / 'Game.app')},
+                          {'TMNF_LAUNCHER': str(self.app / 'support')},
+                          {'TMNF_SETTINGS_APP': str(self.app)},
                           {guard.APP_TOKEN: '999999'}):
             with self.subTest(overrides=overrides):
                 result = self.run_app(**overrides)
@@ -116,13 +115,26 @@ class AppInstallTests(unittest.TestCase):
         fd = guard.acquire(self.prefix)
         self.addCleanup(os.close, fd)
         result = subprocess.run(
-            ['/bin/bash', '-euc', '. ./install.sh; . ./lib/apps.sh; install_app; '
-             'python3 lib/operation_guard.py held "$MACTMNF_PREFIX"; printf "returned\\n"'],
+            ['/bin/bash', '-euc', '. ./src/shell/cli/install.sh; . ./src/shell/lib/app/apps.sh; install_app; '
+             'PYTHONPATH=src/python python3 -m tmnf.guard.operation_guard held "$TMNF_PREFIX"; printf "returned\\n"'],
             cwd=self.project, env=dict(self.env, **{guard.TOKEN: str(fd)}), pass_fds=(fd,),
             text=True, capture_output=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('returned', result.stdout)
         self.assertEqual((self.launcher / 'VERSION').read_text(), 'fixture-current\n')
+
+    def test_refresh_carries_a_bundled_python_into_installed_app_support(self):
+        bundled = self.project / 'python/bin/python3'
+        bundled.parent.mkdir(parents=True)
+        bundled.symlink_to(sys.executable)
+
+        result = self.run_app()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        installed = self.launcher / 'python/bin/python3'
+        self.assertTrue(installed.is_file())
+        self.assertTrue(os.access(installed, os.X_OK))
+        wrapper = (self.app / 'Contents/MacOS/TMNF').read_text()
+        self.assertIn(str(installed), wrapper)
 
 
 if __name__ == '__main__':

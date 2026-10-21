@@ -52,7 +52,7 @@ qualification. Record verification and outstanding evidence below.
 
 - [x] Hermetic CLI environment, temporary HOME and all writable paths; hostile inherited overrides.
 - [x] Complete fake runtime, successful modded launch, clean relocated launcher, per-call logs.
-- [x] Per-file Bash syntax validation and visible optional ShellCheck skip.
+- [x] Per-file Bash syntax validation and mandatory ShellCheck.
 - [x] Physical-path validation, protected roots and home ancestors, symlinks, trailing separators, overlap rejection.
 - [x] Refuse nonempty unmanaged prefixes before creating ownership markers.
 - [ ] Safe legacy TMNF recognition and title-aware installation metadata.
@@ -170,7 +170,7 @@ qualification. Record verification and outstanding evidence below.
 
 ### Combined runtime candidate
 
-Latest working-tree `make check`: 315 discovered tests, 283 passed and 32
+Prior qualification checkpoint's `make check`: 315 discovered tests, 283 passed and 32
 explicitly skipped, plus the CLI suite, Bash syntax and ShellCheck. The final
 bounded safety review found no new P1/P2 regression; custom registry save paths
 remain outside automatic verification. `git diff --check` is clean.
@@ -184,9 +184,9 @@ checkpointing now prevents future interruptions from discarding valid work.
 
 Artifacts:
 
-- `.build/qualification-0.3.0-r3/dist/mactmnf-0.3.0-runtime.tar.xz`
+- `.build/qualification-0.3.0-r3/dist/tmnf-0.3.0-runtime.tar.xz`
 - Runtime SHA-256: `03374a707f7282389536a0c20d1cc5e0221fcace0ca59af9c5c090501fd639ea`
-- `.build/qualification-0.3.0-r3/dist/mactmnf-0.3.0-source.tar.xz`
+- `.build/qualification-0.3.0-r3/dist/tmnf-0.3.0-source.tar.xz`
 - Source SHA-256: `dbf8b03bfb6fe9035295f452ded00e252d32d51b06a8280b490c172d7a171a47`
 
 The runtime archive installed successfully outside the checkout and a second

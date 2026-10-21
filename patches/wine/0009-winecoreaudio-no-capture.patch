@@ -7,7 +7,7 @@ the endpoint enumeration, and refuse capture units in get_audiounit(), the one
 place input I/O is enabled, so no path can reach the microphone. Playback is
 unchanged.
 
-Based on Wine 36b6a2cf679. Exercised by ./tools/smoke-audio.sh,
+Based on Wine 36b6a2cf679. Exercised by ./src/shell/tools/probes/smoke-audio.sh,
 which enumerate and play render devices only.
 
 diff --git a/dlls/winecoreaudio.drv/coreaudio.c b/dlls/winecoreaudio.drv/coreaudio.c

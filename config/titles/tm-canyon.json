@@ -1,0 +1,22 @@
+{
+  "id": "tm-canyon",
+  "name": "TrackMania 2 Canyon",
+  "short_name": "TM2C",
+  "engine": "maniaplanet",
+  "installer": "disk-image",
+  "status": "provisional",
+  "prefix_subdir": "TMNF/Canyon",
+  "prefix_marker": "tm-canyon:1",
+  "app_name": "TrackMania 2 Canyon.app",
+  "settings_app_name": "TrackMania 2 Canyon Settings.app",
+  "bundle_id_game": "local.tmnf.tm-canyon.game",
+  "bundle_id_settings": "local.tmnf.tm-canyon.settings",
+  "game_dir_name": "ManiaPlanet",
+  "game_exe": "ManiaPlanet.exe",
+  "launcher_exe": "ManiaPlanetLauncher.exe",
+  "save_dirs": ["ManiaPlanet", "Canyon"],
+  "needs_directx": true,
+  "needs_tmloader": false,
+  "cache_installer": null,
+  "notes": "Provisional ManiaPlanet title. Wine/DX tuning likely differs from TMNF DX9 recipe; qualify separately once user image is provided."
+}

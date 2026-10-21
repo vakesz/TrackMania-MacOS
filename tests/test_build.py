@@ -14,11 +14,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tools import game_profile
-from lib.runtime_manifest import REQUIRED_FILES
-
-with mock.patch.dict(sys.modules, {'game_profile': game_profile}):
-    from tools import build
+from tmnf.build import runtime_builder as build
+from tmnf.install.runtime_manifest import REQUIRED_FILES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,7 +34,7 @@ class BuildTests(unittest.TestCase):
                          LOCK={'wine': {'git': 'fixture', 'revision': 'a'},
                                'moltenvk': {'url': 'fixture', 'sha256': 'b'}},
                          ENV={'MACOSX_DEPLOYMENT_TARGET': '14.0'},
-                         FILE_PREFIX_MAP=f'-ffile-prefix-map={self.root}=/mactmnf')
+                         FILE_PREFIX_MAP=f'-ffile-prefix-map={self.root}=/tmnf')
         patcher = mock.patch.multiple(build, **overrides)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -50,14 +47,19 @@ class BuildTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
         for entry in build.PROJECT_ENTRIES:
             path = self.root / entry
-            if entry in ('bin', 'lib', 'config', 'patches', 'src', 'tools', 'tests', 'docs', 'licenses'):
+            if entry in ('config', 'patches', 'src', 'tests', 'docs', 'licenses'):
                 path.mkdir()
             else:
                 path.write_text('fixture\n')
-        for entry in ('build.py', 'build.sh', 'game_profile.py'):
-            (self.root / 'tools' / entry).write_text('fixture\n')
-        (self.root / 'lib/runtime_manifest.py').write_text('fixture verifier\n')
-        (self.root / 'src/session.c').write_text('fixture supervisor\n')
+        for name in build.LOADED_PYTHON_INPUTS:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('fixture\n')
+        (self.root / 'src/c').mkdir(exist_ok=True)
+        (self.root / 'src/c/session.c').write_text('fixture supervisor\n')
+        (self.root / 'src/shell/cli').mkdir(parents=True)
+        (self.root / 'src/shell/cli/install.sh').write_text('fixture installer\n')
+        (self.root / 'docs/building.md').write_text('fixture documentation\n')
         (self.root / 'VERSION').write_text('test\n')
         (self.root / 'config/sources.json').write_text(json.dumps(build.LOCK))
         (self.root / 'config/settings.json').write_text('{}\n')
@@ -76,7 +78,7 @@ class BuildTests(unittest.TestCase):
             path = build.RUNTIME / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b'fixture payload')
-        (build.RUNTIME / '.mactmnf-runtime').write_text('test\n')
+        (build.RUNTIME / '.tmnf-runtime').write_text('test\n')
         self.manifest()
         self.complete = build.BUILD / 'build-inputs.json'
 
@@ -100,7 +102,7 @@ class BuildTests(unittest.TestCase):
 
     def main(self, *args, jobs='3'):
         with mock.patch.object(sys, 'argv', ['build.py', *args]), \
-                mock.patch.dict(os.environ, MACTMNF_JOBS=jobs), \
+                mock.patch.dict(os.environ, TMNF_JOBS=jobs), \
                 contextlib.redirect_stdout(io.StringIO()):
             build.main()
 
@@ -112,8 +114,8 @@ class BuildTests(unittest.TestCase):
 
     def test_inputs_include_root_license_and_recursive_config(self):
         original = build.build_inputs()
-        self.assertIn('lib/runtime_manifest.py', original)
-        (self.root / 'lib/runtime_manifest.py').write_text('changed verifier')
+        self.assertIn('src/python/tmnf/install/runtime_manifest.py', original)
+        (self.root / 'src/python/tmnf/install/runtime_manifest.py').write_text('changed verifier')
         self.assertNotEqual(original, build.build_inputs())
         original = build.build_inputs()
         (self.root / 'LICENSE').write_text('new license')
@@ -169,7 +171,7 @@ class BuildTests(unittest.TestCase):
         nested = self.root / 'src/nested/protocol.h'
         nested.parent.mkdir()
         nested.write_text('original header')
-        for path in (self.root / 'src/session.c', nested):
+        for path in (self.root / 'src/c/session.c', nested):
             with self.subTest(path=path):
                 before = build.build_inputs()
                 self.assertIn(str(path.relative_to(self.root)), before)
@@ -310,7 +312,7 @@ class BuildTests(unittest.TestCase):
                         source.write_text('new code with old timestamp')
                         os.utime(source, ns=(old_time, old_time))
                     elif change == 'session':
-                        (self.root / 'src/session.c').write_text('changed supervisor')
+                        (self.root / 'src/c/session.c').write_text('changed supervisor')
                     else:
                         (self.root / 'LICENSE').write_text('changed')
                     self.main()
@@ -353,7 +355,7 @@ class BuildTests(unittest.TestCase):
                         build.toolchain_identity.return_value = {'fixture': 'changed'}
                     elif change != 'none':
                         path = {'source': build.SOURCES / 'wine/source.c',
-                                'inputs': self.root / 'src/session.c',
+                                'inputs': self.root / 'src/c/session.c',
                                 'project': self.root / 'README.md'}[change]
                         path.write_text(path.read_text() + 'changed\n')
 
@@ -368,12 +370,12 @@ class BuildTests(unittest.TestCase):
                     build.verify_completed()
                     if change == 'project':
                         build.package()
-                        with tarfile.open(build.DIST / 'mactmnf-test-source.tar.xz') as archive:
-                            self.assertEqual(archive.extractfile('mactmnf/README.md').read(), path.read_bytes())
+                        with tarfile.open(build.DIST / 'tmnf-test-source.tar.xz') as archive:
+                            self.assertEqual(archive.extractfile('tmnf/README.md').read(), path.read_bytes())
 
     def test_project_edit_during_build_blocks_completion_but_preserves_compiler_cache(self):
         for action in ('dependencies', 'wine'):
-            for relative in ('README.md', 'install.sh'):
+            for relative in ('README.md', 'docs/building.md'):
                 with self.subTest(action=action, relative=relative), self.actions() as actions:
                     path = self.root / relative
                     partial = build.WORK / 'partial-object'
@@ -399,8 +401,8 @@ class BuildTests(unittest.TestCase):
                     complete = build.verify_completed()
                     self.assertEqual(complete['sources']['project'][relative][2], build.digest(path))
                     build.package()
-                    with tarfile.open(build.DIST / 'mactmnf-test-source.tar.xz') as archive:
-                        self.assertEqual(archive.extractfile('mactmnf/' + relative).read(), path.read_bytes())
+                    with tarfile.open(build.DIST / 'tmnf-test-source.tar.xz') as archive:
+                        self.assertEqual(archive.extractfile('tmnf/' + relative).read(), path.read_bytes())
 
     def test_dependency_materialization_checkpoint_survives_wine_timeout(self):
         header = build.SOURCES / 'moltenvk/External/dependency/header.h'
@@ -432,7 +434,7 @@ class BuildTests(unittest.TestCase):
 
     def test_failed_actions_cannot_checkpoint_concurrent_edits(self):
         for action, path in (('wine', build.SOURCES / 'wine/source.c'),
-                             ('session', self.root / 'src/session.c'),
+                             ('session', self.root / 'src/c/session.c'),
                              ('dependencies', build.SOURCES / 'moltenvk/External/header.h')):
             with self.subTest(action=action), self.actions() as actions:
                 only = 'session' if action == 'session' else None
@@ -488,7 +490,7 @@ class BuildTests(unittest.TestCase):
                                              {'path': '/fixture/gcc', 'version': 'gcc fixture'}}})
 
     def test_session_compiles_unicode_64_bit_helper_and_copies_to_runtime(self):
-        binary = build.WORK / 'session/mactmnf-session.exe'
+        binary = build.WORK / 'session/tmnf-session.exe'
 
         def compile(*args, **kwargs):
             self.assertTrue(binary.parent.is_dir())
@@ -498,15 +500,15 @@ class BuildTests(unittest.TestCase):
             build.session()
         run.assert_called_once_with(
             'x86_64-w64-mingw32-gcc', '-municode', '-O2', '-Wall', '-Wextra', '-Werror',
-            build.FILE_PREFIX_MAP, self.root / 'src/session.c', '-o', binary, cwd=binary.parent,
+            build.FILE_PREFIX_MAP, self.root / 'src/c/session.c', '-o', binary, cwd=binary.parent,
             title='session: x86_64-w64-mingw32-gcc session.c')
-        self.assertEqual((build.RUNTIME / 'libexec/mactmnf-session.exe').read_bytes(), binary.read_bytes())
+        self.assertEqual((build.RUNTIME / 'libexec/tmnf-session.exe').read_bytes(), binary.read_bytes())
 
     def test_failed_session_compile_does_not_copy_stale_output(self):
-        binary = build.WORK / 'session/mactmnf-session.exe'
+        binary = build.WORK / 'session/tmnf-session.exe'
         binary.parent.mkdir(parents=True)
         binary.write_bytes(b'stale compiler output')
-        installed = build.RUNTIME / 'libexec/mactmnf-session.exe'
+        installed = build.RUNTIME / 'libexec/tmnf-session.exe'
         original = installed.read_bytes()
         with mock.patch.object(build, 'run', side_effect=RuntimeError('compiler failed')):
             with self.assertRaisesRegex(RuntimeError, 'compiler failed'):
@@ -587,14 +589,14 @@ class BuildTests(unittest.TestCase):
                     original_identity = json.loads(stamp.read_text())
                     cached.write_text('stale helper output')
                     if change == 'source':
-                        (self.root / 'src/session.c').write_text('changed supervisor')
+                        (self.root / 'src/c/session.c').write_text('changed supervisor')
                     else:
                         build.toolchain_identity.return_value = {'fixture': 'changed compiler'}
                     self.main('--only', 'session')
                     identity = json.loads(stamp.read_text())
                     self.assertNotEqual(identity, original_identity)
-                    self.assertEqual(identity['inputs']['src/session.c'],
-                                     build.digest(self.root / 'src/session.c'))
+                    self.assertEqual(identity['inputs']['src/c/session.c'],
+                                     build.digest(self.root / 'src/c/session.c'))
                     self.assertEqual(identity['toolchain'], build.toolchain_identity.return_value)
                     self.assertFalse(cached.exists())
                     self.assertFalse(self.complete.exists())
@@ -630,7 +632,7 @@ class BuildTests(unittest.TestCase):
 
     def test_session_source_edit_during_compilation_prevents_completion(self):
         with self.actions() as actions:
-            actions['session'].side_effect = lambda: (self.root / 'src/session.c').write_text('concurrent edit')
+            actions['session'].side_effect = lambda: (self.root / 'src/c/session.c').write_text('concurrent edit')
             with self.assertRaisesRegex(RuntimeError, 'Build inputs changed during the build'):
                 self.main()
         self.assertFalse(self.complete.exists())
@@ -777,8 +779,8 @@ class BuildTests(unittest.TestCase):
             archive = self.root / 'source.tar.xz'
             build.source_archive(archive)
             with tarfile.open(archive) as tar:
-                self.assertNotIn('mactmnf/upstream/libunistring/lib/libunistring.sym-t1', tar.getnames())
-                self.assertIn('mactmnf/upstream/libunistring/lib/libunistring.sym', tar.getnames())
+                self.assertNotIn('tmnf/upstream/libunistring/lib/libunistring.sym-t1', tar.getnames())
+                self.assertIn('tmnf/upstream/libunistring/lib/libunistring.sym', tar.getnames())
             actions['dependencies'].side_effect = lambda: symbols.write_text('changed symbols\n')
             with self.assertRaisesRegex(RuntimeError, 'upstream/libunistring/lib/libunistring.sym'):
                 self.main()
@@ -825,7 +827,7 @@ class BuildTests(unittest.TestCase):
                 with self.assertRaises(SystemExit) as exit:
                     self.main(jobs=jobs)
                 self.assertEqual(exit.exception.code, 2)
-                self.assertIn('MACTMNF_JOBS must be a positive integer', error.getvalue())
+                self.assertIn('TMNF_JOBS must be a positive integer', error.getvalue())
                 self.assertNotIn('Traceback', error.getvalue())
                 self.assertTrue(self.complete.exists())
         with self.actions():
@@ -834,7 +836,7 @@ class BuildTests(unittest.TestCase):
 
     def test_jobs_default_to_every_core(self):
         with self.actions(), mock.patch.dict(os.environ), contextlib.redirect_stdout(io.StringIO()) as output:
-            os.environ.pop('MACTMNF_JOBS', None)
+            os.environ.pop('TMNF_JOBS', None)
             with mock.patch.object(sys, 'argv', ['build.py', '--only', 'wine']):
                 build.main()
         self.assertEqual(build.JOBS, os.cpu_count())
@@ -886,11 +888,11 @@ class BuildTests(unittest.TestCase):
                 elif change == 'link':
                     link = build.RUNTIME / 'bin/wine-link'
                     link.unlink()
-                    link.symlink_to('../.mactmnf-runtime')
+                    link.symlink_to('../.tmnf-runtime')
                 elif change == 'manifest':
                     (build.RUNTIME / 'SHA256SUMS').write_text('invalid')
                 else:
-                    (build.RUNTIME / '.mactmnf-runtime').write_text('wrong\n')
+                    (build.RUNTIME / '.tmnf-runtime').write_text('wrong\n')
                 if change not in ('manifest', 'version'):
                     self.manifest()
                 with self.assertRaisesRegex(RuntimeError, 'Runtime'):
@@ -927,7 +929,7 @@ class BuildTests(unittest.TestCase):
         for name in ('bin/wineserver', 'bin/wineboot', 'bin/x87sidecar',
                      'lib/wine/x86_64-windows/wineboot.exe', 'lib/d9vk/d3d9.dll',
                      'lib/libMoltenVK.dylib', 'lib/wine/i386-windows/d3dcompiler_43.dll',
-                     'libexec/mactmnf-session.exe'):
+                     'libexec/tmnf-session.exe'):
             with self.subTest(missing=name):
                 self.complete_build()
                 path = build.RUNTIME / name
@@ -988,7 +990,7 @@ class BuildTests(unittest.TestCase):
             path = build.SOURCES / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('generated')
-        cache = self.root / 'tools/__pycache__'
+        cache = self.root / 'src/python/tmnf/build/__pycache__'
         cache.mkdir()
         (cache / 'build.pyc').write_bytes(b'cache')
         build.verify_completed()
@@ -997,15 +999,15 @@ class BuildTests(unittest.TestCase):
         with tarfile.open(archive) as tar:
             names = tar.getnames()
             for relative in excluded:
-                self.assertNotIn('mactmnf/upstream/' + relative, names)
-            self.assertNotIn('mactmnf/tools/__pycache__', names)
-            self.assertNotIn('mactmnf/upstream/wine/.mactmnf-source.json', names)
-            for relative in ('src/session.c', 'src/nested/protocol.h'):
-                self.assertEqual(tar.extractfile('mactmnf/' + relative).read(),
+                self.assertNotIn('tmnf/upstream/' + relative, names)
+            self.assertNotIn('tmnf/src/python/tmnf/build/__pycache__', names)
+            self.assertNotIn('tmnf/upstream/wine/.mactmnf-source.json', names)
+            for relative in ('src/c/session.c', 'src/nested/protocol.h'):
+                self.assertEqual(tar.extractfile('tmnf/' + relative).read(),
                                  (self.root / relative).read_bytes())
             for name, contents in build.source_inventory().items():
                 for relative in contents:
-                    self.assertIn(str(Path('mactmnf/upstream') / name / relative), names)
+                    self.assertIn(str(Path('tmnf/upstream') / name / relative), names)
 
     def test_packaging_needs_no_toolchain_and_publishes_valid_checksums(self):
         self.complete_build()
@@ -1016,7 +1018,7 @@ class BuildTests(unittest.TestCase):
             build.package()
         self.assertEqual(len(list(build.DIST.iterdir())), 4)
         for kind in ('source', 'runtime'):
-            archive = build.DIST / f'mactmnf-test-{kind}.tar.xz'
+            archive = build.DIST / f'tmnf-test-{kind}.tar.xz'
             self.assertEqual(archive.with_name(archive.name + '.sha256').read_text(),
                              f'{build.digest(archive)}  {archive.name}\n')
             with tarfile.open(archive) as tar:
@@ -1107,7 +1109,7 @@ class BuildTests(unittest.TestCase):
                                 with self.assertRaisesRegex(RuntimeError, 'Loaded Python input changed') as error:
                                     pending.result(timeout=5)
                                 self.assertIn(name, str(error.exception))
-                                self.assertIn('Restart tools/build.sh', str(error.exception))
+                                self.assertIn('Restart src/shell/tools/build-runtime.sh', str(error.exception))
                             finally:
                                 path.write_bytes(original)
                     self.assertEqual(build.inventory(build.BUILD), before)
@@ -1118,7 +1120,7 @@ class BuildTests(unittest.TestCase):
 
         def edit(name):
             source = fetch(name)
-            (self.root / 'tools/game_profile.py').write_text('edited after acquiring the lock')
+            (self.root / 'src/python/tmnf/build/game_profile.py').write_text('edited after acquiring the lock')
             return source
 
         with self.actions(), mock.patch.object(build, 'fetch', side_effect=edit):
@@ -1138,7 +1140,7 @@ class BuildTests(unittest.TestCase):
 
         def publish(path, target):
             publications.append(threading.get_ident())
-            if path.name == 'mactmnf-test-runtime.tar.xz.sha256' and not publishing.is_set():
+            if path.name == 'tmnf-test-runtime.tar.xz.sha256' and not publishing.is_set():
                 publishing.set()
                 if not proceed.wait(5):
                     raise RuntimeError('test publication timed out')
@@ -1196,7 +1198,7 @@ class BuildTests(unittest.TestCase):
     def test_publication_failure_cannot_leave_an_old_checksum_for_new_bytes(self):
         self.complete_build()
         build.package()
-        checksum = build.DIST / 'mactmnf-test-runtime.tar.xz.sha256'
+        checksum = build.DIST / 'tmnf-test-runtime.tar.xz.sha256'
         checksum.write_text('stale checksum')
         replace = Path.replace
 
@@ -1255,8 +1257,9 @@ class BuildShellTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix='mactmnf-build-shell-')
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        (self.root / 'tools').mkdir()
-        shutil.copy2(ROOT / 'tools/build.sh', self.root / 'tools/build.sh')
+        (self.root / 'src/shell/tools').mkdir(parents=True)
+        (self.root / 'src/python/tmnf').mkdir(parents=True)
+        shutil.copy2(ROOT / 'src/shell/tools/build-runtime.sh', self.root / 'src/shell/tools/build-runtime.sh')
         self.bin = self.root / 'bin'
         self.bin.mkdir()
         for name in ('brew', 'xcodebuild', 'uname'):
@@ -1271,8 +1274,8 @@ class BuildShellTests(unittest.TestCase):
         self.complete.write_text('complete')
 
     def run_wrapper(self, *args, jobs='3'):
-        return subprocess.run(['/bin/bash', str(self.root / 'tools/build.sh'), *args],
-                              env=dict(os.environ, PATH=f'{self.bin}:/usr/bin:/bin', MACTMNF_JOBS=jobs),
+        return subprocess.run(['/bin/bash', str(self.root / 'src/shell/tools/build-runtime.sh'), *args],
+                              env=dict(os.environ, PATH=f'{self.bin}:/usr/bin:/bin', TMNF_JOBS=jobs),
                               text=True, capture_output=True, check=False)
 
     def test_help_and_package_skip_bootstrap_and_keep_completion(self):
@@ -1281,7 +1284,7 @@ class BuildShellTests(unittest.TestCase):
             with self.subTest(args=args):
                 result = self.run_wrapper(*args, jobs='invalid')
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn(str(self.root / 'tools/build.py'), result.stdout)
+                self.assertIn('tmnf.build.runtime_builder', result.stdout)
                 self.assertNotIn('forbidden bootstrap', result.stderr)
                 self.assertTrue(self.complete.exists())
 
@@ -1299,7 +1302,7 @@ class BuildShellTests(unittest.TestCase):
             with self.subTest(args=args):
                 result = self.run_wrapper(*args)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(result.stdout.splitlines(), [str(self.root / 'tools/build.py'), *args])
+                self.assertEqual(result.stdout.splitlines(), ['-m', 'tmnf.build.runtime_builder', *args])
                 self.assertEqual(self.complete.read_text(), 'complete')
         self.assertEqual((self.root / 'bootstrap').read_text().splitlines(),
                          ['list --versions python@3.14', 'list --versions mingw-w64',
@@ -1316,7 +1319,7 @@ class BuildShellTests(unittest.TestCase):
             with self.subTest(jobs=jobs):
                 result = self.run_wrapper(jobs=jobs)
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn('MACTMNF_JOBS must be a positive integer', result.stderr)
+                self.assertIn('TMNF_JOBS must be a positive integer', result.stderr)
                 self.assertNotIn('forbidden bootstrap', result.stderr)
                 self.assertTrue(self.complete.exists())
 

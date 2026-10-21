@@ -17,7 +17,7 @@ import shlex
 import subprocess
 import tarfile
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[4]
 PIN = "36b6a2cf679fb395f668a917b76537190e212d9c"
 
 

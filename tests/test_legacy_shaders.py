@@ -46,7 +46,8 @@ class LegacyShaders(unittest.TestCase):
             app.mkdir()
             for directory in ("tmp", "cache", "config", "data", "logs"):
                 (home / directory).mkdir(parents=True)
-            winpath = lambda p: "Z:" + str(p).replace("/", "\\")
+            def winpath(path):
+                return "Z:" + str(path).replace("/", "\\")
             dll = Path(os.environ.get("MACTMNF_TEST_D9VK_DLL", runtime / "lib/d9vk/d3d9.dll")).resolve(strict=True)
             shutil.copyfile(dll, app / "d3d9.dll")
             print(f"D9VK DLL={dll} sha256={hashlib.sha256(dll.read_bytes()).hexdigest()}", flush=True)

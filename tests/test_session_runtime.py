@@ -3,7 +3,7 @@
 MACTMNF_TEST_RUNTIME must name an existing runtime containing bin/wine and
 bin/wineserver. TMPDIR must name an approved existing temporary directory.
 The virtual-desktop test may briefly show a new, test-only Wine desktop.
-Run with Python 3.9+: python3 -m unittest discover -s tests \
+Run with Python 3.9+: PYTHONPATH=src/python python3 -m unittest discover -s tests \
     -p test_session_runtime.py -v
 """
 
@@ -58,11 +58,12 @@ class SessionRuntimeTests(unittest.TestCase):
         # Do not inherit Wine, Rosetta, DYLD, XDG, or real user profile settings.
         cls.env = {
             'PATH': os.environ.get('PATH', '/usr/bin:/bin:/usr/sbin:/sbin'),
+            'PYTHONPATH': str(ROOT / 'src/python'),
             'HOME': str(cls.home),
             'TMPDIR': str(cls.scratch / 'tmp'),
             'WINEDEBUG': '-all',
             'WINEDLLOVERRIDES': 'mscoree,mshtml=',
-            'MACTMNF_X87': 'off',
+            'TMNF_X87': 'off',
             'XDG_CONFIG_HOME': str(cls.home / '.config'),
             'XDG_CACHE_HOME': str(cls.home / '.cache'),
             'PYTHONDONTWRITEBYTECODE': '1',
@@ -86,13 +87,13 @@ class SessionRuntimeTests(unittest.TestCase):
             ('i686', ROOT / 'tests/session-child.c', cls.child32),
             ('x86_64', ROOT / 'tests/session-gui.c', cls.gui64),
             ('i686', ROOT / 'tests/session-gui.c', cls.gui32)]
-        packaged_helper = cls.runtime / 'libexec/mactmnf-session.exe'
+        packaged_helper = cls.runtime / 'libexec/tmnf-session.exe'
         if packaged_helper.is_file():
             shutil.copy2(packaged_helper, cls.helper)
             print('Testing packaged session helper: {}'.format(packaged_helper), flush=True)
         else:
             print('Reference runtime has no helper; testing a freshly compiled source helper', flush=True)
-            compile_inputs.insert(0, ('x86_64', ROOT / 'src/session.c', cls.helper))
+            compile_inputs.insert(0, ('x86_64', ROOT / 'src/c/session.c', cls.helper))
         for arch, source, output in compile_inputs:
             subsystem = ['-mwindows'] if source.name == 'session-gui.c' else []
             cls.command([compilers[arch], '-O2', '-Wall', '-Wextra', '-Werror',
@@ -106,7 +107,7 @@ class SessionRuntimeTests(unittest.TestCase):
         cls.alias.symlink_to(cls.bin, target_is_directory=True)
         cls.prefix = cls.new_prefix('primary prefix')
         cls.other_prefix = cls.new_prefix('secondary prefix')
-        version = cls.runtime / '.mactmnf-runtime'
+        version = cls.runtime / '.tmnf-runtime'
         print('\nSession integration: existing runtime {}; source {}; not release qualification'.format(
             version.read_text().strip() if version.is_file() else 'unversioned',
             (ROOT / 'VERSION').read_text().strip()), file=sys.stderr, flush=True)
@@ -167,7 +168,7 @@ class SessionRuntimeTests(unittest.TestCase):
                         'wineboot-' + name, 60)
         finally:
             cls.stop_prefix(prefix)
-        (prefix / '.mactmnf-prefix').write_text('tmnf:1\n', encoding='ascii')
+        (prefix / '.tmnf-prefix').write_text('tmnf:1\n', encoding='ascii')
         # An explicit scratch-only drive avoids assumptions about Wine's Z: mapping.
         (prefix / 'dosdevices/s:').symlink_to(cls.scratch, target_is_directory=True)
         return prefix
@@ -271,8 +272,8 @@ class SessionRuntimeTests(unittest.TestCase):
         self.assertEqual(status, 0, log)
 
     def run_host(self, executable, args=(), watches=(), startup_timeout=30):
-        command = [sys.executable, ROOT / 'lib/operation_guard.py', 'run', self.prefix,
-                   sys.executable, ROOT / 'lib/session.py', 'run', '--prefix', self.prefix,
+        command = [sys.executable, '-m', 'tmnf.guard.operation_guard', 'run', self.prefix,
+                   sys.executable, '-m', 'tmnf.session.session', 'run', '--prefix', self.prefix,
                    '--wine', self.wine, '--helper', self.helper,
                    '--startup-timeout', str(startup_timeout), '--cleanup-timeout', '15']
         for watch in watches or (executable,):
@@ -288,10 +289,10 @@ class SessionRuntimeTests(unittest.TestCase):
         # Neither probe issues -k: teardown must not mask missing host cleanup.
         self.command([self.server, '-w'], self.prefix_env(prefix),
                      self._testMethodName + '-inactive-wait', 5)
-        self.command([sys.executable, ROOT / 'lib/operation_guard.py', 'run', prefix,
+        self.command([sys.executable, '-m', 'tmnf.guard.operation_guard', 'run', prefix,
                       '/usr/bin/true'], self.prefix_env(prefix),
                      self._testMethodName + '-inactive-guard', 5)
-        self.assertEqual((prefix / '.mactmnf-prefix').read_text(), 'tmnf:1\n')
+        self.assertEqual((prefix / '.tmnf-prefix').read_text(), 'tmnf:1\n')
         self.assertFalse(list(self.home.glob('.' + prefix.name + '.session-*')),
                          'host retained a result directory after ending')
 
@@ -304,7 +305,7 @@ class SessionRuntimeTests(unittest.TestCase):
         self.assert_prefix_inactive(self.prefix)
 
     def test_fresh_installer_profile_privacy(self):
-        from lib.runtime_manifest import digest
+        from tmnf.install.runtime_manifest import digest
 
         baseline = {str(path.relative_to(self.runtime)): digest(path)
                     for path in self.runtime.rglob('*') if path.is_file()}
@@ -323,23 +324,23 @@ class SessionRuntimeTests(unittest.TestCase):
             folder = self.home / name
             folder.mkdir(exist_ok=True)
             (folder / 'personal-fixture.txt').write_text('private ' + name)
-        env = dict(self.prefix_env(prefix), MACTMNF_WINE=str(self.wine),
-                   MACTMNF_RUNTIME=str(staged), MACTMNF_PREFIX=str(prefix),
-                   MACTMNF_ROOT=str(self.home / 'installer root'),
-                   MACTMNF_USERDATA=str(userdata), MACTMNF_SUPPORT=str(self.home / 'installer support'),
-                   MACTMNF_APPS_DIR=str(self.home / 'installer apps'),
-                   MACTMNF_CACHE=str(self.home / 'installer cache'),
+        env = dict(self.prefix_env(prefix), TMNF_WINE=str(self.wine),
+                   TMNF_RUNTIME=str(staged), TMNF_PREFIX=str(prefix),
+                   TMNF_ROOT=str(self.home / 'installer root'),
+                   TMNF_USERDATA=str(userdata), TMNF_SUPPORT=str(self.home / 'installer support'),
+                   TMNF_APPS_DIR=str(self.home / 'installer apps'),
+                   TMNF_CACHE=str(self.home / 'installer cache'),
                    TEST_PROFILE_LINKS=str(self.artifacts / 'default-links.json'))
         script = '''. "$1"
 python3() {
-  if test "${2:-}" = setup-documents; then
-    command python3 -c 'import json, os; from pathlib import Path; p = Path(os.environ["MACTMNF_PREFIX"]); Path(os.environ["TEST_PROFILE_LINKS"]).write_text(json.dumps({str(f.relative_to(p)): str(f.readlink()) if f.is_symlink() else None for u in (p / "drive_c/users").iterdir() if u.is_dir() for f in u.iterdir()}))'
+  if test "${3:-}" = setup-documents; then
+    command python3 -c 'import json, os; from pathlib import Path; p = Path(os.environ["TMNF_PREFIX"]); Path(os.environ["TEST_PROFILE_LINKS"]).write_text(json.dumps({str(f.relative_to(p)): str(f.readlink()) if f.is_symlink() else None for u in (p / "drive_c/users").iterdir() if u.is_dir() for f in u.iterdir()}))'
   fi
   command python3 "$@"
 }
 initialize_prefix'''
         status, log = self.command(['/bin/bash', '-euc', script,
-                                    'fixture', ROOT / 'install.sh'], env, self._testMethodName, 60, check=False)
+                                    'fixture', ROOT / 'src/shell/cli/install.sh'], env, self._testMethodName, 60, check=False)
         # Read only link strings in the scratch prefix, never host folder contents.
         links = {str(path.relative_to(prefix)): str(path.readlink())
                  for profile in (prefix / 'drive_c/users').iterdir() if profile.is_dir()
@@ -365,7 +366,7 @@ initialize_prefix'''
                 self.assertFalse((profile / name).is_symlink(), str(profile / name))
         self.assertEqual((userdata / 'TmForever/Config/Default.SystemConfig.Gbx').read_bytes(),
                          (staged / 'config/Default.SystemConfig.Gbx').read_bytes())
-        for marker in ('.mactmnf-initializing', '.mactmnf-profile-baseline'):
+        for marker in ('.tmnf-initializing', '.tmnf-profile-baseline'):
             self.assertFalse((prefix / marker).exists())
         self.assertEqual(baseline, {str(path.relative_to(self.runtime)): digest(path)
                                     for path in self.runtime.rglob('*') if path.is_file()})
@@ -382,7 +383,7 @@ initialize_prefix'''
         sidecar = self.runtime / 'bin/x87sidecar'
         self.assertTrue(sidecar.is_file(), 'selected runtime has no bundled translator')
         self.command([sidecar, '--probe'], self.env, self._testMethodName + '-compatibility', 15)
-        with mock.patch.dict(self.env, ROSETTA_X87_PATH=str(sidecar), MACTMNF_X87='on',
+        with mock.patch.dict(self.env, ROSETTA_X87_PATH=str(sidecar), TMNF_X87='on',
                              X87_ENABLE_FMA_CONTRACT='0', X87_FAST_ROUND='0'):
             status, log = self.run_host(self.child32, ['--sleep', '500', '--exit', '0'])
         self.assertEqual(status, 0, log.read_text(encoding='utf-8'))
@@ -419,7 +420,7 @@ initialize_prefix'''
         self.assertFalse(survived.exists(), text)
         self.assertNotIn('cleanup=true', text)
         active, probe = self.command(
-            [sys.executable, ROOT / 'lib/operation_guard.py', 'run', self.prefix, '/usr/bin/true'],
+            [sys.executable, '-m', 'tmnf.guard.operation_guard', 'run', self.prefix, '/usr/bin/true'],
             self.prefix_env(self.prefix), self._testMethodName + '-active-guard', 5, check=False)
         self.assertEqual(active, 1, probe.read_text())
         self.assertIn('Wine is active for prefix: {}'.format(self.prefix), probe.read_text())
@@ -447,7 +448,7 @@ initialize_prefix'''
             directory.mkdir(parents=True)
         (staged / 'bin/wine').symlink_to(self.wine)
         (staged / 'bin/wineserver').symlink_to(self.server)
-        shutil.copy2(self.helper, staged / 'libexec/mactmnf-session.exe')
+        shutil.copy2(self.helper, staged / 'libexec/tmnf-session.exe')
         shutil.copy2(self.conhost_reference, staged / 'lib/wine/x86_64-windows/conhost.exe')
         d9vk = self.runtime / 'lib/d9vk/d3d9.dll'
         self.assertTrue(d9vk.is_file(), 'CLI integration requires the selected runtime D9VK')
@@ -462,16 +463,16 @@ initialize_prefix'''
         argument_log = self.artifacts / 'CLI arguments.json'
         args = ['--log-args', str(argument_log), '--exit', '0', '--', '', 'CLI spaces', 'CLI"quote']
         env = dict(self.prefix_env(self.prefix),
-                   MACTMNF_RUNTIME=str(staged), MACTMNF_PREFIX=str(self.prefix),
-                   MACTMNF_ROOT=str(self.home / 'CLI root'),
-                   MACTMNF_USERDATA=str(self.home / 'CLI userdata'),
-                   MACTMNF_SUPPORT=str(self.home / 'CLI support'),
-                   MACTMNF_LAUNCHER=str(self.home / 'CLI support/launcher'),
-                   MACTMNF_CACHE=str(self.home / '.cache'),
-                   MACTMNF_APPS_DIR=str(self.home / 'Applications'),
-                   MACTMNF_AUDIO='off', MACTMNF_RENDERER='d9vk', MACTMNF_WINDOW_SIZE='fullscreen')
+                   TMNF_RUNTIME=str(staged), TMNF_PREFIX=str(self.prefix),
+                   TMNF_ROOT=str(self.home / 'CLI root'),
+                   TMNF_USERDATA=str(self.home / 'CLI userdata'),
+                   TMNF_SUPPORT=str(self.home / 'CLI support'),
+                   TMNF_LAUNCHER=str(self.home / 'CLI support/launcher'),
+                   TMNF_CACHE=str(self.home / '.cache'),
+                   TMNF_APPS_DIR=str(self.home / 'Applications'),
+                   TMNF_AUDIO='off', TMNF_RENDERER='d9vk', TMNF_WINDOW_SIZE='fullscreen')
         status, log = self.command(
-            ['/bin/bash', ROOT / 'bin/mactmnf', 'play-vanilla'] + args,
+            ['/bin/bash', ROOT / 'src/shell/cli/tmnf', 'play-vanilla'] + args,
             env, self._testMethodName + '-cli', 45, check=False)
         text = log.read_text(encoding='utf-8')
         self.assertEqual(status, 0, text)

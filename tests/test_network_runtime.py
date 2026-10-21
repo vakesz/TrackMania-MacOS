@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests/fixtures/tls"
 ARCHITECTURES = ("i686", "x86_64")
 REQUEST_MODES = ("sync", "async")
-TLS_CASES = runpy.run_path(str(ROOT / "tools/tls-test-server.py"))["CASES"]
+TLS_CASES = runpy.run_path(str(ROOT / "src/python/tmnf/probes/tls_test_server.py"))["CASES"]
 
 
 def local_probe_arguments(mode, control_url, case_url, case):
@@ -172,7 +172,7 @@ class NetworkRuntime(unittest.TestCase):
             self.assertTrue(os.access(runtime / "bin" / name, os.X_OK), "runtime missing " + name)
         compilers = {arch: shutil.which(arch + "-w64-mingw32-gcc") for arch in ARCHITECTURES}
         self.assertTrue(all(compilers.values()), "both mingw-w64 compilers are required")
-        version = (runtime / ".mactmnf-runtime").read_text().strip()
+        version = (runtime / ".tmnf-runtime").read_text().strip()
         print("\nTLS runtime: %s, version %s; not qualification of current source" % (runtime, version), flush=True)
         overlay = os.environ.get("MACTMNF_TEST_WINHTTP_DLLS")
         overlay = Path(overlay).resolve(strict=True) if overlay else None
@@ -214,7 +214,7 @@ class NetworkRuntime(unittest.TestCase):
                     copy_winhttp_overlay(fault_overlay, fault_appdir, arch)
                     shutil.copyfile(appdir / "network.exe", fault_appdir / "network.exe")
 
-            server = subprocess.Popen([sys.executable, str(ROOT / "tools/tls-test-server.py")],
+            server = subprocess.Popen([sys.executable, str(ROOT / "src/python/tmnf/probes/tls_test_server.py")],
                                       env={"PATH": "/usr/bin:/bin", "HOME": str(scratch)},
                                       stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                       stderr=subprocess.DEVNULL, text=True, start_new_session=True, cwd=scratch)

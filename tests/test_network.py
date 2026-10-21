@@ -21,7 +21,7 @@ from urllib.parse import urlsplit
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SERVER = ROOT / "tools/tls-test-server.py"
+SERVER = ROOT / "src/python/tmnf/probes/tls_test_server.py"
 TLS = runpy.run_path(str(SERVER))
 FIXTURES = TLS["FIXTURES"]
 
@@ -331,15 +331,17 @@ class NetworkProbe(unittest.TestCase):
     def test_smoke_forwards_local_arguments_without_trust_mutations(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for name in ("tools", "lib", "bin", "prefix"):
-                (root / name).mkdir()
-            shutil.copyfile(ROOT / "tools/smoke-network.sh", root / "tools/smoke-network.sh")
+            for name in ("src/shell/tools/probes", "src/shell/lib", "src/python/tmnf/probes", "bin", "prefix"):
+                (root / name).mkdir(parents=True)
+            shutil.copyfile(ROOT / "src/shell/tools/probes/smoke-network.sh", root / "src/shell/tools/probes/smoke-network.sh")
             (root / "prefix/system.reg").touch()
-            (root / "lib/common.sh").write_text(
+            (root / "src/shell/lib/common.sh").write_text(
                 'have() { command -v "$1" >/dev/null; }\n'
                 'die() { printf "%s\\n" "$*" >&2; exit 1; }\n'
                 'wine_binary() { printf "%s\\n" "$FAKE_WINE"; }\n'
-                'configure_translation() { :; }\n', encoding="ascii")
+                'configure_translation() { :; }\n'
+                'tmnf_python() { PYTHONPATH="' + str(root / 'src/python') + '" python3 "$@"; }\n',
+                encoding="ascii")
             stub = root / "bin/stub"
             stub.write_text(
                 "#!" + sys.executable + "\n"
@@ -351,18 +353,20 @@ class NetworkProbe(unittest.TestCase):
             for name in ("wine", "i686-w64-mingw32-gcc", "x86_64-w64-mingw32-gcc"):
                 (root / "bin" / name).symlink_to(stub)
             # Stub the process runner, not Wine itself in a real prefix.
-            (root / "tools/run-probe.py").write_text(
+            (root / "src/python/tmnf/probes/probe_runner.py").write_text(
                 "import subprocess, sys\nraise SystemExit(subprocess.call(sys.argv[2:]))\n", encoding="ascii")
+            (root / "src/python/tmnf/__init__.py").write_text("", encoding="ascii")
+            (root / "src/python/tmnf/probes/__init__.py").write_text("", encoding="ascii")
             (root / "bin/python3").symlink_to(sys.executable)
             log = root / "calls.jsonl"
             env = {"PATH": str(root / "bin") + ":/usr/bin:/bin", "HOME": directory,
                    "TMPDIR": directory, "CALLS": str(log), "FAKE_WINE": str(root / "bin/wine"),
-                   "MACTMNF_PREFIX": str(root / "prefix"), "WINEPREFIX": "/must-not-use"}
+                   "TMNF_PREFIX": str(root / "prefix"), "WINEPREFIX": "/must-not-use"}
             local = ["--local", "https://127.0.0.1:12345/", "https://127.0.0.1:12346/", "expired"]
             for args in ([], ["--async"], local, ["--async", *local]):
                 with self.subTest(args=args):
                     log.write_text("")
-                    result = subprocess.run(["/bin/bash", str(root / "tools/smoke-network.sh"), *args],
+                    result = subprocess.run(["/bin/bash", str(root / "src/shell/tools/probes/smoke-network.sh"), *args],
                                             env=env, capture_output=True, text=True, timeout=10)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     calls = [json.loads(line) for line in log.read_text().splitlines()]
@@ -384,7 +388,7 @@ class NetworkProbe(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             for args in cases:
                 with self.subTest(args=args):
-                    result = subprocess.run(["/bin/bash", str(ROOT / "tools/smoke-network.sh"), *args],
+                    result = subprocess.run(["/bin/bash", str(ROOT / "src/shell/tools/probes/smoke-network.sh"), *args],
                                             env={"PATH": directory, "HOME": directory},
                                             capture_output=True, text=True, timeout=5)
                     self.assertEqual(result.returncode, 2, result.stderr)

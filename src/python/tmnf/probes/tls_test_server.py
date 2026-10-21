@@ -13,7 +13,8 @@ import tempfile
 import threading
 
 
-FIXTURES = Path(__file__).resolve().parents[1] / "tests/fixtures/tls"
+ROOT = Path(__file__).resolve().parents[4]
+FIXTURES = ROOT / "tests/fixtures/tls"
 CASES = ("valid", "untrusted", "expired", "hostname", "expired-untrusted",
          "hostname-untrusted", "expired-hostname", "expired-hostname-untrusted")
 

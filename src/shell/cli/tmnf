@@ -3,13 +3,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
-PROJECT_DIR="$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)"
-# shellcheck source=lib/common.sh
-. "${PROJECT_DIR}/lib/common.sh"
+# shellcheck source=src/shell/lib/common.sh
+. "${SCRIPT_DIR}/../lib/common.sh"
 
 usage() {
   cat <<'EOF'
-Usage: mactmnf <command> [arguments]
+Usage: tmnf <command> [arguments]
 
 Commands:
   install      Download and install Wine and TMNF
@@ -22,270 +21,45 @@ Commands:
   doctor       Check the installation and print useful diagnostics
   stop         Stop Wine processes belonging to the TMNF prefix
   app          Install the game and settings apps in Applications
+  setup        Install runtime, prefix and DirectX without the game
+  titles       List supported TrackMania titles and their status
+  hub          Native-hub backend (snapshot or run)
+  import       Mount a retail disk image for the selected title (TMNF_TITLE)
   uninstall    Remove the TMNF prefix after confirmation
   help         Show this help
 EOF
 }
 
-play_target() {
-  local executable="$1"
-  shift
-  local watch="$1"
-  shift
-  local wine_bin
-  local overrides
-  local renderer_vars=()
-  local helper
-
-  validate_launch_options
-  require_owned_prefix || die "A managed Wine prefix is required."
-  test -f "$executable" || die "Required executable is missing. Run ./install.sh first: $executable"
-  wine_bin="$(wine_binary)" || die "Wine is not installed. Run ./install.sh first."
-  helper="$(session_helper "$wine_bin")"
-  case "$MACTMNF_RENDERER" in
-    d9vk)
-      overrides='d3d9=n'
-      # TMNF's startup DirectDraw probe needs no 3D adapter. Its unused OpenGL
-      # context raced 32-bit Rosetta startup; keep it separate from D9VK.
-      renderer_vars=(
-        "DXVK_CONFIG_FILE=${DXVK_CONFIG_FILE:-$DXVK_CONF}"
-        "DXVK_STATE_CACHE_PATH=${DXVK_STATE_CACHE_PATH:-$MACTMNF_PREFIX}"
-        "DXVK_LOG_LEVEL=${DXVK_LOG_LEVEL:-warn}"
-        "DXVK_LOG_PATH=${DXVK_LOG_PATH:-none}"
-        "WINE_D3D_CONFIG=renderer=gdi${WINE_D3D_CONFIG:+,$WINE_D3D_CONFIG}")
-      ;;
-    wined3d-vulkan)
-      overrides='d3d9=b'
-      renderer_vars=("WINE_D3D_CONFIG=renderer=vulkan${WINE_D3D_CONFIG:+,$WINE_D3D_CONFIG}")
-      ;;
-    wined3d-gl)
-      overrides='d3d9=b'
-      renderer_vars=("WINE_D3D_CONFIG=renderer=gl${WINE_D3D_CONFIG:+,$WINE_D3D_CONFIG}")
-      ;;
-  esac
-  # CoreMod redirects D3DX30 compilation into D3DX43. Keep both patched compilers.
-  overrides="${overrides};d3dx9_30,d3dx9_43,wined3d=b"
-  if test -n "${WINEDLLOVERRIDES:-}"; then
-    overrides="${overrides};${WINEDLLOVERRIDES}"
-  fi
-  if test "$MACTMNF_RENDERER" = "d9vk" && ! d9vk_is_installed; then
-    die "D9VK is not installed in the prefix. Run ./bin/mactmnf d9vk (or set MACTMNF_RENDERER=wined3d-vulkan)."
-  fi
-  configure_translation
-  local session_args=(--watch "$watch" --audio "$MACTMNF_AUDIO")
-  if test "$executable" = "$LAUNCHER_EXE"; then
-    # Settings' Play/benchmark child remains part of the same session even if
-    # the settings process exits. Watch exact paths inside this prefix.
-    session_args+=(--watch "$GAME_EXE" --settings)
-  fi
-  if test "$MACTMNF_WINDOW_SIZE" != fullscreen; then
-    session_args+=(--desktop "$MACTMNF_WINDOW_SIZE")
-  fi
-  cd "$GAME_DIR"
-  # Keep the operation descriptor in the host supervisor. Its child processes
-  # close inherited descriptors, so neither Wine nor a detached server owns it.
-  exec env \
-    WINEPREFIX="$MACTMNF_PREFIX" \
-    WINEDEBUG="${WINEDEBUG:--all}" \
-    WINEDLLOVERRIDES="$overrides" \
-    "${renderer_vars[@]}" \
-    python3 "${PROJECT_DIR}/lib/session.py" run \
-    --prefix "$MACTMNF_PREFIX" --wine "$wine_bin" --helper "$helper" \
-    "${session_args[@]}" -- "$executable" "$@"
-}
-
-install_d9vk() {
-  local wine_bin
-
-  require_owned_prefix || die "A managed Wine prefix is required."
-  test -f "$MACTMNF_D9VK_DLL" || die "D9VK is missing. Run make install (expected $MACTMNF_D9VK_DLL)."
-  test -d "${MACTMNF_PREFIX}/drive_c/windows/syswow64" || die "The Wine prefix is missing. Run ./install.sh first."
-  wine_bin="$(wine_binary)" || die "Wine is not installed. Run ./install.sh first."
-  cp "$MACTMNF_D9VK_DLL" "$PREFIX_D9VK_DLL"
-  # Register the override in the prefix too, so tools launched outside
-  # mactmnf (winecfg, the graphics launcher) see the same Direct3D 9.
-  without_operation_lock env WINEPREFIX="$MACTMNF_PREFIX" WINEDEBUG=-all "$wine_bin" reg add \
-    'HKCU\Software\Wine\DllOverrides' /v d3d9 /t REG_SZ /d native /f >/dev/null
-  d9vk_is_installed || die "D9VK installation failed."
-  say "Installed D9VK into $PREFIX_D9VK_DLL"
-}
-
-play_game() {
-  competition_patch_is_ready || die "Competition Patch is missing, outdated, or unconfigured. Run ./install.sh."
-  play_target "$TMLOADER_EXE" "$TMLOADER_GAME_EXE" run TmForever competition "$@"
-}
-
-play_vanilla() {
-  play_target "$GAME_EXE" "$GAME_EXE" "$@"
-}
-
-configure_game() {
-  # The host supervisor applies launcher-only GPU defaults under the same
-  # startup deadline as audio setup and process creation.
-  play_target "$LAUNCHER_EXE" "$LAUNCHER_EXE"
-}
-
-update_game() {
-  if verify_file "$GAME_EXE" "$TMNF_EXE_SHA256" && competition_patch_is_ready && directx_is_current; then
-    say "TMNF $TMNF_GAME_VERSION, DirectX $DIRECTX_VERSION, and Competition Patch $TMCOMP_VERSION are current."
-    return
-  fi
-
-  if verify_file "$GAME_EXE" "$TMNF_EXE_SHA256"; then
-    exec "${PROJECT_DIR}/install.sh"
-  fi
-  say "Installing the official TMNF $TMNF_GAME_VERSION release and Competition Patch."
-  MACTMNF_REINSTALL=1 exec "${PROJECT_DIR}/install.sh"
-}
-
-doctor() {
-  local failures=0
-  local wine_bin=""
-  local wine_version=""
-  local wow64_version=""
-  local sidecar="${ROSETTA_X87_PATH:-$MACTMNF_SIDECAR}"
-
-  validate_launch_options
-  if test -f "${MACTMNF_PREFIX}/system.reg" && require_owned_prefix >/dev/null 2>&1; then
-    # A diagnostic Windows process must not race prefix repair or deletion.
-    guard_prefix_operation "${PROJECT_DIR}/bin/mactmnf" doctor
-  fi
-
-  say "MacTMNF $MACTMNF_VERSION"
-  say "macOS: $(sw_vers -productVersion 2>/dev/null || echo unknown) ($(uname -m))"
-  say "Audio on next launch: $MACTMNF_AUDIO (MACTMNF_AUDIO=off disables sound)"
-  say "Patched x87 translation: $MACTMNF_X87"
-  if test "$MACTMNF_X87" = on; then
-    if test -x "$sidecar" && "$sidecar" --probe >/dev/null 2>&1; then
-      say "x87sidecar: compatible with the installed Rosetta"
-    else
-      warn "Patched x87sidecar is missing or incompatible with Rosetta; rebuild or use MACTMNF_X87=off"
-      failures=$((failures + 1))
-    fi
-  fi
-  if rosetta_is_ready; then
-    say "Rosetta 2: ready"
-  else
-    warn "Rosetta 2 is missing"
-    failures=$((failures + 1))
-  fi
-
-  if wine_bin="$(wine_binary)" && python3 "${PROJECT_DIR}/lib/runtime_manifest.py" verify \
-      "$(dirname "$(dirname "$wine_bin")")" "$RUNTIME_VERSION"; then
-    if wine_version="$(without_operation_lock "$wine_bin" --version 2>/dev/null)" && test -n "$wine_version"; then
-      say "Wine: $wine_version"
-    else
-      warn "Wine failed its version probe"
-      failures=$((failures + 1))
-    fi
-    say "Wine binary: $wine_bin"
-    if ! require_owned_prefix || test ! -f "${MACTMNF_PREFIX}/system.reg"; then
-      warn "WoW64 probe skipped: an initialized managed prefix is required"
-      failures=$((failures + 1))
-    elif wow64_version="$(without_operation_lock env WINEPREFIX="$MACTMNF_PREFIX" WINEDEBUG=-all "$wine_bin" \
-      'C:\windows\syswow64\cmd.exe' /c ver 2>/dev/null)"; then
-      wow64_version="$(printf '%s' "$wow64_version" | tr -d '\r' | tail -1)"
-      say "WoW64: ${wow64_version:-ready}"
-    else
-      warn "Wine could not execute a 32-bit Windows command in this prefix"
-      failures=$((failures + 1))
-    fi
-  else
-    warn "Wine runtime is missing, incomplete, modified, or a different version; build and install the current runtime."
-    failures=$((failures + 1))
-  fi
-
-  if test -f "$GAME_EXE"; then
-    if verify_file "$GAME_EXE" "$TMNF_EXE_SHA256"; then
-      say "TMNF: $TMNF_GAME_VERSION (verified official release)"
-    else
-      warn "TMNF: installed executable is not the official $TMNF_GAME_VERSION build; run update"
-    fi
-    say "Game: $GAME_EXE"
-  else
-    warn "TMNF is not installed at $GAME_EXE"
-    failures=$((failures + 1))
-  fi
-
-  if competition_patch_is_ready; then
-    say "Competition Patch: $TMCOMP_VERSION"
-    say "ModLoader bundle: $TMLOADER_BUNDLE_VERSION"
-    say "ModLoader game runtime: $TMLOADER_GAME_VERSION"
-  else
-    warn "Competition Patch is missing or does not match the pinned release"
-    failures=$((failures + 1))
-  fi
-
-  if directx_is_current; then
-    say "DirectX End-User Runtimes: $DIRECTX_VERSION"
-  else
-    warn "DirectX End-User Runtimes $DIRECTX_VERSION are missing; run directx"
-    failures=$((failures + 1))
-  fi
-
-  say "Renderer: $MACTMNF_RENDERER"
-  if test "$MACTMNF_RENDERER" = "d9vk"; then
-    if d9vk_is_installed; then
-      say "D9VK: installed in the prefix ($(sha256_file "$PREFIX_D9VK_DLL" | cut -c1-12))"
-    elif test -f "$MACTMNF_D9VK_DLL"; then
-      warn "D9VK is built but not installed in the prefix; run ./bin/mactmnf d9vk"
-      failures=$((failures + 1))
-    else
-      warn "D9VK is missing; run make install"
-      failures=$((failures + 1))
-    fi
-  fi
-
-  if test "$failures" -ne 0; then
-    die "$failures check(s) failed"
-  fi
-  say "Result: ready to play"
-}
-
-stop_game() {
-  local wine_bin
-  wine_bin="$(wine_binary)" || die "Wine is not installed."
-  require_owned_prefix || die "Refusing to stop an unmanaged prefix."
-  python3 "${PROJECT_DIR}/lib/session.py" stop --prefix "$MACTMNF_PREFIX" --wine "$wine_bin"
-  say "Stopped the TMNF Wine prefix."
-}
-
-# shellcheck source=lib/apps.sh
-. "${PROJECT_DIR}/lib/apps.sh"
-
-uninstall_game() {
-  local answer=""
-  validate_managed_layout || die "Unsafe installation layout; userdata must be outside the prefix."
-  python3 "${PROJECT_DIR}/lib/managed_paths.py" uninstall "$MACTMNF_PREFIX" "$MACTMNF_USERDATA" \
-    || die "Refusing removal until the reported user-data locations are safe."
-  if test "${1:-}" != "--yes"; then
-    printf 'Remove the TMNF prefix at %s? [y/N] ' "$MACTMNF_PREFIX"
-    read -r answer
-    case "$answer" in
-      y|Y|yes|YES) ;;
-      *) say "Cancelled."; return 0 ;;
-    esac
-  fi
-  rm -rf "$MACTMNF_PREFIX"
-  say "Removed $MACTMNF_PREFIX"
-  say "The cached installers and private Wine runtime were kept."
-}
+# shellcheck source=src/shell/lib/app/apps.sh
+. "${TMNF_PROJECT_DIR}/src/shell/lib/app/apps.sh"
+# shellcheck source=src/shell/lib/app/import.sh
+. "${TMNF_PROJECT_DIR}/src/shell/lib/app/import.sh"
+# shellcheck source=src/shell/lib/app/hub_backend.sh
+. "${TMNF_PROJECT_DIR}/src/shell/lib/app/hub_backend.sh"
+# shellcheck source=src/shell/lib/app/play.sh
+. "${TMNF_PROJECT_DIR}/src/shell/lib/app/play.sh"
+# shellcheck source=src/shell/lib/app/maintain.sh
+. "${TMNF_PROJECT_DIR}/src/shell/lib/app/maintain.sh"
 
 command="${1:-help}"
 case "$command" in
-  play|play-vanilla|configure|d9vk|uninstall)
+  play|play-vanilla|configure|d9vk|uninstall|import)
     validate_launch_options
     require_owned_prefix || die "A managed Wine prefix is required."
-    guard_prefix_operation "${PROJECT_DIR}/bin/mactmnf" "$@"
+    guard_prefix_operation "${TMNF_PROJECT_DIR}/src/shell/cli/tmnf" "$@"
     ;;
   update|app)
     validate_launch_options
-    guard_prefix_operation "${PROJECT_DIR}/bin/mactmnf" "$@"
+    guard_prefix_operation "${TMNF_PROJECT_DIR}/src/shell/cli/tmnf" "$@"
+    ;;
+  hub|titles)
+    validate_launch_options
     ;;
 esac
 case "$command" in
-  install) exec "${PROJECT_DIR}/install.sh" "${@:2}" ;;
-  directx) exec "${PROJECT_DIR}/install.sh" directx ;;
+  install) exec "${TMNF_PROJECT_DIR}/src/shell/cli/install.sh" "${@:2}" ;;
+  directx) exec "${TMNF_PROJECT_DIR}/src/shell/cli/install.sh" directx ;;
+  setup) exec "${TMNF_PROJECT_DIR}/src/shell/cli/install.sh" setup ;;
   update) update_game ;;
   play) play_game "${@:2}" ;;
   play-vanilla) play_vanilla "${@:2}" ;;
@@ -294,6 +68,9 @@ case "$command" in
   doctor) doctor ;;
   stop) stop_game ;;
   app) install_app ;;
+  titles) hub_list_titles ;;
+  hub) hub_command "${@:2}" ;;
+  import) import_disk_image "${2:-}" ;;
   uninstall) uninstall_game "${2:-}" ;;
   help|-h|--help) usage ;;
   *) usage >&2; die "unknown command: $command" ;;

@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">TrackMania Mac</title>
+  <desc id="description">An original midnight racing-route icon with a cyan circuit, mint start light, and coral apex.</desc>
+  <defs>
+    <linearGradient id="backdrop" x1="130" y1="80" x2="900" y2="980" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#16314C"/>
+      <stop offset="0.52" stop-color="#0A1C30"/>
+      <stop offset="1" stop-color="#06101E"/>
+    </linearGradient>
+    <linearGradient id="route" x1="210" y1="780" x2="850" y2="250" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B8FFF0"/>
+      <stop offset="0.36" stop-color="#43E7D5"/>
+      <stop offset="0.72" stop-color="#27B9F8"/>
+      <stop offset="1" stop-color="#8CEBFF"/>
+    </linearGradient>
+    <linearGradient id="apex" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#FFB076"/>
+      <stop offset="1" stop-color="#FA5A75"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.05" r="0.95">
+      <stop stop-color="#2D8CAD" stop-opacity="0.52"/>
+      <stop offset="1" stop-color="#2D8CAD" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="24" stdDeviation="24" flood-color="#01070D" flood-opacity="0.64"/>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" fill="#06101D"/>
+  <rect x="48" y="48" width="928" height="928" rx="218" fill="url(#backdrop)"/>
+  <rect x="62" y="62" width="900" height="900" rx="204" fill="none" stroke="#7EE9ED" stroke-opacity="0.22" stroke-width="8"/>
+  <ellipse cx="512" cy="210" rx="425" ry="340" fill="url(#glow)"/>
+
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" filter="url(#shadow)">
+    <path d="M203 796 C257 686 303 522 397 328 C431 258 482 202 548 223 C626 248 619 399 696 447 C762 488 817 390 858 264" stroke="#03101D" stroke-width="268"/>
+    <path d="M203 796 C257 686 303 522 397 328 C431 258 482 202 548 223 C626 248 619 399 696 447 C762 488 817 390 858 264" stroke="url(#route)" stroke-width="202"/>
+    <path d="M203 796 C257 686 303 522 397 328 C431 258 482 202 548 223 C626 248 619 399 696 447 C762 488 817 390 858 264" stroke="#092338" stroke-width="94"/>
+    <path d="M203 796 C257 686 303 522 397 328 C431 258 482 202 548 223 C626 248 619 399 696 447 C762 488 817 390 858 264" stroke="#F1FFF8" stroke-opacity="0.94" stroke-width="13" stroke-dasharray="50 42"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <circle cx="202" cy="797" r="70" fill="#092238" stroke="#8EFFF0" stroke-width="12"/>
+    <circle cx="202" cy="797" r="37" fill="#63F4D7"/>
+    <circle cx="182" cy="778" r="13" fill="#E9FFF7" fill-opacity="0.92"/>
+    <path d="M688 398 l58 58 -58 58 -58 -58z" fill="url(#apex)" stroke="#FFE0B0" stroke-width="9"/>
+    <path d="M688 423 l20 33 -20 33 -20 -33z" fill="#FFF8E9"/>
+  </g>
+
+  <g fill="#C9FFF6" opacity="0.84">
+    <rect x="152" y="170" width="48" height="48" rx="10"/>
+    <rect x="214" y="170" width="48" height="48" rx="10" opacity="0.25"/>
+    <rect x="152" y="232" width="48" height="48" rx="10" opacity="0.25"/>
+    <rect x="214" y="232" width="48" height="48" rx="10"/>
+  </g>
+  <path d="M766 761 C810 728 847 685 874 637" fill="none" stroke="#5EDBFF" stroke-width="18" stroke-linecap="round" opacity="0.6"/>
+</svg>

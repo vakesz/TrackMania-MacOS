@@ -1,0 +1,22 @@
+{
+  "id": "tm-turbo",
+  "name": "TrackMania Turbo",
+  "short_name": "TMT",
+  "engine": "turbo",
+  "installer": "disk-image",
+  "status": "provisional",
+  "prefix_subdir": "TMNF/Turbo",
+  "prefix_marker": "tm-turbo:1",
+  "app_name": "TrackMania Turbo.app",
+  "settings_app_name": "TrackMania Turbo Settings.app",
+  "bundle_id_game": "local.tmnf.tm-turbo.game",
+  "bundle_id_settings": "local.tmnf.tm-turbo.settings",
+  "game_dir_name": "TrackMania Turbo",
+  "game_exe": "TrackmaniaTurbo.exe",
+  "launcher_exe": "TrackmaniaTurboLauncher.exe",
+  "save_dirs": ["TrackMania Turbo", "Turbo"],
+  "needs_directx": true,
+  "needs_tmloader": false,
+  "cache_installer": null,
+  "notes": "Provisional newer-engine title (2016). Likely DX11/64-bit and Ubisoft Connect/Steam DRM; needs separate Wine qualification once user image is provided."
+}

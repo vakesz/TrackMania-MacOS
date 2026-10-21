@@ -18,15 +18,17 @@ import threading
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from tmnf.build.game_profile import generate
+from tmnf.install.runtime_manifest import verify_runtime
+
+ROOT = Path(__file__).resolve().parents[4]
 # Capture before local imports and lock waits: old code must not stamp newer sources.
 LOADED_PYTHON_INPUTS = {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
-                      for name in ('tools/build.py', 'tools/game_profile.py', 'lib/runtime_manifest.py')}
-
-from game_profile import generate
-
-sys.path.insert(0, str(ROOT / 'lib'))
-from runtime_manifest import verify_runtime
+                      for name in ('src/python/tmnf/build/__init__.py',
+                                   'src/python/tmnf/build/runtime_builder.py',
+                                   'src/python/tmnf/build/game_profile.py',
+                                   'src/python/tmnf/install/__init__.py',
+                                   'src/python/tmnf/install/runtime_manifest.py')}
 
 BUILD = ROOT / '.build' / 'release'
 SOURCES = BUILD / 'sources'
@@ -36,7 +38,7 @@ RUNTIME = BUILD / 'runtime'
 DIST = ROOT / '.build' / 'dist'
 LOCK = json.loads((ROOT / 'config/sources.json').read_text())
 VERSION = (ROOT / 'VERSION').read_text().strip()
-JOBS = os.cpu_count() or 1  # MACTMNF_JOBS overrides; see main().
+JOBS = os.cpu_count() or 1  # TMNF_JOBS overrides; see main().
 ENV = dict(os.environ, MACOSX_DEPLOYMENT_TARGET='14.0')
 LOG = BUILD / 'logs' / 'build.log'
 if (ROOT / 'upstream').is_dir():
@@ -44,9 +46,9 @@ if (ROOT / 'upstream').is_dir():
 # Remap the build path out of __FILE__ and debug strings, so shipped binaries
 # never carry the maintainer's home directory. verify_no_build_paths() enforces
 # that nothing slips through.
-FILE_PREFIX_MAP = f'-ffile-prefix-map={ROOT}=/mactmnf'
-PROJECT_ENTRIES = ('VERSION', 'Makefile', 'README.md', 'LICENSE', '.gitignore', 'bin', 'lib',
-                   'config', 'patches', 'src', 'tools', 'tests', 'docs', 'licenses', 'install.sh')
+FILE_PREFIX_MAP = f'-ffile-prefix-map={ROOT}=/tmnf'
+PROJECT_ENTRIES = ('VERSION', 'Makefile', 'README.md', 'LICENSE', '.gitignore', 'config',
+                   'patches', 'src', 'tests', 'docs', 'licenses', 'pyproject.toml', 'uv.lock')
 
 
 def elapsed_text(seconds):
@@ -196,7 +198,7 @@ def release_lock():
         for name, expected in LOADED_PYTHON_INPUTS.items():
             if not (ROOT / name).is_file() or digest(ROOT / name) != expected:
                 raise RuntimeError(f'Loaded Python input changed since startup: {name}. '
-                                   'Restart tools/build.sh before building or packaging.')
+                                   'Restart src/shell/tools/build-runtime.sh before building or packaging.')
         # Record the holder for the message above; the file is never unlinked.
         lock.seek(0)
         lock.truncate()
@@ -262,7 +264,8 @@ def source_excluded(name, path):
 
 
 def project_excluded(path):
-    return path.parts[0] not in PROJECT_ENTRIES or '__pycache__' in path.parts
+    return (path.parts[0] not in PROJECT_ENTRIES or '__pycache__' in path.parts
+            or path.name == '.DS_Store')
 
 
 def source_inventory(required=True):
@@ -337,11 +340,11 @@ def toolchain_identity(only=None):
 
 
 def build_inputs():
-    files = [ROOT / 'VERSION', ROOT / 'LICENSE', ROOT / 'tools/build.py', ROOT / 'tools/build.sh',
-             ROOT / 'tools/game_profile.py', ROOT / 'lib/runtime_manifest.py']
+    files = [ROOT / 'VERSION', ROOT / 'LICENSE']
     files += list((ROOT / 'config').rglob('*')) + list((ROOT / 'patches').rglob('*.patch'))
     files += list((ROOT / 'licenses').rglob('*')) + list((ROOT / 'src').rglob('*'))
-    return {str(path.relative_to(ROOT)): digest(path) for path in sorted(files) if path.is_file()}
+    return {str(path.relative_to(ROOT)): digest(path) for path in sorted(files)
+            if path.is_file() and '__pycache__' not in path.parts and path.name != '.DS_Store'}
 
 
 def apply_patches(name, source):
@@ -537,12 +540,12 @@ def sidecar():
 def session():
     build = WORK / 'session'
     build.mkdir(parents=True, exist_ok=True)
-    binary = build / 'mactmnf-session.exe'
+    binary = build / 'tmnf-session.exe'
     run('x86_64-w64-mingw32-gcc', '-municode', '-O2', '-Wall', '-Wextra', '-Werror',
-        FILE_PREFIX_MAP, ROOT / 'src/session.c', '-o', binary, cwd=build,
+        FILE_PREFIX_MAP, ROOT / 'src/c/session.c', '-o', binary, cwd=build,
         title='session: x86_64-w64-mingw32-gcc session.c')
     (RUNTIME / 'libexec').mkdir(parents=True, exist_ok=True)
-    shutil.copy2(binary, RUNTIME / 'libexec/mactmnf-session.exe')
+    shutil.copy2(binary, RUNTIME / 'libexec/tmnf-session.exe')
 
 
 def relocate():
@@ -623,10 +626,10 @@ def bundle_metadata():
         'patches': {str(path.relative_to(ROOT)): digest(path) for path in sorted((ROOT / 'patches').rglob('*.patch'))},
     }
     (RUNTIME / 'build-info.json').write_text(json.dumps(info, indent=2) + '\n')
-    (RUNTIME / '.mactmnf-runtime').write_text(VERSION + '\n')
+    (RUNTIME / '.tmnf-runtime').write_text(VERSION + '\n')
     licenses = RUNTIME / 'licenses'
     licenses.mkdir(exist_ok=True)
-    shutil.copy2(ROOT / 'LICENSE', licenses / 'MacTMNF.txt')
+    shutil.copy2(ROOT / 'LICENSE', licenses / 'TMNF.txt')
     shutil.copytree(ROOT / 'licenses', licenses / 'toolchain', dirs_exist_ok=True)
     for name in LOCK:
         dest = licenses / name
@@ -679,18 +682,18 @@ def archive_metadata(info):
 
 def source_archive(archive):
     def project_filter(info):
-        path = Path(info.name).relative_to('mactmnf')
+        path = Path(info.name).relative_to('tmnf')
         return None if project_excluded(path) else archive_metadata(info)
 
     def source_filter(info):
-        path = Path(info.name).relative_to('mactmnf/upstream')
+        path = Path(info.name).relative_to('tmnf/upstream')
         return None if source_excluded(path.parts[0], Path(*path.parts[1:])) else archive_metadata(info)
 
     with tarfile.open(archive, 'w:xz', preset=3) as tar:
         for entry in PROJECT_ENTRIES:
-            tar.add(ROOT / entry, arcname=f'mactmnf/{entry}', filter=project_filter)
+            tar.add(ROOT / entry, arcname=f'tmnf/{entry}', filter=project_filter)
         for name in LOCK:
-            tar.add(SOURCES / name, arcname=f'mactmnf/upstream/{name}', filter=source_filter)
+            tar.add(SOURCES / name, arcname=f'tmnf/upstream/{name}', filter=source_filter)
 
 
 def verify_completed():
@@ -723,7 +726,7 @@ def package():
     with tempfile.TemporaryDirectory(prefix='.package-', dir=DIST) as directory:
         staged = []
         for kind in ('runtime', 'source'):
-            archive = Path(directory) / f'mactmnf-{VERSION}-{kind}.tar.xz'
+            archive = Path(directory) / f'tmnf-{VERSION}-{kind}.tar.xz'
             with Progress(f'Writing {archive.name}'):
                 if kind == 'runtime':
                     with tarfile.open(archive, 'w:xz', preset=3) as tar:
@@ -755,15 +758,15 @@ def main():
         package()
         return
     try:
-        jobs = os.environ.get('MACTMNF_JOBS', str(os.cpu_count() or 1))
+        jobs = os.environ.get('TMNF_JOBS', str(os.cpu_count() or 1))
         if not re.fullmatch(r'[0-9]+', jobs):
             raise ValueError
         JOBS = int(jobs)
         if JOBS < 1:
             raise ValueError
     except ValueError:
-        parser.error('MACTMNF_JOBS must be a positive integer')
-    print(f'Using {JOBS} compiler jobs (set MACTMNF_JOBS to change that).', flush=True)
+        parser.error('TMNF_JOBS must be a positive integer')
+    print(f'Using {JOBS} compiler jobs (set TMNF_JOBS to change that).', flush=True)
     build_runtime(args.only)
 
 

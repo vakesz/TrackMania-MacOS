@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 SPEC = importlib.util.spec_from_file_location(
-    'winhttp_build', Path(__file__).resolve().parents[1] / 'tools/build-winhttp-probe.py')
+    'winhttp_build', Path(__file__).resolve().parents[1] / 'src/python/tmnf/build/winhttp_probe_builder.py')
 build = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(build)
 

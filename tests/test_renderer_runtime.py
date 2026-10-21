@@ -40,7 +40,7 @@ class RendererRuntime(unittest.TestCase):
                         int.from_bytes(data[offset + 4:offset + 6], "little") == 0x14c and
                         not data[64:96].startswith(b"Wine builtin DLL"), "expected native i386 D9VK DLL")
         digest = hashlib.sha256(data).hexdigest()
-        version = (runtime / ".mactmnf-runtime").read_text().strip()
+        version = (runtime / ".tmnf-runtime").read_text().strip()
         revision = json.loads((runtime / "sources.json").read_text())["d9vk"]["revision"]
         print(f"\nRenderer runtime={runtime} version={version} recorded baseline D9VK={revision}", flush=True)
         overlay = bool(os.environ.get("MACTMNF_TEST_D9VK_DLL"))

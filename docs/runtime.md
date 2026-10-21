@@ -87,7 +87,7 @@ prefix. A partial installation does not qualify for this workaround and is
 retried on the next install.
 
 The same shutdown weakness can leave a game process alive after you quit,
-holding the Wine virtual desktop on screen as a black window. `src/session.c`
+holding the Wine virtual desktop on screen as a black window. `src/c/session.c`
 runs inside the selected prefix and tracks retained Windows process handles,
 exact executable file identities, job accounting and prefix-local snapshots.
 It does not search the host process list by executable name.
@@ -107,7 +107,7 @@ byte equality with the bundled reference, and a retained parent in the same
 job. Only its completed zero-status lifecycle is exempt from unknown-child
 handling; a namesake or modified image is not trusted as infrastructure.
 
-`lib/session.py` preserves the reported unsigned Windows exit status before
+`src/python/tmnf/session/session.py` preserves the reported unsigned Windows exit status before
 cleanup. A validated completed session permits bounded, prefix-specific
 wineserver shutdown; `stop` is the explicit user-authorized version of that
 operation. Timeout or interruption before completion terminates only the host
@@ -143,19 +143,19 @@ windows if a launch seems silent.
 
 By default the launcher runs the game directly, so it uses the display mode set
 in TrackMania Settings (fullscreen or windowed, at the chosen resolution).
-`MACTMNF_WINDOW_SIZE=WxH` instead runs it inside an explorer virtual desktop of
+`TMNF_WINDOW_SIZE=WxH` instead runs it inside an explorer virtual desktop of
 that size; the desktop's title bar shrinks the drawable below the requested
 height, which clips the bottom of the game's fixed-size menu, so the direct
 launch is the default. Fullscreen uses the primary display; on multiple monitors
 set the game's resolution to the primary's.
 
 The two apps carry TMNF's own icon, extracted at install time from the
-installed `TmForever.exe` by `lib/app_icon.py` using Python's standard library,
+installed `TmForever.exe` by `src/python/tmnf/app/app_icon.py` using Python's standard library,
 sips and iconutil. Malformed or unsupported icons fall back to generic app artwork
 without blocking installation. Nothing of Nadeo's is stored in this repository.
 
 `config/game-settings.json` describes the initial graphics preset.
-`tools/game_profile.py` generates only display and opponent chunks in a GBX
+`src/python/tmnf/build/game_profile.py` generates only display and opponent chunks in a GBX
 SystemConfig file, with no player profile, account or network fields. Existing
 profiles are never replaced. The chunk formats are documented by
 [GBX.NET](https://github.com/BigBang1112/gbx-net/tree/master/Src/GBX.NET/Engines/System).
@@ -167,9 +167,9 @@ game may accept. Offline tests check chunk structure and unchanged default bytes
 ## Troubleshooting
 
 Start with `make doctor`. The app logs are in
-`~/Library/Logs/MacTMNF/play.log` and `configure.log`.
+`~/Library/Logs/TMNF/play.log` and `configure.log`.
 
-`lib/app_launch.py` serializes app log writers and rotates completed logs at
+`src/python/tmnf/app/app_launch.py` serializes app log writers and rotates completed logs at
 launch, keeping three backups. Active or surviving writers retain direct file
 descriptors and can exceed the 2 MiB rotation threshold.
 
@@ -181,10 +181,10 @@ launcher; external Wine invocations do not participate in its operation lock.
 
 - If settings need changing, close the game and open **TrackMania Settings**.
 - If a macOS update makes x87sidecar's compatibility probe fail, rebuild or use
-  `MACTMNF_X87=off make play` temporarily. Stock Rosetta can be substantially
+  `TMNF_X87=off make play` temporarily. Stock Rosetta can be substantially
   slower on this game's math workload.
 - If sound is missing, check the game's audio settings and macOS output device.
-  Run `./tools/smoke-audio.sh` from a source checkout to test Wine playback.
+  Run `./src/shell/tools/probes/smoke-audio.sh` from a source checkout to test Wine playback.
 - If textures are wrong after installing other DLLs, rerun `make install`.
   Keep the bundled D9VK and patched Wine D3DX compilers together.
 - For frame-time observation, use `DXVK_HUD=fps,frametimes make play`. Compare

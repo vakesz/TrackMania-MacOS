@@ -11,15 +11,15 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from lib import operation_guard as guard
+from tmnf.guard import operation_guard as guard
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / 'lib/operation_guard.py'
+SCRIPT = ROOT / 'src/python/tmnf/guard/operation_guard.py'
 
 
 class Operations(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix='mactmnf-operation-test-', dir='/private/tmp')
+        temporary = tempfile.TemporaryDirectory(prefix='tmnf-operation-test-', dir='/private/tmp')
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.prefix = self.root / "prefix with spaces and 'quotes"
@@ -234,7 +234,7 @@ class Operations(unittest.TestCase):
         ready = self.root / 'operation-ready'
         first = self.spawn([
             sys.executable, str(SCRIPT), 'run', str(self.prefix), sys.executable, '-c',
-            ('import os, pathlib, sys; os.close(int(os.environ.pop("MACTMNF_OPERATION_FD"))); '
+            ('import os, pathlib, sys; os.close(int(os.environ.pop("TMNF_OPERATION_FD"))); '
              'pathlib.Path(sys.argv[1]).touch(); sys.stdin.read()'),
             str(ready)], stdin=subprocess.PIPE)
         self.wait_file(ready, first)
@@ -292,7 +292,7 @@ class Operations(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         first.communicate('', timeout=5)
         self.assertEqual(first.returncode, 0)
-        path = self.home / 'Library/Caches/MacTMNF/.app-install.lock'
+        path = self.home / 'Library/Caches/TMNF/.app-install.lock'
         path.write_bytes(b'keep lock contents')
         inode = path.stat().st_ino
         self.assertEqual(self.cli(*command).returncode, 0)
@@ -307,7 +307,7 @@ class Operations(unittest.TestCase):
         self.assertNotEqual(self.cli(*command).returncode, 0)
         self.assertFalse((self.home / 'Library').exists())
         self.assertEqual(self.cli(*command, env=env, pass_fds=(fd,)).returncode, 0)
-        path = self.home / 'Library/Caches/MacTMNF/.app-install.lock'
+        path = self.home / 'Library/Caches/TMNF/.app-install.lock'
         unlocked = os.open(path, os.O_RDWR)
         try:
             result = self.cli('app-held', self.prefix,
@@ -601,23 +601,23 @@ class Operations(unittest.TestCase):
             'LC_ALL': 'C',
             'TMPDIR': str(self.root),
             'PYTHONDONTWRITEBYTECODE': '1',
-            'MACTMNF_ROOT': str(home / 'game'),
-            'MACTMNF_PREFIX': str(self.prefix),
-            'MACTMNF_CACHE': str(home / 'cache'),
-            'MACTMNF_SUPPORT': str(home / 'support'),
-            'MACTMNF_RUNTIME': str(home / 'runtime'),
-            'MACTMNF_LAUNCHER': str(home / 'launcher'),
-            'MACTMNF_USERDATA': str(home / 'userdata'),
-            'MACTMNF_APPS_DIR': str(home / 'Applications'),
-            'MACTMNF_APP': str(home / 'Applications/TrackMania Nations Forever.app'),
-            'MACTMNF_SETTINGS_APP': str(home / 'Applications/TrackMania Settings.app'),
-            'MACTMNF_D9VK_DLL': str(home / 'runtime/lib/d9vk/d3d9.dll'),
-            'MACTMNF_SIDECAR': str(home / 'runtime/bin/x87sidecar'),
+            'TMNF_ROOT': str(home / 'game'),
+            'TMNF_PREFIX': str(self.prefix),
+            'TMNF_CACHE': str(home / 'cache'),
+            'TMNF_SUPPORT': str(home / 'support'),
+            'TMNF_RUNTIME': str(home / 'runtime'),
+            'TMNF_LAUNCHER': str(home / 'launcher'),
+            'TMNF_USERDATA': str(home / 'userdata'),
+            'TMNF_APPS_DIR': str(home / 'Applications'),
+            'TMNF_APP': str(home / 'Applications/TrackMania Nations Forever.app'),
+            'TMNF_SETTINGS_APP': str(home / 'Applications/TrackMania Settings.app'),
+            'TMNF_D9VK_DLL': str(home / 'runtime/lib/d9vk/d3d9.dll'),
+            'TMNF_SIDECAR': str(home / 'runtime/bin/x87sidecar'),
         }
         ready = self.root / 'detached-ready'
         release = self.root / 'detached-release'
         code = ('import os, pathlib, sys, time\n'
-                'assert "MACTMNF_OPERATION_FD" not in os.environ\n'
+                'assert "TMNF_OPERATION_FD" not in os.environ\n'
                 'try: os.fstat(int(sys.argv[3]))\n'
                 'except OSError: pass\n'
                 'else: raise AssertionError("operation FD is still open")\n'
@@ -628,12 +628,12 @@ class Operations(unittest.TestCase):
         self.addCleanup(release.touch)
         result = self.cli(
             'run', self.prefix, '/bin/bash', '-eu', '-c',
-            '. "$7"; "$1" "$2" held "$MACTMNF_PREFIX"; '
-            'without_operation_lock "$1" -c "$4" "$5" "$6" "$MACTMNF_OPERATION_FD" '
+            '. "$7"; "$1" "$2" held "$TMNF_PREFIX"; '
+            'without_operation_lock "$1" -c "$4" "$5" "$6" "$TMNF_OPERATION_FD" '
             '</dev/null >/dev/null 2>&1; '
             'while [ ! -f "$5" ]; do sleep 0.01; done',
             'fixture', sys.executable, SCRIPT, self.prefix, code, ready, release,
-            ROOT / 'lib/common.sh', env=env)
+            ROOT / 'src/shell/lib/common.sh', env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(ready.exists())
         self.assertFalse(release.exists())

@@ -9,19 +9,19 @@ import time
 import unittest
 from unittest import mock
 
-from lib import app_launch
+from tmnf.app import app_launch
 
-SCRIPT = Path(__file__).resolve().parents[1] / 'lib/app_launch.py'
+SCRIPT = Path(__file__).resolve().parents[1] / 'src/python/tmnf/app/app_launch.py'
 
 
 class AppLaunch(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix='mactmnf-app-launch-')
+        temporary = tempfile.TemporaryDirectory(prefix='tmnf-app-launch-')
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         self.home = self.root / 'home'
         self.home.mkdir()
-        self.log = self.home / 'Library/Logs/MacTMNF/play.log'
+        self.log = self.home / 'Library/Logs/TMNF/play.log'
         self.launcher = self.root / "launcher with 'quotes;$(false)"
         self.marker = self.root / 'launched'
         self.env = dict(os.environ, HOME=str(self.home), PYTHONDONTWRITEBYTECODE='1',
@@ -170,14 +170,14 @@ class AppLaunch(unittest.TestCase):
         self.assertEqual(self.log.read_bytes(), b'preserve')
 
     def test_unsafe_paths_and_parents_create_nothing(self):
-        outside = '/Users/mactmnf-app-launch-forbidden/logs/play.log'
+        outside = '/Users/tmnf-app-launch-forbidden/logs/play.log'
         for path in ('relative/play.log', str(self.root) + '/../escape/play.log', outside):
             with self.subTest(path=path):
                 self.assertEqual(self.cli(log=path).returncode, 1)
         self.assertFalse(Path(outside).parent.exists())
         alias = self.home / 'alias'
         alias.symlink_to('/Users')
-        self.assertEqual(self.cli(log=alias / 'mactmnf-app-launch-forbidden/play.log').returncode, 1)
+        self.assertEqual(self.cli(log=alias / 'tmnf-app-launch-forbidden/play.log').returncode, 1)
         public = self.home / 'public'
         public.mkdir()
         public.chmod(0o777)

@@ -25,7 +25,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[4]
 PIN = '36b6a2cf679fb395f668a917b76537190e212d9c'
 PATCH = 'patches/wine/0010-winhttp-report-certificate-errors.patch'
 PATCHES = (PATCH, 'patches/wine/0011-winhttp-preserve-unignored-certificate-errors.patch')

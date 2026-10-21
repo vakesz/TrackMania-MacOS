@@ -1,7 +1,7 @@
 /* Synthetic identity regression tests. No case-sensitive filesystem is needed.
  * Include the actual comparison without running the launch supervisor. */
 #define wmain session_main
-#include "../src/session.c"
+#include "../src/c/session.c"
 #undef wmain
 
 #define CHECK(name, condition) do { \

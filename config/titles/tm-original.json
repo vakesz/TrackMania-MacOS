@@ -1,0 +1,22 @@
+{
+  "id": "tm-original",
+  "name": "TrackMania Original",
+  "short_name": "TMO",
+  "engine": "tmf-classic",
+  "installer": "disk-image",
+  "status": "provisional",
+  "prefix_subdir": "TMNF/Original",
+  "prefix_marker": "tm-original:1",
+  "app_name": "TrackMania Original.app",
+  "settings_app_name": "TrackMania Original Settings.app",
+  "bundle_id_game": "local.tmnf.tm-original.game",
+  "bundle_id_settings": "local.tmnf.tm-original.settings",
+  "game_dir_name": "TrackMania",
+  "game_exe": "TrackMania.exe",
+  "launcher_exe": "TrackManiaLauncher.exe",
+  "save_dirs": ["TrackMania"],
+  "needs_directx": true,
+  "needs_tmloader": false,
+  "cache_installer": null,
+  "notes": "Provisional pending user-supplied retail disk image (2003). Installer type, exe names and DirectX generation TBD. No keys stored."
+}

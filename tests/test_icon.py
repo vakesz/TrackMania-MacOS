@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from lib import app_icon
+from tmnf.app import app_icon
 
 ROOT = Path(__file__).resolve().parents[1]
 RAW, RVA = 0x200, 0x1000
@@ -124,7 +124,7 @@ class IconResources(unittest.TestCase):
             for data, message in ((b'not a PE', 'could not build icon'), (no_icons, 'no icons found')):
                 with self.subTest(message=message):
                     exe.write_bytes(data)
-                    result = subprocess.run([sys.executable, str(ROOT / 'lib/app_icon.py'), str(exe), str(output)],
+                    result = subprocess.run([sys.executable, str(ROOT / 'src/python/tmnf/app/app_icon.py'), str(exe), str(output)],
                                             capture_output=True, text=True, check=False)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn(message, result.stderr)
@@ -138,7 +138,7 @@ class IconResources(unittest.TestCase):
             with patch.object(sys, 'argv', ['app_icon.py', str(exe), str(output)]), \
                     patch('subprocess.run', side_effect=subprocess.CalledProcessError(1, 'sips')), \
                     self.assertRaisesRegex(SystemExit, 'could not build icon'):
-                runpy.run_path(str(ROOT / 'lib/app_icon.py'), run_name='__main__')
+                runpy.run_path(str(ROOT / 'src/python/tmnf/app/app_icon.py'), run_name='__main__')
             self.assertFalse(output.exists())
 
     def test_converts_once_and_resizes_once_per_missing_size(self):

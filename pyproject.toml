@@ -1,0 +1,30 @@
+# Python tooling: pytest for tests, ruff for lint. The release version lives
+# in VERSION; [project] version mirrors it (tests/test_project.py enforces
+# the sync). This repo is not pip-installed -- [tool.uv] package = false --
+# the .app bundles the scripts directly. Resolve with `uv lock`, run with
+# `uv run --frozen --group <name> ...`.
+[project]
+name = "trackmania-mac"
+version = "0.3.0"
+description = "TrackMania for Apple Silicon"
+requires-python = ">=3.9"
+
+[dependency-groups]
+test = ["pytest>=8"]
+lint = ["ruff>=0.17"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+# uv/pytest do not put the checkout on sys.path like `python -m` does.
+pythonpath = ["src/python"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

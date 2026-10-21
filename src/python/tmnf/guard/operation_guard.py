@@ -1,6 +1,6 @@
 """Serialize prefix operations without starting Wine.
 
-The shell must verify `held PREFIX`, then close MACTMNF_OPERATION_FD and
+The shell must verify `held PREFIX`, then close TMNF_OPERATION_FD and
 unset the token in each subprocess that execs wine or wineserver. Otherwise
 a detached server can retain the operation lock after the shell exits.
 """
@@ -23,15 +23,15 @@ except ImportError:
     from managed_paths import safe_path
 
 
-TOKEN = 'MACTMNF_OPERATION_FD'
-APP_TOKEN = 'MACTMNF_APP_OPERATION_FD'
+TOKEN = 'TMNF_OPERATION_FD'
+APP_TOKEN = 'TMNF_APP_OPERATION_FD'
 WINE_SERVER_ROOT = Path('/tmp')
 INTERRUPT_GRACE = 2.0
 
 
 def operation_lock_path(prefix):
     prefix = safe_path(str(prefix))
-    return prefix.with_name(f'.{prefix.name}.mactmnf-operation.lock')
+    return prefix.with_name(f'.{prefix.name}.tmnf-operation.lock')
 
 
 def app_lock_path(create=False):
@@ -44,7 +44,7 @@ def app_lock_path(create=False):
     home = home.resolve(strict=True)
     fd = _open_directory(home)
     try:
-        for name in ('Library', 'Caches', 'MacTMNF'):
+        for name in ('Library', 'Caches', 'TMNF'):
             if create:
                 try:
                     os.mkdir(name, mode=0o700, dir_fd=fd)
@@ -55,7 +55,7 @@ def app_lock_path(create=False):
             fd = child
     finally:
         os.close(fd)
-    return home / 'Library/Caches/MacTMNF/.app-install.lock'
+    return home / 'Library/Caches/TMNF/.app-install.lock'
 
 
 def _open_directory(path, dir_fd=None, private=False):

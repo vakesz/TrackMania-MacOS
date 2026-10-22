@@ -17,6 +17,9 @@
   "save_dirs": ["TrackMania"],
   "needs_directx": true,
   "needs_tmloader": false,
-  "cache_installer": null,
-  "notes": "Provisional pending user-supplied retail disk image (2003). Installer type, exe names and DirectX generation TBD. No keys stored."
+  "source_url": null,
+  "source_sha256": null,
+  "source_size": null,
+  "requires_serial": false,
+  "notes": "Use the CLI import command to inspect a retail 2003 disk image, then run its copied Setup.exe interactively in the managed prefix. Serial keys are entered in the game and never stored."
 }

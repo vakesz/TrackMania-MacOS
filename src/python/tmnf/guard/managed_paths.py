@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import pwd
+import re
 from pathlib import Path
 import sys
 
@@ -31,11 +32,13 @@ def title_markers():
     if _TITLE_MARKERS is None:
         markers = set()
         titles = Path(__file__).resolve().parents[4] / 'config' / 'titles'
-        try:
-            entries = titles.glob('*.json')
-        except OSError:
-            entries = ()
-        for path in entries:
+        if not titles.is_dir():
+            # Never an empty-set fallback that would accept everything; the
+            # operator learns why instead of a mystery "Unrecognized prefix".
+            raise RuntimeError(
+                'The title registry is missing at {}. The installed launcher '
+                'payload or checkout is incomplete.'.format(titles))
+        for path in sorted(titles.glob('*.json')):
             try:
                 data = json.loads(path.read_text())
             except (OSError, ValueError):
@@ -45,6 +48,23 @@ def title_markers():
                 markers.add(marker)
         _TITLE_MARKERS = markers
     return _TITLE_MARKERS
+
+
+def _current_title(explicit=None):
+    """The title whose prefix is checked; configuration travels with the entry."""
+    title = explicit if explicit is not None else os.environ.get('TMNF_TITLE') or 'tmnf'
+    if not re.fullmatch(r'[A-Za-z0-9_-]+', title or ''):
+        raise ValueError('Unsafe title identifier: {!r}'.format(title))
+    return title
+
+
+def _check_owned_directory(path):
+    """A prefix another account controls is not managed by this one."""
+    stat = path.stat()
+    if stat.st_uid != os.getuid():
+        raise ValueError(
+            'Prefix {} is owned by uid {}; refusing to treat it as managed'.format(
+                path, stat.st_uid))
 
 
 def check_layout(values, apps=False):
@@ -59,14 +79,18 @@ def check_layout(values, apps=False):
                 raise ValueError('Managed paths overlap: {} and {}'.format(left, right))
 
 
-def check_prefix(value, creating=False):
+def check_prefix(value, creating=False, title=None):
+    """Accept exactly this title's marker; cross-title markers never pass."""
     path = safe_path(value)
     if not path.exists():
         if creating:
             return
         raise ValueError('Wine prefix is missing: {}'.format(path))
+
     if not path.is_dir():
         raise ValueError('Wine prefix is not a directory: {}'.format(path))
+    _check_owned_directory(path)
+    title = _current_title(title)
     marker = path / '.tmnf-prefix'
     initializing = path / '.tmnf-initializing'
     if initializing.is_symlink() or (initializing.exists() and not initializing.is_file()):
@@ -75,13 +99,27 @@ def check_prefix(value, creating=False):
         raise ValueError('Prefix ownership marker must not be a symlink')
     if marker.is_file():
         identity = marker.read_text().strip()
+        expected = '{}:1'.format(title)
+        if identity == expected:
+            return
         if identity in title_markers():
-            return
+            raise ValueError(
+                'Prefix {} belongs to another TrackMania title ({}, not {}); '
+                'each title keeps its own prefix'.format(path, identity, expected))
         # Shipped TMNF installations used an empty marker. Require Wine layout
-        # or the existing interrupted-initialization marker before accepting it.
-        if not identity and any((path / name).is_file() and not (path / name).is_symlink()
-                                for name in ('system.reg', '.tmnf-initializing')):
-            return
+        # or the interrupted-initialization marker before accepting it, and only
+        # for the reference title whose installed base that compatibility keeps.
+        if not identity:
+            if title != 'tmnf':
+                raise ValueError(
+                    'Prefix {} has no ownership marker; title {} requires {}'.format(
+                        path, title, expected))
+            if any((path / name).is_file() and not (path / name).is_symlink()
+                   for name in ('system.reg', '.tmnf-initializing')):
+                return
+            raise ValueError(
+                'Prefix {} carries a legacy empty marker and no Wine layout; '
+                'choose a fresh TMNF_PREFIX'.format(path))
         raise ValueError('Unrecognized prefix ownership: {}'.format(path))
     if creating and not any(path.iterdir()):
         return
@@ -116,6 +154,30 @@ def profile_documents(prefix, links=False):
                     yield documents
 
 
+def save_dir_names():
+    """Save-directory names, joined from the authoritative title registry.
+
+    The registry's save_dirs entries are the source of truth; config drift in
+    either direction is a test failure, not a silent desync of the guards.
+    """
+    names = set()
+    titles = Path(__file__).resolve().parents[4] / 'config' / 'titles'
+    if titles.is_dir():
+        for path in sorted(titles.glob('*.json')):
+            try:
+                data = json.loads(path.read_text())
+            except (OSError, ValueError):
+                continue
+            for item in data.get('save_dirs') or ():
+                if isinstance(item, str) and item and '/' not in item:
+                    names.add(item)
+    # Hard minimum for any prefix whose registry is unreadable: a legacy
+    # uninstall must never quietly skip a known save family.
+    names.update(('TmForever', 'TmUnited', 'TrackMania', 'TrackMania United',
+                  'ManiaPlanet', 'Canyon', 'Turbo', 'Config', 'Replays', 'Tracks'))
+    return tuple(sorted(names))
+
+
 def check_uninstall(prefix, userdata):
     """Read-only guard for known profile folders, not custom Shell Folders registry paths.
 
@@ -127,13 +189,27 @@ def check_uninstall(prefix, userdata):
     check_prefix(str(prefix))
     prefix = Path(prefix).resolve()
 
-    def inspect(path, ancestors=()):
+    max_depth = 32
+    max_entries = 200_000
+    state = {'entries': 0}
+
+    def inspect(path, ancestors=(), depth=0):
+        state['entries'] += 1
+        if state['entries'] > max_entries:
+            raise RuntimeError(
+                'The save tree is too large to verify safely (>{}) before removal; '
+                'back up user files manually and remove the prefix yourself'.format(
+                    max_entries))
+        if depth > max_depth:
+            raise RuntimeError(
+                'The save tree nests deeper than {} levels; back up user files '
+                'manually before removal'.format(max_depth))
         resolved = path.resolve(strict=True)
         if resolved in ancestors:
             raise ValueError('Cyclic save location: {}'.format(path))
         if resolved.is_dir():
             for child in path.iterdir():
-                inspect(child, ancestors + (resolved,))
+                inspect(child, ancestors + (resolved,), depth + 1)
         elif prefix in resolved.parents:
             raise ValueError('Back up user files before uninstalling: {}'.format(path))
 
@@ -142,8 +218,7 @@ def check_uninstall(prefix, userdata):
             inspect(documents)
         else:
             # Outside Documents may contain a save-folder alias back into Wine.
-            for name in ('TmForever', 'TmUnited', 'TrackMania', 'TrackMania United',
-                         'ManiaPlanet', 'Canyon', 'Turbo', 'Config', 'Replays', 'Tracks'):
+            for name in save_dir_names():
                 child = documents / name
                 if os.path.lexists(child):
                     inspect(child)

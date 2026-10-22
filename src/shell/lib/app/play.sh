@@ -58,7 +58,7 @@ play_target() {
   cd "$GAME_DIR" || die "Cannot enter game directory: $GAME_DIR"
   # Keep the operation descriptor in the host supervisor. Its child processes
   # close inherited descriptors, so neither Wine nor a detached server owns it.
-  exec env \
+  exec /usr/bin/env \
     WINEPREFIX="$TMNF_PREFIX" \
     WINEDEBUG="${WINEDEBUG:--all}" \
     WINEDLLOVERRIDES="$overrides" \

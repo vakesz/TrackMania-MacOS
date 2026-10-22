@@ -38,6 +38,7 @@ play configure doctor stop app setup:
 
 check:
 	bash -n $(SHELL_SOURCES) tests/test-cli.sh
+	@command -v shellcheck >/dev/null 2>&1 || (echo 'error: shellcheck is required (brew install shellcheck on macOS)' >&2; exit 1)
 	shellcheck $(SHELL_SOURCES) tests/test-cli.sh
 	@command -v uv >/dev/null 2>&1 || (echo 'error: uv is required (https://docs.astral.sh/uv/)' >&2; exit 1)
 	uv run --frozen --group lint ruff check src tests

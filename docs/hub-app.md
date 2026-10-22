@@ -29,20 +29,22 @@ then starts the normal CLI/installer in a fresh process with `TMNF_TITLE` set
 before title-dependent paths are calculated. This prevents one title from using
 another title's prefix or game path.
 
-The supported TMNF actions are install/repair, update and installing the two app
-wrappers. Provisional retail titles expose shared-platform setup and, once the
-prefix exists, a local disk-image/setup import action. Their installer chain and
-game qualification remain intentionally incomplete.
+Nations Forever exposes install/repair, update and app-wrapper actions. United
+Forever and Canyon can also use their pinned official installers. Original can
+be installed from user-owned retail media, while Turbo can copy an existing
+Steam game folder. These other titles remain provisional: installation does not
+mean their renderer, DRM, online services or complete gameplay have been
+qualified under Wine.
 
 ## Titles
 
-| Title | Install | Status |
+| Title | Install source | Status |
 | --- | --- | --- |
 | Nations Forever (`tmnf`) | free Nadeo download | supported |
-| United Forever (`tmu`) | user disk image | provisional |
-| Original (`tm-original`) | user disk image | provisional |
-| TrackMania 2 Canyon (`tm-canyon`) | user disk image | provisional |
-| Turbo (`tm-turbo`) | user disk image | provisional |
+| United Forever (`tmu`) | pinned official retail installer; asks for a serial key | provisional |
+| Original (`tm-original`) | user-owned retail disk image or setup executable | provisional |
+| TrackMania 2 Canyon (`tm-canyon`) | pinned official ManiaPlanet trial | provisional |
+| Turbo (`tm-turbo`) | existing Steam game folder | provisional |
 
 `config/titles/*.json` is the sole authority for title paths, app names, bundle
 identifiers and prefix markers. The shell reads the registry; Swift only renders
@@ -50,10 +52,20 @@ the machine-readable snapshot.
 
 ## Retail import
 
-The native app uses macOS's file picker for a `.iso`, `.dmg` or `.exe`, then
-passes its absolute path to the backend. Disk images mount read-only for
-inventory. Serial keys are entered interactively by the retail installer and are
-never stored by this project.
+The native app uses macOS's file picker for a retail `Setup.exe`, or a folder
+for a Steam copy, then passes its absolute path to the backend. The retail
+installer runs interactively in that title's managed prefix; choose its game
+install location and the hub checks for the expected executable when setup
+closes. To use a `.iso` or `.dmg`, run the CLI import command to mount it
+read-only and inspect its contents, copy `Setup.exe` to a stable location, then
+select that file in the hub. Steam copies are copied into the managed prefix
+without following symlinks. Serial keys are entered in the game and are never
+stored by this project.
+
+The hub keeps the sequence explicit: it offers shared-platform setup until the
+runtime, prefix, DirectX and renderer are ready; it then offers import. Once
+the game files are present, installing the two macOS app wrappers becomes the
+next primary action.
 
 ## Packaging and signing
 

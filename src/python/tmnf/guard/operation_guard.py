@@ -6,6 +6,7 @@ a detached server can retain the operation lock after the shell exits.
 """
 
 import argparse
+from contextlib import closing
 import errno
 import fcntl
 import os
@@ -92,6 +93,17 @@ def _check_identity(fd, path, dir_fd=None):
     _check_file(named, path)
     if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
         raise ValueError(f'Lock file identity changed: {path}')
+
+
+def _check_dir_identity(fd, path, dir_fd=None):
+    opened = os.fstat(fd)
+    try:
+        named = os.stat(path, dir_fd=dir_fd, follow_symlinks=False)
+    except FileNotFoundError as error:
+        raise ValueError(f'Lock directory disappeared: {path}') from error
+    if (not stat.S_ISDIR(opened.st_mode) or not stat.S_ISDIR(named.st_mode) or
+            (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)):
+        raise ValueError(f'Lock directory identity changed: {path}')
 
 
 def _open_lock(path, dir_fd, create=False):
@@ -216,6 +228,14 @@ def check_inactive(prefix):
             else:
                 fcntl.lockf(fd, fcntl.LOCK_UN, 1, 0, os.SEEK_SET)
             _check_identity(fd, path)
+            # The probe held directory FDs for its whole span, so re-verify
+            # the private chain survived the Wine create_server_dir layout,
+            # which may legitimately remove and recreate its server directory
+            # between our open and the probe.
+            _check_dir_identity(directories[-1], path.parent.name,
+                                directories[-2])
+            _check_dir_identity(directories[-2], path.parents[1].name,
+                                directories[-3])
         finally:
             os.close(fd)
     except FileNotFoundError:
@@ -231,31 +251,34 @@ def _signal_group(pid, signum):
         os.killpg(pid, signum)
     except ProcessLookupError:
         pass
-    except PermissionError as error:
-        if error.errno != errno.EPERM:
-            raise
-        # Darwin can return EPERM for a zombie-only group. Observe exit without
-        # wait/poll: reaping here would let the PGID be reused before SIGKILL.
-        queue = select.kqueue()
+    except PermissionError as signal_error:
+        # Darwin can return EPERM for a zombie-only group. Cleanup must never
+        # die here: observe exit without wait/poll (reaping here would let
+        # the PGID be reused before SIGKILL). A live leader is not safe to
+        # ignore; propagate the original signal failure if exit is unproven.
         try:
-            event = select.kevent(pid, filter=select.KQ_FILTER_PROC,
-                                  flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
-                                  fflags=select.KQ_NOTE_EXIT)
-            try:
-                events = queue.control([event], 1, 0)
-            except ProcessLookupError:
-                # Registration can no longer find an already-exited child.
-                return
-            for event in events:
-                if event.flags & select.KQ_EV_ERROR:
-                    if event.data == errno.ESRCH:
-                        return
-                    raise OSError(event.data, os.strerror(event.data))
-                if event.fflags & select.KQ_NOTE_EXIT:
+            with closing(select.kqueue()) as queue:
+                event = select.kevent(pid, filter=select.KQ_FILTER_PROC,
+                                      flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                                      fflags=select.KQ_NOTE_EXIT)
+                try:
+                    events = queue.control([event], 1, 0)
+                except ProcessLookupError:
                     return
-        finally:
-            queue.close()
-        raise
+                except OSError as error:
+                    if error.errno == errno.ESRCH:
+                        return
+                    raise signal_error from error
+                for kevent in events:
+                    if kevent.flags & select.KQ_EV_ERROR:
+                        if kevent.data == errno.ESRCH:
+                            return
+                        raise signal_error
+                    if kevent.fflags & select.KQ_NOTE_EXIT:
+                        return
+                raise signal_error
+        except (ValueError, RuntimeError):
+            raise signal_error
 
 
 def run(prefix, command):
@@ -308,7 +331,12 @@ def _run(command, tokens, grace=INTERRUPT_GRACE):
                 while time.monotonic() < deadline:
                     time.sleep(min(0.05, max(0, deadline - time.monotonic())))
                 _signal_group(child.pid, signal.SIGKILL)
-                child.wait(timeout=INTERRUPT_GRACE)
+                try:
+                    child.wait(timeout=INTERRUPT_GRACE)
+                except subprocess.TimeoutExpired:
+                    # Best effort: the group was SIGKILLed and the interrupted
+                    # status is authoritative even if reaping is still pending.
+                    pass
                 return 128 + interrupted[0]
             # Do not reap between noticing an interruption and signalling the
             # group. If exit wins this race, there is no group cleanup to do.

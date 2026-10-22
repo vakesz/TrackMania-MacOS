@@ -78,9 +78,11 @@ def run(launcher, action, log_path):
                 if infos[index - 1] is not None:
                     logs[index - 1].replace(logs[index])
         with _open_file(path) as output:
+            # The blank separator separates entries in an appended log; a
+            # fresh log (or a rotated one) starts directly with its header.
             def record(message):
                 stamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-                output.write(('\n' + stamp + ' ' + message + '\n').encode('ascii'))
+                output.write((('\n' if output.tell() else '') + stamp + ' ' + message + '\n').encode('ascii'))
 
             interrupted, handlers = [], {}
 

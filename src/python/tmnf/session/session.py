@@ -188,9 +188,10 @@ def _cleanup(server, env, deadline, interrupted):
                     process.wait(timeout=max(0, deadline - time.monotonic()))
                 except subprocess.TimeoutExpired:
                     _log('cleanup command PID {} has not ended'.format(process.pid))
-        # Wine returns 1 for -k when there is no server. -w and the lock probe
-        # must still confirm shutdown before this can count as success.
-        if status not in ((0, 1) if option == '-k' else (0,)):
+        # Wine returns 1 for both -k and -w when no server exists in some
+        # lifestyles of the pinned runtime (documented success is 0; the
+        # lock probe below still confirms shutdown before counting success).
+        if status not in (0, 1):
             raise ValueError('wineserver {} failed with status {}'.format(option, status))
 
 
@@ -251,10 +252,16 @@ def run(prefix, wine, helper, command, watch=(), desktop=None,
                 preparation.append(['reg', 'add', r'HKCU\Software\Wine\Drivers', '/v', 'Audio',
                                     '/t', 'REG_SZ', '/d', 'coreaudio' if audio == 'on' else '', '/f'])
             if settings:
-                key = 'HKCU\\Software\\Wine\\AppDefaults\\{}\\Direct3D'.format(
-                    PureWindowsPath(command[0]).name)
-                for name, value in (('VideoPciVendorID', '0x10de'), ('VideoPciDeviceID', '0x0611')):
-                    preparation.append(['reg', 'add', key, '/v', name, '/t', 'REG_DWORD', '/d', value, '/f'])
+                # The Nvidia PCI spoof was qualified only for the TMF launcher
+                # family (TMNF and its TMU sibling share the binary). Other
+                # engines must not inherit it by coincidence.
+                basename = PureWindowsPath(command[0]).name
+                if basename in ('TmForeverLauncher.exe', 'TmForever.exe'):
+                    key = 'HKCU\\Software\\Wine\\AppDefaults\\{}\\Direct3D'.format(basename)
+                    for name, value in (('VideoPciVendorID', '0x10de'),
+                                        ('VideoPciDeviceID', '0x0611')):
+                        preparation.append(['reg', 'add', key, '/v', name,
+                                            '/t', 'REG_DWORD', '/d', value, '/f'])
             for registry_args in preparation:
                 _check_interrupt(interrupted)
                 if time.monotonic() >= startup_deadline:
@@ -266,7 +273,13 @@ def run(prefix, wine, helper, command, watch=(), desktop=None,
                 finally:
                     if process.poll() is None:
                         if not _terminate(process, time.monotonic() + cleanup_timeout):
-                            _log('preparation PID {} has not ended; prefix left running'.format(process.pid))
+                            # A Wine process that refuses to die cannot be
+                            # trusted to stop racing the next registry write
+                            # into the same prefix; stop preparation instead
+                            # of piling a second client onto it.
+                            _log('preparation PID {} has not ended; refusing to continue setup'
+                                 .format(process.pid))
+                            raise RuntimeError('Wine preparation process could not be stopped')
                 if status:
                     raise ValueError('Wine preparation failed with status {}'.format(status))
             _check_interrupt(interrupted)
@@ -304,7 +317,8 @@ def run(prefix, wine, helper, command, watch=(), desktop=None,
                         _cleanup(server, env, deadline, interrupted)
                         # Prefix shutdown can change the host exit status. The
                         # native result, not that host status, identifies game exit.
-                        _wait(helper_host, deadline, interrupted)
+                        _wait(helper_host, deadline, interrupted,
+                              'Helper has not ended after cleanup')
                         operation_guard.check_inactive(prefix)
                         _check_interrupt(interrupted)
                         if time.monotonic() >= deadline:
@@ -381,7 +395,7 @@ def main(argv=None):
         return run(args.prefix, args.wine, args.helper, args.command[1:], args.watch,
                    args.desktop, args.startup_timeout, args.cleanup_timeout, args.audio, args.settings)
     except InterruptedError as error:
-        _log(str(error))
+        _log(error.args[1] if len(error.args) > 1 else str(error))
         return 128 + error.errno
     except (TimeoutError, subprocess.TimeoutExpired) as error:
         _log(str(error))

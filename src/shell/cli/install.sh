@@ -28,6 +28,9 @@ install_rosetta() {
 # shellcheck source=src/shell/lib/install/patch.sh
 . "${TMNF_PROJECT_DIR}/src/shell/lib/install/patch.sh"
 
+TMNF_TITLE_INSTALL_KIND="$(tmnf_title_field "$TMNF_TITLE" installer)"
+TMNF_TITLE_NEEDS_PATCH="$(tmnf_title_field "$TMNF_TITLE" needs_tmloader)"
+
 main() {
   case "${1:-}" in
     ''|directx|setup) test "$#" -le 1 || die "Usage: install.sh [directx|setup]" ;;
@@ -52,20 +55,49 @@ main() {
   fi
 
   if test "${1:-}" != "setup"; then
-    install_game
+    case "$TMNF_TITLE_INSTALL_KIND" in
+      online|online-retail|online-trial)
+        install_game
+        install_directx_runtime
+        if test "$TMNF_TITLE_NEEDS_PATCH" = true; then
+          install_competition_patch
+        fi
+        ;;
+      steam-copy|disk-image)
+        die "Title $TMNF_TITLE joins an existing copy:
+run the shared platform setup, then use the hub's import action.
+  make setup
+  TMNF_TITLE=$TMNF_TITLE src/shell/cli/tmnf import /path/to/existing-game-files"
+        ;;
+    esac
+  else
+    install_directx_runtime
   fi
-  install_directx_runtime
-  if test "${1:-}" != "setup"; then
-    install_competition_patch
-  fi
+
   "${TMNF_PROJECT_DIR}/src/shell/cli/tmnf" d9vk
   if test "${1:-}" = "setup"; then
     say "Platform setup complete (runtime, prefix, DirectX, D9VK)."
     say "Provide the retail game image, then run src/shell/cli/tmnf doctor to verify."
     return
   fi
-  "${TMNF_PROJECT_DIR}/src/shell/cli/tmnf" app
-  "${TMNF_PROJECT_DIR}/src/shell/cli/tmnf" doctor
+
+  case "$TMNF_TITLE_INSTALL_KIND" in
+    online|online-retail|online-trial)
+      "${TMNF_PROJECT_DIR}/src/shell/cli/tmnf" app
+      "${TMNF_PROJECT_DIR}/src/shell/cli/tmnf" doctor
+      ;;
+    *)
+      say "Platform setup complete (runtime, prefix, DirectX, D9VK)."
+      say "Next, provide the existing game files:"
+      if test "$TMNF_TITLE_INSTALL_KIND" = steam-copy; then
+        say "  TMNF_TITLE=$TMNF_TITLE src/shell/cli/tmnf import /path/to/steamapps/common/game-folder"
+      else
+        say "  TMNF_TITLE=$TMNF_TITLE src/shell/cli/tmnf import /path/to/retail-setup.dmg"
+      fi
+      say "Imported installs then finish with: TMNF_TITLE=$TMNF_TITLE src/shell/cli/tmnf app"
+      return
+      ;;
+  esac
   say "Run src/shell/cli/tmnf play to start the game."
 }
 

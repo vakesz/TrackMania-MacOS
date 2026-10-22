@@ -5,6 +5,23 @@ struct HubCommandResult: Sendable {
     let output: String
 }
 
+private final class HubOutputCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+
+    func append(_ chunk: Data) {
+        lock.lock()
+        data.append(chunk)
+        lock.unlock()
+    }
+
+    func value() -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return data
+    }
+}
+
 enum HubBackendError: LocalizedError {
     case launcherMissing(URL)
     case commandFailed(HubCommandResult)
@@ -49,11 +66,11 @@ final class HubBackend: Sendable {
     }
 
     func snapshot() async throws -> HubSnapshot {
-        let result = try await run(arguments: ["hub", "snapshot"])
+        let result = try await run(arguments: ["hub", "snapshot"], onOutput: { _ in })
         guard result.status == 0 else { throw HubBackendError.commandFailed(result) }
         do {
             let snapshot = try JSONDecoder().decode(HubSnapshot.self, from: Data(result.output.utf8))
-            guard snapshot.schema == 1 else {
+            guard snapshot.schema == 2 else {
                 throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Unknown snapshot schema"))
             }
             return snapshot
@@ -62,33 +79,47 @@ final class HubBackend: Sendable {
         }
     }
 
-    func run(titleID: String, actionID: String, source: URL? = nil) async throws -> HubCommandResult {
-        let result = try await run(arguments: Self.runArguments(titleID: titleID, actionID: actionID, source: source))
+    func run(titleID: String, actionID: String, source: URL? = nil,
+             onOutput: @escaping @Sendable (String) -> Void = { _ in }) async throws -> HubCommandResult {
+        let result = try await run(
+            arguments: Self.runArguments(titleID: titleID, actionID: actionID, source: source),
+            onOutput: onOutput)
         guard result.status == 0 else { throw HubBackendError.commandFailed(result) }
         return result
     }
 
-    private func run(arguments: [String]) async throws -> HubCommandResult {
+    private func run(arguments: [String], onOutput: @escaping @Sendable (String) -> Void) async throws -> HubCommandResult {
         let launcher = launcherURL
         return try await Task.detached(priority: .userInitiated) {
-            try Self.execute(launcher: launcher, arguments: arguments)
+            try Self.execute(launcher: launcher, arguments: arguments, onOutput: onOutput)
         }.value
     }
 
-    static func execute(launcher: URL, arguments: [String]) throws -> HubCommandResult {
+    static func execute(launcher: URL, arguments: [String],
+                        onOutput: @escaping @Sendable (String) -> Void = { _ in }) throws -> HubCommandResult {
         let process = Process()
         let output = Pipe()
+        let collector = HubOutputCollector()
         process.executableURL = launcher
         process.arguments = arguments
         process.currentDirectoryURL = launcher.deletingLastPathComponent()
         process.standardOutput = output
         process.standardError = output
+        output.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else { return }
+            collector.append(chunk)
+            onOutput(String(decoding: chunk, as: UTF8.self))
+        }
         try process.run()
-        // Drain before waiting. Waiting first can deadlock once an installer
-        // fills the pipe buffer with build/download diagnostics.
-        let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
+        output.fileHandleForReading.readabilityHandler = nil
+        let remaining = output.fileHandleForReading.readDataToEndOfFile()
+        if !remaining.isEmpty {
+            collector.append(remaining)
+            onOutput(String(decoding: remaining, as: UTF8.self))
+        }
         return HubCommandResult(status: process.terminationStatus,
-                                output: String(decoding: data, as: UTF8.self))
+                                output: String(decoding: collector.value(), as: UTF8.self))
     }
 }

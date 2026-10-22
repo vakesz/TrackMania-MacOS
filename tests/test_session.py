@@ -304,13 +304,14 @@ class SessionTests(unittest.TestCase):
         for options, count in ((['--audio', 'off'], 1), (['--settings'], 2)):
             with self.subTest(options=options):
                 (self.home / 'wine.jsonl').unlink(missing_ok=True)
-                result = self.cli(options=options + ['--startup-timeout', '3'])
+                result = self.cli(options=options + ['--startup-timeout', '3'],
+                                  target=[r'C:\Games\TmForever.exe'])
                 self.assertEqual(result.returncode, 0, result.stderr)
                 calls = self.wine_calls()
                 self.assertEqual(len(calls), count + 1)
                 if count == 2:
                     self.assertEqual(calls[0]['args'][2],
-                                     'HKCU\\Software\\Wine\\AppDefaults\\' + self.exe.name + '\\Direct3D')
+                                     r'HKCU\Software\Wine\AppDefaults\TmForever.exe\Direct3D')
 
     def test_hung_initial_registry_command_never_starts_helper_or_cleanup(self):
         unrelated = self.spawn([sys.executable, '-c', 'import time; time.sleep(30)'])
@@ -330,6 +331,7 @@ class SessionTests(unittest.TestCase):
             with self.subTest(index=index):
                 (self.home / 'wine.jsonl').unlink(missing_ok=True)
                 result = self.cli(options=['--audio', 'on', '--settings', '--startup-timeout', '3'],
+                                  target=[r'C:\Games\TmForever.exe'],
                                   FAKE_REG_FAIL_AT=str(index))
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn('preparation', result.stderr)
@@ -373,7 +375,8 @@ class SessionTests(unittest.TestCase):
                             mock.patch.object(session, '_wait', side_effect=prepare_wait) as wait, \
                             mock.patch.object(session, 'read_result', return_value={'state': 'starting'}), \
                             mock.patch.object(session, '_log'):
-                        args = self.command(options=['--audio', 'on', '--settings'], guarded=False)[3:]
+                        args = self.command(options=['--audio', 'on', '--settings'], guarded=False,
+                                            target=[r'C:\Games\TmForever.exe'])[3:]
                         self.assertEqual(session.main(args), 124)
                     self.assertEqual([call.args[1] for call in wait.call_args_list], [101.5] * 3)
                     self.assertEqual(len(popen.call_args_list), 4)
@@ -542,7 +545,10 @@ class SessionTests(unittest.TestCase):
                 os.close(fd)
 
     def test_cleanup_errors_and_absent_server_status(self):
-        for k, w, expected in (('1', '0', 0), ('2', '0', 2), ('0', '1', 2)):
+        # -k and -w both return 1 when no server exists in the pinned runtime;
+        # check_inactive below is the authority on shutdown, so only statuses
+        # beyond (0, 1) count as failures.
+        for k, w, expected in (('1', '0', 0), ('2', '0', 2), ('0', '1', 0), ('0', '2', 2)):
             with self.subTest(k=k, w=w):
                 result = self.cli(FAKE_K_STATUS=k, FAKE_W_STATUS=w)
                 self.assertEqual(result.returncode, expected, result.stderr)

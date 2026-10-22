@@ -9,7 +9,7 @@ stage_launcher_payload() {
   mkdir -p "${destination}/src/shell" "${destination}/src/python/tmnf" "${destination}/config"
   cp -R "${project}/src/shell/cli" "${project}/src/shell/lib" "${destination}/src/shell/"
   cp "${project}/src/python/tmnf/__init__.py" "${destination}/src/python/tmnf/"
-  for module in app guard install session; do
+  for module in app guard hub install session; do
     mkdir -p "${destination}/src/python/tmnf/${module}"
     cp "${project}/src/python/tmnf/${module}/__init__.py" \
       "${project}/src/python/tmnf/${module}/"*.py \

@@ -3,7 +3,7 @@
   "name": "TrackMania Turbo",
   "short_name": "TMT",
   "engine": "turbo",
-  "installer": "disk-image",
+  "installer": "steam-copy",
   "status": "provisional",
   "prefix_subdir": "TMNF/Turbo",
   "prefix_marker": "tm-turbo:1",
@@ -17,6 +17,9 @@
   "save_dirs": ["TrackMania Turbo", "Turbo"],
   "needs_directx": true,
   "needs_tmloader": false,
-  "cache_installer": null,
-  "notes": "Provisional newer-engine title (2016). Likely DX11/64-bit and Ubisoft Connect/Steam DRM; needs separate Wine qualification once user image is provided."
+  "source_url": null,
+  "source_sha256": null,
+  "source_size": null,
+  "requires_serial": false,
+  "notes": "Copy game files from an existing TrackMania Turbo Steam install (pick its steamapps/common/TrackMania Turbo folder). The game is 64-bit Steam DRM; expect extra qualification before it plays under the 32-bit runtime."
 }

@@ -24,7 +24,7 @@ Commands:
   setup        Install runtime, prefix and DirectX without the game
   titles       List supported TrackMania titles and their status
   hub          Native-hub backend (snapshot or run)
-  import       Mount a retail disk image for the selected title (TMNF_TITLE)
+  import       Run a retail setup or copy a Steam game folder (TMNF_TITLE)
   uninstall    Remove the TMNF prefix after confirmation
   help         Show this help
 EOF
@@ -53,7 +53,9 @@ case "$command" in
     guard_prefix_operation "${TMNF_PROJECT_DIR}/src/shell/cli/tmnf" "$@"
     ;;
   hub|titles)
-    validate_launch_options
+    # Snapshot and listing must work even with an unrelated launch-option env
+    # var mistyped; launch options only matter for play paths below.
+    tmnf_title_is_known "$TMNF_TITLE" || die "Unknown title: $TMNF_TITLE"
     ;;
 esac
 case "$command" in
@@ -70,7 +72,7 @@ case "$command" in
   app) install_app ;;
   titles) hub_list_titles ;;
   hub) hub_command "${@:2}" ;;
-  import) import_disk_image "${2:-}" ;;
+  import) import_source "${2:-}" ;;
   uninstall) uninstall_game "${2:-}" ;;
   help|-h|--help) usage ;;
   *) usage >&2; die "unknown command: $command" ;;

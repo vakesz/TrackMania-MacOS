@@ -9,6 +9,7 @@ from pathlib import Path
 import signal
 import ssl
 import subprocess
+import sys
 import tempfile
 import threading
 
@@ -45,9 +46,14 @@ class Server(ThreadingHTTPServer):
             self.connections += 1
             secured.test_id = self.connections
             return secured, address
-        except (OSError, ValueError):
+        except (OSError, ValueError) as error:
             connection.close()
-            raise
+            # serve_forever only guards OSError, and a traceback per failed
+            # handshake would drown the probe log, so surface one line at most.
+            raise OSError(str(error)) from error
+
+    def handle_error(self, request, client_address):
+        print('warning: TLS test server dropped a connection', file=sys.stderr)
 
 
 @contextmanager
@@ -72,7 +78,6 @@ def serve(fixtures=FIXTURES):
 
 def generate_fixtures(destination):
     """Generate PUBLIC TEST KEYS with openssl; discard CA signing keys afterward."""
-    destination.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="mactmnf-test-ca-") as directory:
         work = Path(directory)
 
@@ -138,8 +143,19 @@ authorityKeyIdentifier = keyid
                     "-extensions", "hostname" if "hostname" in name else "server",
                     "-startdate", "20200101000000Z", "-enddate",
                     "20210101000000Z" if "expired" in name else "20400101000000Z")
-        for name in ("ca.pem", "untrusted-ca.pem", "server.key", *(case + ".pem" for case in CASES)):
-            (destination / name).write_bytes((work / name).read_bytes())
+        # Publish only after openssl succeeded, replacing each file atomically,
+        # so a failed regeneration leaves the existing fixtures untouched
+        # instead of mixing half old and half new files.
+        destination.mkdir(parents=True, exist_ok=True)
+        try:
+            for name in ("ca.pem", "untrusted-ca.pem", "server.key", *(case + ".pem" for case in CASES)):
+                staging = destination / (name + ".partial")
+                staging.write_bytes((work / name).read_bytes())
+                staging.replace(destination / name)
+        except BaseException:
+            for leftover in destination.glob('*.partial'):
+                leftover.unlink(missing_ok=True)
+            raise
 
 
 def main():

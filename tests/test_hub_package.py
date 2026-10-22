@@ -42,6 +42,9 @@ class HubPackageTests(unittest.TestCase):
         self.assertTrue((launcher / "config/titles/tmnf.json").is_file())
         bundled_python = launcher / "python/bin/python3"
         self.assertTrue(bundled_python.is_file())
+        self.assertFalse((launcher / "python/include").exists())
+        self.assertFalse((launcher / "python/lib/python3.12/site-packages").exists())
+        self.assertFalse(list((launcher / "python").rglob("__pycache__")))
         self.assertFalse((launcher / "src/shell/lib/app/hub.sh").exists())
         self.assertFalse((launcher / "src/python/tmnf/config.py").exists())
 
@@ -84,11 +87,20 @@ class HubPackageTests(unittest.TestCase):
             fake_python = tools / "python3"
             fake_python.write_text("#!/bin/sh\nexit 97\n")
             fake_python.chmod(0o755)
+            bundled_check = subprocess.run(
+                [str(bundled_python), "-c", "import ssl, urllib.request, zipfile"],
+                text=True, capture_output=True, timeout=20,
+                env={"HOME": str(home), "PATH": str(tools),
+                     "PYTHONDONTWRITEBYTECODE": "1"})
+            self.assertEqual(bundled_check.returncode, 0,
+                             bundled_check.stdout + bundled_check.stderr)
             result = subprocess.run([str(launcher / "src/shell/cli/tmnf"), "hub", "snapshot"],
                                     cwd=launcher, text=True, capture_output=True, timeout=20,
                                     env={"HOME": str(home), "PATH": str(tools)})
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(json.loads(result.stdout)["schema"], 1)
+            self.assertEqual(json.loads(result.stdout)["schema"], 2)
+            subprocess.run(["codesign", "--verify", "--deep", "--strict", str(APP)], check=True)
+            self.assertFalse(list((launcher / "src").rglob("__pycache__")))
 
             staged = subprocess.run(
                 ["/bin/bash", "-euc", '. "$1"; stage_launcher_payload "$2" "$3"; '
@@ -102,13 +114,23 @@ class HubPackageTests(unittest.TestCase):
                                        cwd=installed_support, text=True, capture_output=True, timeout=20,
                                        env={"HOME": str(home), "PATH": str(tools)})
             self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
-            self.assertEqual(json.loads(installed.stdout)["schema"], 1)
+            self.assertEqual(json.loads(installed.stdout)["schema"], 2)
 
         self.assertTrue(ZIP.is_file())
         with zipfile.ZipFile(ZIP) as archive:
             names = archive.namelist()
         top_level = {name.split("/", 1)[0] for name in names if name and not name.startswith("__MACOSX/")}
         self.assertEqual(top_level, {"TrackMania Mac.app"})
+        self.assertFalse(any(part.startswith("._") for name in names for part in Path(name).parts))
+
+        # A user may extract the download with standard unzip, not Archive Utility.
+        # The archive must not materialize AppleDouble files within the signed bundle.
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(["unzip", "-q", str(ZIP), "-d", directory],
+                                    text=True, capture_output=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            subprocess.run(["codesign", "--verify", "--deep", "--strict",
+                            str(Path(directory) / "TrackMania Mac.app")], check=True)
 
 
 if __name__ == "__main__":

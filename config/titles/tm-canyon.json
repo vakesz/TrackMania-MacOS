@@ -3,7 +3,7 @@
   "name": "TrackMania 2 Canyon",
   "short_name": "TM2C",
   "engine": "maniaplanet",
-  "installer": "disk-image",
+  "installer": "online-trial",
   "status": "provisional",
   "prefix_subdir": "TMNF/Canyon",
   "prefix_marker": "tm-canyon:1",
@@ -17,6 +17,9 @@
   "save_dirs": ["ManiaPlanet", "Canyon"],
   "needs_directx": true,
   "needs_tmloader": false,
-  "cache_installer": null,
-  "notes": "Provisional ManiaPlanet title. Wine/DX tuning likely differs from TMNF DX9 recipe; qualify separately once user image is provided."
+  "source_url": "https://nadeo-download.cdn.ubi.com/maniaplanet/Maniaplanet_Setup.exe",
+  "source_sha256": "4339e5b9eca86d1a33015a9ceb9243ec9a8a0c3cbdec14414a10d6a72c239a29",
+  "source_size": 94482296,
+  "requires_serial": false,
+  "notes": "Official ManiaPlanet trial installer (includes the Canyon environment trial). ManiaPlanet engine is a separate Wine/DX qualification from TMNF; DX11 support is unfinished."
 }

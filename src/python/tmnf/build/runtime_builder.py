@@ -200,9 +200,12 @@ def release_lock():
                 raise RuntimeError(f'Loaded Python input changed since startup: {name}. '
                                    'Restart src/shell/tools/build-runtime.sh before building or packaging.')
         # Record the holder for the message above; the file is never unlinked.
+        # A full-record sentinel lets a torn read be detected instead of
+        # misreporting a truncated PID as a live foreign holder.
         lock.seek(0)
         lock.truncate()
-        lock.write(f'{os.getpid()} {shlex.join(sys.argv)} started {time.strftime("%H:%M:%S")}\n')
+        record = f'{os.getpid()} {shlex.join(sys.argv)} started {time.strftime("%H:%M:%S")}'
+        lock.write(f'{record}\n{len(record)}\n')
         lock.flush()
         yield
 
@@ -210,7 +213,11 @@ def release_lock():
 def lock_holder(lock):
     """Describe the recorded lock holder when that process is still alive."""
     lock.seek(0)
-    pid, _, description = lock.read().strip().partition(' ')
+    # First line: '<pid> <description>'. Second line: len(record) sentinel.
+    lines = lock.read().splitlines()
+    if len(lines) != 2 or not lines[1].isdigit() or len(lines[0]) != int(lines[1]):
+        return ''  # Torn or foreign record; never invent a holder from it.
+    pid, _, description = lines[0].partition(' ')
     try:
         os.kill(int(pid), 0)
     except (ValueError, OSError):
@@ -264,8 +271,17 @@ def source_excluded(name, path):
 
 
 def project_excluded(path):
-    return (path.parts[0] not in PROJECT_ENTRIES or '__pycache__' in path.parts
-            or path.name == '.DS_Store')
+    return (path.parts[0] not in PROJECT_ENTRIES
+            or any(part in ('.build', '.venv', '__pycache__') or part.endswith('.egg-info')
+                   or part == '.DS_Store' or part == 'node_modules' for part in path.parts))
+
+
+def build_path_excluded(relative_path):
+    """True for local build intermediates that must never enter an input hash,
+    a source snapshot or the shipped source archive. `.build/` and Swift's own
+    `src/swift/.build/` churn constantly and carry maintainer paths."""
+    return any(part in ('.build', '.venv', '__pycache__') or part.endswith('.egg-info')
+               or part == '.DS_Store' or part == 'node_modules' for part in relative_path.parts)
 
 
 def source_inventory(required=True):
@@ -344,7 +360,7 @@ def build_inputs():
     files += list((ROOT / 'config').rglob('*')) + list((ROOT / 'patches').rglob('*.patch'))
     files += list((ROOT / 'licenses').rglob('*')) + list((ROOT / 'src').rglob('*'))
     return {str(path.relative_to(ROOT)): digest(path) for path in sorted(files)
-            if path.is_file() and '__pycache__' not in path.parts and path.name != '.DS_Store'}
+            if path.is_file() and not build_path_excluded(path.relative_to(ROOT))}
 
 
 def apply_patches(name, source):
@@ -394,8 +410,17 @@ def fetch(name):
         archive.parent.mkdir(parents=True, exist_ok=True)
         if not archive.exists() or digest(archive) != spec['sha256']:
             part = archive.with_suffix('.partial')
-            run('curl', '--fail', '--location', '--retry', '3', '--connect-timeout', '20', '--speed-limit', '1024', '--speed-time', '60', '--output', part, spec['url'],
-                title=f'{name}: downloading {spec["url"]}')
+            # A failed download never leaves garbage that later partial
+            # retries append to; every attempt starts from a clean file and
+            # curl re-downloads, so the digest check stays the sole verdict.
+            if part.exists():
+                part.unlink()
+            try:
+                run('curl', '--fail', '--location', '--retry', '3', '--connect-timeout', '20', '--speed-limit', '1024', '--speed-time', '60', '--output', part, spec['url'],
+                    title=f'{name}: downloading {spec["url"]}')
+            except BaseException:
+                part.unlink(missing_ok=True)
+                raise
             if digest(part) != spec['sha256']:
                 part.unlink()
                 raise RuntimeError(f'SHA-256 verification failed for {name}')
@@ -674,6 +699,19 @@ def verify_no_build_paths():
         raise RuntimeError(f'Build path {ROOT} leaked into the runtime:\n  {listing}{more}')
 
 
+def verify_no_build_paths_in_archive(archive):
+    """The source archive ships project files verbatim; scan their contents."""
+    with tarfile.open(archive, 'r:xz') as tar:
+        for member in tar:
+            if not member.isfile():
+                continue
+            with tar.extractfile(member) as stream:
+                blob = stream.read()
+            if str(ROOT).encode() in blob:
+                raise RuntimeError(
+                    f'Build path {ROOT} leaked into the source archive at {member.name}')
+
+
 def archive_metadata(info):
     info.uid = info.gid = 0
     info.uname = info.gname = ''
@@ -694,6 +732,7 @@ def source_archive(archive):
             tar.add(ROOT / entry, arcname=f'tmnf/{entry}', filter=project_filter)
         for name in LOCK:
             tar.add(SOURCES / name, arcname=f'tmnf/upstream/{name}', filter=source_filter)
+    verify_no_build_paths_in_archive(archive)
 
 
 def verify_completed():

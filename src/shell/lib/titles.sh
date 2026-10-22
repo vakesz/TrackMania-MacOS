@@ -3,7 +3,7 @@
 # TMNF behavior is unchanged; other titles are provisional until installer
 # inventory lands (user-supplied disk images, no keys stored).
 
-TMNF_TITLES_DIR="${TMNF_PROJECT_DIR}/config/titles"
+: "${TMNF_TITLES_DIR:=${TMNF_PROJECT_DIR}/config/titles}"
 
 tmnf_title_ids() {
   tmnf_python - "$TMNF_TITLES_DIR" <<'PY'
@@ -44,4 +44,10 @@ tmnf_title_is_known() {
 
 tmnf_title_status() {
   tmnf_title_field "$1" status
+}
+
+# First declared save directory of a title (plain folder name, no slashes).
+# Used to seed per-title userdata under the prefix's redirected Documents.
+tmnf_title_first_save_dir() {
+  tmnf_title_field "$1" save_dirs | cut -d ' ' -f 1
 }

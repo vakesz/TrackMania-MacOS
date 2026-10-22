@@ -3,15 +3,39 @@
 # Sourced by tmnf after common.sh.
 
 update_game() {
-  if verify_file "$GAME_EXE" "$TMNF_GAME_EXE_SHA256" && competition_patch_is_ready && directx_is_current; then
-    say "TMNF $TMNF_GAME_VERSION, DirectX $DIRECTX_VERSION, and Competition Patch $TMCOMP_VERSION are current."
+  local kind label
+  kind="$(tmnf_title_field "$TMNF_TITLE" installer)"
+  label="$(tmnf_title_field "$TMNF_TITLE" name)"
+
+  case "$kind" in
+    online-retail|online-trial)
+      say "Re-running the pinned $label installer (repair)."
+      exec "${TMNF_PROJECT_DIR}/src/shell/cli/install.sh"
+      ;;
+    steam-copy|disk-image)
+      die "$label has no official update channel here; provide the game files again via the hub import flow."
+      ;;
+  esac
+
+  local needs_patch=false
+  if test "$(tmnf_title_field "$TMNF_TITLE" needs_tmloader)" = true; then
+    needs_patch=true
+  fi
+  if verify_file "$GAME_EXE" "$TMNF_GAME_EXE_SHA256" \
+    && { test "$needs_patch" = false || competition_patch_is_ready; } \
+    && directx_is_current; then
+    if test "$needs_patch" = true; then
+      say "$label $TMNF_GAME_VERSION, DirectX $DIRECTX_VERSION, and Competition Patch $TMCOMP_VERSION are current."
+    else
+      say "$label $TMNF_GAME_VERSION and DirectX $DIRECTX_VERSION are current."
+    fi
     return
   fi
 
   if verify_file "$GAME_EXE" "$TMNF_GAME_EXE_SHA256"; then
     exec "${TMNF_PROJECT_DIR}/src/shell/cli/install.sh"
   fi
-  say "Installing the official TMNF $TMNF_GAME_VERSION release and Competition Patch."
+  say "Installing the official $label $TMNF_GAME_VERSION release and Competition Patch."
   TMNF_REINSTALL=1 exec "${TMNF_PROJECT_DIR}/src/shell/cli/install.sh"
 }
 
@@ -21,15 +45,27 @@ doctor() {
   local wine_version=""
   local wow64_version=""
   local sidecar="${ROSETTA_X87_PATH:-$TMNF_SIDECAR}"
+  local needs_patch title_name title_short game_expected_sha
 
   validate_launch_options
+  title_name="$(tmnf_title_field "$TMNF_TITLE" name)"
+  title_short="$(tmnf_title_field "$TMNF_TITLE" short_name)"
+  game_expected_sha="${TMNF_GAME_EXE_SHA256:-}"
+  needs_patch="$(tmnf_title_field "$TMNF_TITLE" needs_tmloader)"
+
   if test -f "${TMNF_PREFIX}/system.reg" && require_owned_prefix >/dev/null 2>&1; then
-    # A diagnostic Windows process must not race prefix repair or deletion.
-    guard_prefix_operation "${TMNF_PROJECT_DIR}/src/shell/cli/tmnf" doctor
+    if tmnf_python -m tmnf.guard.operation_guard held "$TMNF_PREFIX" >/dev/null 2>&1; then
+      # A diagnostic Windows process must not race prefix repair or deletion,
+      # and an already-busy prefix must degrade instead of dying cryptically.
+      guard_prefix_operation "${TMNF_PROJECT_DIR}/src/shell/cli/tmnf" doctor
+    else
+      say "A session owns the prefix right now; deep prefix checks are skipped."
+      TMNF_DOCTOR_SESSION_ACTIVE=1
+    fi
   fi
 
   say "TMNF $TMNF_VERSION"
-  say "Title: $TMNF_TITLE"
+  say "Title: $TMNF_TITLE ($title_name)"
   say "macOS: $(sw_vers -productVersion 2>/dev/null || echo unknown) ($(uname -m))"
   say "Audio on next launch: $TMNF_AUDIO (TMNF_AUDIO=off disables sound)"
   say "Patched x87 translation: $TMNF_X87"
@@ -57,41 +93,51 @@ doctor() {
       failures=$((failures + 1))
     fi
     say "Wine binary: $wine_bin"
-    if ! require_owned_prefix || test ! -f "${TMNF_PREFIX}/system.reg"; then
-      warn "WoW64 probe skipped: an initialized managed prefix is required"
-      failures=$((failures + 1))
-    elif wow64_version="$(without_operation_lock env WINEPREFIX="$TMNF_PREFIX" WINEDEBUG=-all "$wine_bin" \
-      'C:\windows\syswow64\cmd.exe' /c ver 2>/dev/null)"; then
-      wow64_version="$(printf '%s' "$wow64_version" | tr -d '\r' | tail -1)"
-      say "WoW64: ${wow64_version:-ready}"
-    else
-      warn "Wine could not execute a 32-bit Windows command in this prefix"
-      failures=$((failures + 1))
-    fi
+  if test "${TMNF_DOCTOR_SESSION_ACTIVE:-}" = 1; then
+    : # Wine still reports its version; only prefix probes are skipped below.
+  elif ! require_owned_prefix || test ! -f "${TMNF_PREFIX}/system.reg"; then
+    warn "WoW64 probe skipped: an initialized managed prefix is required"
+    failures=$((failures + 1))
+  elif wow64_version="$(without_operation_lock env WINEPREFIX="$TMNF_PREFIX" WINEDEBUG=-all "$wine_bin" \
+    'C:\windows\syswow64\cmd.exe' /c ver 2>/dev/null)"; then
+    wow64_version="$(printf '%s' "$wow64_version" | tr -d '\r' | tail -1)"
+    say "WoW64: ${wow64_version:-ready}"
+  else
+    warn "Wine could not execute a 32-bit Windows command in this prefix"
+    failures=$((failures + 1))
+  fi
   else
     warn "Wine runtime is missing, incomplete, modified, or a different version; build and install the current runtime."
     failures=$((failures + 1))
   fi
 
   if test -f "$GAME_EXE"; then
-    if verify_file "$GAME_EXE" "$TMNF_GAME_EXE_SHA256"; then
-      say "TMNF: $TMNF_GAME_VERSION (verified official release)"
+    if test -n "$game_expected_sha"; then
+      if verify_file "$GAME_EXE" "$game_expected_sha"; then
+        say "$title_short: verified official release"
+      else
+        warn "$title_short: installed executable is not the pinned official build; run update"
+      fi
     else
-      warn "TMNF: installed executable is not the official $TMNF_GAME_VERSION build; run update"
+      # Retail and trial installs carry only presence coverage until a hash
+      # pin lands in the registry for their exact media.
+      say "$title_short: installed (hash pin not available for this title)"
     fi
     say "Game: $GAME_EXE"
   else
-    warn "TMNF is not installed at $GAME_EXE"
+    warn "$title_short is not installed at $GAME_EXE"
     failures=$((failures + 1))
   fi
 
-  if competition_patch_is_ready; then
-    say "Competition Patch: $TMCOMP_VERSION"
-    say "ModLoader bundle: $TMLOADER_BUNDLE_VERSION"
-    say "ModLoader game runtime: $TMLOADER_GAME_VERSION"
-  else
-    warn "Competition Patch is missing or does not match the pinned release"
-    failures=$((failures + 1))
+  if test "$needs_patch" = true; then
+    if competition_patch_is_ready; then
+      say "Competition Patch: $TMCOMP_VERSION"
+      say "ModLoader bundle: $TMLOADER_BUNDLE_VERSION"
+      say "ModLoader game runtime: $TMLOADER_GAME_VERSION"
+    else
+      warn "Competition Patch is missing or does not match the pinned release"
+      failures=$((failures + 1))
+    fi
   fi
 
   if directx_is_current; then

@@ -46,10 +46,32 @@ stage_bundled_python() {
   launcher="$1"
   root="$(bundled_python_root)"
   ditto "$root" "${launcher}/python"
+  prune_bundled_python "${launcher}/python"
   test -x "${launcher}/python/bin/python3" \
     || die "Bundled Python was not staged into the hub."
-  "${launcher}/python/bin/python3" -c 'import hashlib, ssl, sys; assert sys.version_info >= (3, 9)' \
+  PYTHONDONTWRITEBYTECODE=1 "${launcher}/python/bin/python3" \
+    -c 'import hashlib, ssl, sys, urllib.request, zipfile; assert sys.version_info >= (3, 9)' \
     || die "Bundled Python cannot run after staging."
+}
+
+prune_bundled_python() {
+  # The native hub invokes only python3 and the standard library. Keep that
+  # runtime intact, but do not ship Python's compiler headers, pip bootstrap,
+  # Tk/IDLE, developer metadata, or precompiled bytecode. The launcher sets
+  # PYTHONDONTWRITEBYTECODE, so a hub action cannot later alter the app seal.
+  local root="$1" version stdlib
+  version="${BUNDLED_PYTHON_VERSION%.*}"
+  stdlib="${root}/lib/python${version}"
+  test -d "$stdlib" || die "Bundled Python standard library is missing: $stdlib"
+
+  rm -rf "${root}/include" "${root}/share" "${root}/lib/pkgconfig" \
+    "${stdlib}/config-${version}-darwin" "${stdlib}/ensurepip" \
+    "${stdlib}/idlelib" "${stdlib}/lib2to3" "${stdlib}/pydoc_data" \
+    "${stdlib}/site-packages" "${stdlib}/tkinter" \
+    "${root}/lib/itcl4.3.8" "${root}/lib/tcl9" "${root}/lib/tcl9.0" \
+    "${root}/lib/thread3.0.6" "${root}/lib/tk9.0" \
+    "${root}/lib/libtcl9.0.dylib" "${root}/lib/libtcl9tk9.0.dylib"
+  find "$root" -type d -name '__pycache__' -prune -exec rm -rf {} +
 }
 
 build_hub_binary() {
@@ -143,9 +165,10 @@ build_zip() {
   mkdir -p "$DIST_DIR"
   rm -f "$zip"
   test -d "$APP_DIR" || die "Build the app bundle first."
-  # ditto preserves symlinks and the code signature; plain zip(1) does not.
-  # --keepParent keeps the top-level .app folder inside the archive.
-  ditto -c -k --keepParent "$APP_DIR" "$zip" || die "App archive creation failed."
+  # ditto preserves symlinks; --norsrc omits AppleDouble Finder metadata that
+  # normal unzip(1) would materialize inside the sealed app and invalidate its
+  # signature. --keepParent keeps the top-level .app folder inside the archive.
+  ditto --norsrc -c -k --keepParent "$APP_DIR" "$zip" || die "App archive creation failed."
   say "Wrote $zip"
   if test "${TMNF_NOTARIZE:-0}" = 1; then
     test -n "${APPLE_ID:-}" || die "Set APPLE_ID for notarization."
@@ -155,7 +178,7 @@ build_zip() {
       --password "$TMNF_APP_PASSWORD" --wait || die "Notarization failed."
     # Stapling modifies the bundle, so re-archive after stapling.
     xcrun stapler staple "$APP_DIR" || die "Stapling failed."
-    ditto -c -k --keepParent "$APP_DIR" "$zip" || die "App re-archive failed."
+    ditto --norsrc -c -k --keepParent "$APP_DIR" "$zip" || die "App re-archive failed."
     say "Notarized, stapled and re-archived $zip"
   else
     say "Skipped notarization (TMNF_NOTARIZE=1 to enable)."

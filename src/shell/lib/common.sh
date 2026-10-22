@@ -6,6 +6,11 @@ _TMNF_COMMON_SOURCED=1
 
 set -u
 
+# The hub and its installed launchers execute Python directly from signed app
+# resources. Writing __pycache__ files there after codesign would invalidate
+# the bundle seal, so all project entry points run Python without bytecode.
+export PYTHONDONTWRITEBYTECODE=1
+
 TMNF_PROJECT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)"
 # Installed launchers carry their paths with them; a checkout has no such file.
 if test -f "${TMNF_PROJECT_DIR}/config/installation.sh"; then
@@ -84,22 +89,39 @@ sys.stdout.write(''.join(value + '\n' for value in values))
 PY
 }
 
-tmnf_title_is_known "$TMNF_TITLE" \
-  || die "Unknown TMNF_TITLE: $TMNF_TITLE (see ${TMNF_TITLES_DIR}/*.json)"
-_TMNF_TITLE_SPEC="$(_tmnf_load_title "${TMNF_TITLES_DIR}/${TMNF_TITLE}.json")" \
-  || die "Invalid title registry entry: ${TMNF_TITLES_DIR}/${TMNF_TITLE}.json"
-{
-  IFS= read -r _title_root_leaf &&
-  IFS= read -r _title_game_dir &&
-  IFS= read -r _title_game_exe &&
-  IFS= read -r _title_launcher_exe &&
-  IFS= read -r _title_app &&
-  IFS= read -r _title_settings
-} <<<"$_TMNF_TITLE_SPEC" \
-  || die "Cannot parse title registry entry: ${TMNF_TITLES_DIR}/${TMNF_TITLE}.json"
-unset _TMNF_TITLE_SPEC
+case "${1:-}" in
+  hub|titles)
+    # The Python hub backend contains broken registry files per title and
+    # computes its paths from the registry itself; a strict shell-side gate
+    # here would break that containment. Keep the title fields defined so the
+    # guarded defaults below never trip `set -u`.
+    _title_root_leaf=""
+    _title_game_dir=""
+    _title_game_exe=""
+    _title_launcher_exe=""
+    _title_app=""
+    _title_settings=""
+    ;;
+  *)
+    tmnf_title_is_known "$TMNF_TITLE" \
+      || die "Unknown TMNF_TITLE: $TMNF_TITLE (see ${TMNF_TITLES_DIR}/*.json)"
+    _TMNF_TITLE_SPEC="$(_tmnf_load_title "${TMNF_TITLES_DIR}/${TMNF_TITLE}.json")" \
+      || die "Invalid title registry entry: ${TMNF_TITLES_DIR}/${TMNF_TITLE}.json"
+    {
+      IFS= read -r _title_root_leaf &&
+      IFS= read -r _title_game_dir &&
+      IFS= read -r _title_game_exe &&
+      IFS= read -r _title_launcher_exe &&
+      IFS= read -r _title_app &&
+      IFS= read -r _title_settings
+    } <<<"$_TMNF_TITLE_SPEC" \
+      || die "Cannot parse title registry entry: ${TMNF_TITLES_DIR}/${TMNF_TITLE}.json"
+    unset _TMNF_TITLE_SPEC
 
-: "${TMNF_ROOT:=${HOME}/Games/${_title_root_leaf}}"
+    : "${TMNF_ROOT:=${HOME}/Games/${_title_root_leaf}}"
+    ;;
+esac
+
 TMNF_VERSION="$(cat "${TMNF_PROJECT_DIR}/VERSION")"
 TMNF_GAME_URL="https://nadeo-download.cdn.ubi.com/trackmaniaforever/tmnationsforever_setup.exe"
 TMNF_GAME_SHA256="2f659138ed4409da404970841e18f03d29921beaf6a424824c8312ddb20f6355"
@@ -141,6 +163,9 @@ fi
 : "${TMNF_WINDOW_SIZE:=fullscreen}"
 : "${TMNF_AUDIO:=on}"
 : "${TMNF_X87:=on}"
+# Title-agnostic fallback: the hub commands never consume TMNF_ROOT themselves,
+# and title-aware commands set their own per-title default above.
+: "${TMNF_ROOT:=${HOME}/Games/TMNF}"
 : "${TMNF_PREFIX:=${TMNF_ROOT}/prefix}"
 : "${TMNF_USERDATA:=${TMNF_ROOT}/UserData}"
 # Direct3D 9 renderer: d9vk (DXVK on MoltenVK/Metal), wined3d-vulkan, wined3d-gl
@@ -363,7 +388,7 @@ guard_prefix_operation() {
   if test "${TMNF_OPERATION_FD+x}" != x; then
     mkdir -p "$(dirname "$TMNF_PREFIX")"
     # Process replacement (not a helper call) preserves lock FD inheritance.
-    exec env PYTHONPATH="$TMNF_PYTHONPATH" "$TMNF_PYTHON" -m tmnf.guard.operation_guard run "$TMNF_PREFIX" /bin/bash "$@"
+    exec /usr/bin/env PYTHONPATH="$TMNF_PYTHONPATH" "$TMNF_PYTHON" -m tmnf.guard.operation_guard run "$TMNF_PREFIX" /bin/bash "$@"
   fi
   tmnf_python -m tmnf.guard.operation_guard held "$TMNF_PREFIX" \
     || die "Invalid inherited installation lock."

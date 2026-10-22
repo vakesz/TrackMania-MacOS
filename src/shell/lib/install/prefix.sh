@@ -13,6 +13,7 @@ initialize_prefix() {
     test -f "${TMNF_PREFIX}/.tmnf-prefix" || die "This prefix is not managed by TMNF. Choose a new TMNF_PREFIX."
     if test ! -f "${TMNF_PREFIX}/.tmnf-initializing"; then
       WINEDLLOVERRIDES='mscoree,mshtml=' run_wine wineboot --update
+      say "Prefix is up to date; nothing to repair."
       return
     fi
   fi
@@ -37,10 +38,12 @@ initialize_prefix() {
   # profile arrangements and require explicit backup/repair when seeding is unsafe.
   tmnf_python -m tmnf.guard.managed_paths setup-documents "$TMNF_PREFIX" "$TMNF_USERDATA" \
     || die "Documents setup is incomplete; no external settings were seeded."
-  mkdir -p "${TMNF_USERDATA}/TmForever/Config"
-  if test ! -e "${TMNF_USERDATA}/TmForever/Config/Default.SystemConfig.Gbx" \
-    && test ! -L "${TMNF_USERDATA}/TmForever/Config/Default.SystemConfig.Gbx"; then
-    cp "${TMNF_RUNTIME}/config/Default.SystemConfig.Gbx" "${TMNF_USERDATA}/TmForever/Config/"
+  save_dir="$(tmnf_title_first_save_dir "$TMNF_TITLE")"
+  test -n "$save_dir" || save_dir=TmForever
+  mkdir -p "${TMNF_USERDATA}/${save_dir}/Config"
+  if test ! -e "${TMNF_USERDATA}/${save_dir}/Config/Default.SystemConfig.Gbx" \
+    && test ! -L "${TMNF_USERDATA}/${save_dir}/Config/Default.SystemConfig.Gbx"; then
+    cp "${TMNF_RUNTIME}/config/Default.SystemConfig.Gbx" "${TMNF_USERDATA}/${save_dir}/Config/"
   fi
   rm -f "${TMNF_PREFIX}/.tmnf-profile-baseline" "${TMNF_PREFIX}/.tmnf-initializing"
 }

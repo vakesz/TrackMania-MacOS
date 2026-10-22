@@ -12,6 +12,9 @@ import sys
 import time
 
 
+INTERRUPT_GRACE = 1.0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("timeout", type=float, help="deadline in seconds")
@@ -43,6 +46,20 @@ def main():
             while not exited:
                 if interrupted:
                     print("FAIL: probe interrupted: " + " ".join(args.command), file=sys.stderr)
+                    # Forward the received signal before the finally-block
+                    # SIGKILL, so the probe can run its own handlers and
+                    # release devices cleanly. Contain signal failures the
+                    # same way the backstop does.
+                    try:
+                        os.killpg(process.pid, interrupted[0])
+                    except (ProcessLookupError, PermissionError, OSError):
+                        pass
+                    grace = time.monotonic() + INTERRUPT_GRACE
+                    while not exited and time.monotonic() < grace:
+                        try:
+                            exited = bool(queue.control(None, 1, min(0.1, max(0.0, grace - time.monotonic()))))
+                        except (OSError, ProcessLookupError):
+                            break
                     return 128 + interrupted[0]
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:

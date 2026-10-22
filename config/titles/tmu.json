@@ -3,9 +3,9 @@
   "name": "TrackMania United Forever",
   "short_name": "TMU",
   "engine": "tmf-classic",
-  "installer": "disk-image",
+  "installer": "online-retail",
   "status": "provisional",
-  "prefix_subdir": "TMNF/United",
+  "prefix_subdir": "TMNF/TM United",
   "prefix_marker": "tmu:1",
   "app_name": "TrackMania United Forever.app",
   "settings_app_name": "TrackMania United Settings.app",
@@ -17,6 +17,9 @@
   "save_dirs": ["TmForever", "TmUnited", "TrackMania United"],
   "needs_directx": true,
   "needs_tmloader": false,
-  "cache_installer": null,
-  "notes": "Provisional pending user-supplied retail disk image. Installer flags, exe hashes and patch chain TBD once images are provided. No keys stored."
+  "source_url": "http://files.trackmaniaforever.com/tmunitedforever_setup.exe",
+  "source_sha256": "f8a4d09c64d65be271c0346f5b0e41529cb25eb8c605d4602d0f34f27fb1355f",
+  "source_size": 1211926014,
+  "requires_serial": true,
+  "notes": "Pinned retail installer (verified offline one-click install path still provisional). The game asks for your serial key on first launch; the Competition Patch does not yet support United here."
 }

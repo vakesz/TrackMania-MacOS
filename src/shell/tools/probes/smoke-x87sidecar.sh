@@ -14,7 +14,7 @@ if test ! -x "$sidecar"; then
   if test "${TMNF_X87_SOURCE_ONLY:-0}" = 1; then
     die "Source-only probe requires an executable sidecar: $sidecar"
   fi
-  say 'SKIP: source-only translator probes are unavailable; run make build to enable them.'
+  say 'SKIP: source-only (no source-built x87sidecar); falling back to the installed-runtime Wine probe series (smoke-x87.sh, several minutes).'
   export ROSETTA_X87_PATH="$TMNF_SIDECAR"
   say 'Testing installed translator Wine integration (TMNF_X87=on)'
   exec "${SCRIPT_DIR}/smoke-x87.sh"

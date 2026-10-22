@@ -3,7 +3,7 @@
   "name": "TrackMania Nations Forever",
   "short_name": "TMNF",
   "engine": "tmf-classic",
-  "installer": "free-download",
+  "installer": "online",
   "status": "supported",
   "prefix_subdir": "TMNF",
   "prefix_marker": "tmnf:1",
@@ -17,6 +17,9 @@
   "save_dirs": ["TmForever"],
   "needs_directx": true,
   "needs_tmloader": true,
-  "cache_installer": "tmnationsforever_setup.exe",
+  "source_url": "https://nadeo-download.cdn.ubi.com/trackmaniaforever/tmnationsforever_setup.exe",
+  "source_sha256": "2f659138ed4409da404970841e18f03d29921beaf6a424824c8312ddb20f6355",
+  "source_size": null,
+  "requires_serial": false,
   "notes": "Free download from Nadeo CDN. Reference implementation; this registry is the authority for title paths and names."
 }

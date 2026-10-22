@@ -89,9 +89,17 @@ install_app() {
     trap "$cleanup" EXIT
     stage_launcher_payload "$TMNF_PROJECT_DIR" "$staging"
     if ! (
-      # Neither descriptor belongs in the icon extractor's subprocesses.
-      eval "exec ${TMNF_APP_OPERATION_FD}>&-"
-      unset TMNF_APP_OPERATION_FD
+      # Neither token descriptor belongs in the icon extractor's subprocesses:
+      # a leaked copy would keep the prefix or app lock alive after this
+      # install exits.
+      if test "${TMNF_APP_OPERATION_FD+x}" = x; then
+        case "$TMNF_APP_OPERATION_FD" in ''|*[!0-9]*) : ;; *) eval "exec ${TMNF_APP_OPERATION_FD}>&-" ;; esac
+        unset TMNF_APP_OPERATION_FD
+      fi
+      if test "${TMNF_OPERATION_FD+x}" = x; then
+        case "$TMNF_OPERATION_FD" in ''|*[!0-9]*) : ;; *) eval "exec ${TMNF_OPERATION_FD}>&-" ;; esac
+        unset TMNF_OPERATION_FD
+      fi
       without_operation_lock tmnf_python -m tmnf.app.app_icon "$GAME_EXE" "${staging}/config/AppIcon.icns"
     ) 2>/dev/null; then
       rm -f "${staging}/config/AppIcon.icns"
@@ -105,9 +113,22 @@ install_app() {
     touch "${staging}/.tmnf-launcher"
     if test -e "$TMNF_LAUNCHER"; then
       test -f "${TMNF_LAUNCHER}/.tmnf-launcher" || die "Refusing to replace an unmanaged launcher directory."
-      rm -rf "$TMNF_LAUNCHER"
+      # Swap atomically: the old launcher stays roll-backable until the new
+      # one is fully in place, so a failed move never leaves the machine
+      # without an installed launcher.
+      previous="$(mktemp -d "$(dirname "$TMNF_LAUNCHER")/.launcher-previous.XXXXXX")"
+      mv "$TMNF_LAUNCHER" "$previous/launcher"
     fi
-    mv "$staging" "$TMNF_LAUNCHER"
+    if ! mv "$staging" "$TMNF_LAUNCHER"; then
+      if test -n "${previous:-}" && test -d "$previous/launcher"; then
+        mv "$previous/launcher" "$TMNF_LAUNCHER"
+        rm -rf -- "$previous"
+        die "Cannot install the launcher support directory."
+      fi
+      rm -rf -- "$TMNF_LAUNCHER"
+      die "Cannot install the launcher support directory."
+    fi
+    rm -rf -- "${previous:-/nonexistent}"
   )
   game_name="$(basename "$TMNF_APP" .app)"
   settings_name="$(basename "$TMNF_SETTINGS_APP" .app)"
@@ -118,4 +139,14 @@ install_app() {
     || die "Title $TMNF_TITLE has no bundle identifiers in ${TMNF_TITLES_DIR}/${TMNF_TITLE}.json"
   write_app "$TMNF_APP" "$game_name" play "$game_id"
   write_app "$TMNF_SETTINGS_APP" "$settings_name" configure "$settings_id"
+  # Cache the per-title icon for the hub rail. Only icons extracted from the
+  # official game executable (unmodified) are ever shipped across titles.
+  if test -f "${TMNF_LAUNCHER}/config/AppIcon.icns"; then
+    if mkdir -p "${TMNF_SUPPORT}/icons" \
+      && cp "${TMNF_LAUNCHER}/config/AppIcon.icns" "${TMNF_SUPPORT}/icons/${TMNF_TITLE}.icns"; then
+      :
+    else
+      warn "Could not cache the extracted game icon for the hub."
+    fi
+  fi
 }

@@ -166,7 +166,7 @@ class TLSFixtures(unittest.TestCase):
                 process = subprocess.Popen([sys.executable, "-X", "faulthandler", str(SERVER)], text=True,
                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 try:
-                    if not select.select([process.stdout], [], [], 30)[0]:
+                    if not select.select([process.stdout], [], [], 5)[0]:
                         # SIGABRT makes faulthandler dump every thread's stack, showing where it stalled.
                         process.send_signal(signal.SIGABRT)
                         self.fail("no readiness line:\n" + process.communicate(timeout=5)[1])

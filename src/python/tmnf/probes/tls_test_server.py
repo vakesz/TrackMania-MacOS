@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import signal
+import socketserver
 import ssl
 import subprocess
 import sys
@@ -36,6 +37,12 @@ class Handler(BaseHTTPRequestHandler):
 class Server(ThreadingHTTPServer):
     daemon_threads = True
     connections = 0
+
+    def server_bind(self):
+        # HTTPServer.server_bind reverse-resolves the host with getfqdn, which
+        # hangs in mDNS on GitHub's macOS runners; the name only feeds logging.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
     def get_request(self):
         connection, address = super().get_request()

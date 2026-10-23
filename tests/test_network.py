@@ -163,10 +163,13 @@ class TLSFixtures(unittest.TestCase):
     def test_server_subprocess_readiness_and_signal_cleanup(self):
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             with self.subTest(signal=sig):
-                process = subprocess.Popen([sys.executable, str(SERVER)], text=True,
+                process = subprocess.Popen([sys.executable, "-X", "faulthandler", str(SERVER)], text=True,
                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 try:
-                    self.assertTrue(select.select([process.stdout], [], [], 5)[0], "no readiness line")
+                    if not select.select([process.stdout], [], [], 30)[0]:
+                        # SIGABRT makes faulthandler dump every thread's stack, showing where it stalled.
+                        process.send_signal(signal.SIGABRT)
+                        self.fail("no readiness line:\n" + process.communicate(timeout=5)[1])
                     urls = json.loads(process.stdout.readline())
                     with connect(urls["valid"], trust(FIXTURES / "ca.pem")):
                         pass

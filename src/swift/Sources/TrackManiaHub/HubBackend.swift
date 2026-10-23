@@ -147,10 +147,14 @@ final class HubBackend: Sendable {
         return HubBackend(launcherURL: launcher)
     }
 
-    static func runArguments(titleID: String, actionID: String, source: URL? = nil) -> [String] {
+    static func runArguments(titleID: String, actionID: String, source: URL? = nil,
+                             runtime: RuntimeSource? = nil) -> [String] {
         var arguments = ["hub", "run", titleID, actionID]
         if let source {
             arguments += ["--source", source.path]
+        }
+        if let runtime {
+            arguments += ["--runtime", runtime.rawValue]
         }
         return arguments
     }
@@ -175,10 +179,12 @@ final class HubBackend: Sendable {
     }
 
     func run(titleID: String, actionID: String, source: URL? = nil,
+             runtime: RuntimeSource? = nil,
              handle: HubCommandHandle = HubCommandHandle(),
              onOutput: @escaping @Sendable (String) -> Void = { _ in }) async throws -> HubCommandResult {
         let result = try await run(
-            arguments: Self.runArguments(titleID: titleID, actionID: actionID, source: source),
+            arguments: Self.runArguments(titleID: titleID, actionID: actionID, source: source,
+                                         runtime: runtime),
             handle: handle, onOutput: onOutput)
         guard result.status == 0 else { throw HubBackendError.commandFailed(result) }
         return result

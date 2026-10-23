@@ -370,8 +370,8 @@ class BuildTests(unittest.TestCase):
                     build.verify_completed()
                     if change == 'project':
                         build.package()
-                        with tarfile.open(build.DIST / 'tmnf-test-source.tar.xz') as archive:
-                            self.assertEqual(archive.extractfile('tmnf/README.md').read(), path.read_bytes())
+                        with tarfile.open(build.DIST / 'trackmania-mac-test-source.tar.xz') as archive:
+                            self.assertEqual(archive.extractfile('trackmania-mac/README.md').read(), path.read_bytes())
 
     def test_project_edit_during_build_blocks_completion_but_preserves_compiler_cache(self):
         for action in ('dependencies', 'wine'):
@@ -401,8 +401,8 @@ class BuildTests(unittest.TestCase):
                     complete = build.verify_completed()
                     self.assertEqual(complete['sources']['project'][relative][2], build.digest(path))
                     build.package()
-                    with tarfile.open(build.DIST / 'tmnf-test-source.tar.xz') as archive:
-                        self.assertEqual(archive.extractfile('tmnf/' + relative).read(), path.read_bytes())
+                    with tarfile.open(build.DIST / 'trackmania-mac-test-source.tar.xz') as archive:
+                        self.assertEqual(archive.extractfile('trackmania-mac/' + relative).read(), path.read_bytes())
 
     def test_dependency_materialization_checkpoint_survives_wine_timeout(self):
         header = build.SOURCES / 'moltenvk/External/dependency/header.h'
@@ -773,8 +773,8 @@ class BuildTests(unittest.TestCase):
             archive = self.root / 'source.tar.xz'
             build.source_archive(archive)
             with tarfile.open(archive) as tar:
-                self.assertNotIn('tmnf/upstream/libunistring/lib/libunistring.sym-t1', tar.getnames())
-                self.assertIn('tmnf/upstream/libunistring/lib/libunistring.sym', tar.getnames())
+                self.assertNotIn('trackmania-mac/upstream/libunistring/lib/libunistring.sym-t1', tar.getnames())
+                self.assertIn('trackmania-mac/upstream/libunistring/lib/libunistring.sym', tar.getnames())
             actions['dependencies'].side_effect = lambda: symbols.write_text('changed symbols\n')
             with self.assertRaisesRegex(RuntimeError, 'upstream/libunistring/lib/libunistring.sym'):
                 self.main()
@@ -993,15 +993,15 @@ class BuildTests(unittest.TestCase):
         with tarfile.open(archive) as tar:
             names = tar.getnames()
             for relative in excluded:
-                self.assertNotIn('tmnf/upstream/' + relative, names)
+                self.assertNotIn('trackmania-mac/upstream/' + relative, names)
             self.assertNotIn('tmnf/src/python/tmnf/build/__pycache__', names)
-            self.assertNotIn('tmnf/upstream/wine/.mactmnf-source.json', names)
+            self.assertNotIn('trackmania-mac/upstream/wine/.mactmnf-source.json', names)
             for relative in ('src/c/session.c', 'src/nested/protocol.h'):
-                self.assertEqual(tar.extractfile('tmnf/' + relative).read(),
+                self.assertEqual(tar.extractfile('trackmania-mac/' + relative).read(),
                                  (self.root / relative).read_bytes())
             for name, contents in build.source_inventory().items():
                 for relative in contents:
-                    self.assertIn(str(Path('tmnf/upstream') / name / relative), names)
+                    self.assertIn(str(Path('trackmania-mac/upstream') / name / relative), names)
 
     def test_packaging_needs_no_toolchain_and_publishes_valid_checksums(self):
         self.complete_build()
@@ -1012,7 +1012,7 @@ class BuildTests(unittest.TestCase):
             build.package()
         self.assertEqual(len(list(build.DIST.iterdir())), 4)
         for kind in ('source', 'runtime'):
-            archive = build.DIST / f'tmnf-test-{kind}.tar.xz'
+            archive = build.DIST / f'trackmania-mac-test-{kind}.tar.xz'
             self.assertEqual(archive.with_name(archive.name + '.sha256').read_text(),
                              f'{build.digest(archive)}  {archive.name}\n')
             with tarfile.open(archive) as tar:
@@ -1134,7 +1134,7 @@ class BuildTests(unittest.TestCase):
 
         def publish(path, target):
             publications.append(threading.get_ident())
-            if path.name == 'tmnf-test-runtime.tar.xz.sha256' and not publishing.is_set():
+            if path.name == 'trackmania-mac-test-runtime.tar.xz.sha256' and not publishing.is_set():
                 publishing.set()
                 if not proceed.wait(5):
                     raise RuntimeError('test publication timed out')
@@ -1192,7 +1192,7 @@ class BuildTests(unittest.TestCase):
     def test_publication_failure_cannot_leave_an_old_checksum_for_new_bytes(self):
         self.complete_build()
         build.package()
-        checksum = build.DIST / 'tmnf-test-runtime.tar.xz.sha256'
+        checksum = build.DIST / 'trackmania-mac-test-runtime.tar.xz.sha256'
         checksum.write_text('stale checksum')
         replace = Path.replace
 

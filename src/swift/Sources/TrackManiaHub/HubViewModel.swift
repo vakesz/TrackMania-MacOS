@@ -69,7 +69,7 @@ final class HubViewModel: ObservableObject {
         }
     }
 
-    func run(_ action: HubAction, for title: HubTitle, source: URL? = nil) {
+    func run(_ action: HubAction, for title: HubTitle, source: URL? = nil, runtime: RuntimeSource? = nil) {
         guard let backend, runningAction == nil else { return }
         runningAction = action.id
         runningTitleID = title.id
@@ -80,7 +80,7 @@ final class HubViewModel: ObservableObject {
         commandHandle = handle
         message = nil
         log = ""
-        appendLog("$ tmnf hub run \(title.id) \(action.id)\n")
+        appendLog("$ tmnf hub run \(title.id) \(action.id)\(runtime.map { " --runtime \($0.rawValue)" } ?? "")\n")
         Task { [weak self] in
             guard let self else { return }
             // Every exit path, including cancellation, must leave the UI idle.
@@ -90,7 +90,7 @@ final class HubViewModel: ObservableObject {
                 commandHandle = nil
             }
             do {
-                _ = try await backend.run(titleID: title.id, actionID: action.id, source: source,
+                _ = try await backend.run(titleID: title.id, actionID: action.id, source: source, runtime: runtime,
                                           handle: handle) { [weak self] chunk in
                     Task { @MainActor [weak self] in
                         guard self?.activityToken == token else { return }

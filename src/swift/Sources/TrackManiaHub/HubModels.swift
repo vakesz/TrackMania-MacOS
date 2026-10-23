@@ -244,7 +244,17 @@ struct InstallationItem: Equatable, Identifiable {
     var id: String { label }
 }
 
+/// Where the installer gets the Wine runtime when it is not installed yet.
+enum RuntimeSource: String {
+    case download, build
+}
+
 extension HubTitle {
+    /// Installing the runtime is slow either way, so the user picks download or build first.
+    func needsRuntimeChoice(for action: HubAction) -> Bool {
+        (action.id == "install" || action.id == "install-platform") && state.runtime?.ready != true
+    }
+
     var summary: [InstallationItem] {
         [
             InstallationItem(label: "Runtime", ready: state.runtime?.ready == true),

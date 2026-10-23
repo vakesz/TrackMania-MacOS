@@ -19,6 +19,7 @@ def main(argv=None) -> int:
     sub_run.add_argument('title')
     sub_run.add_argument('action')
     sub_run.add_argument('--source', default=None)
+    sub_run.add_argument('--runtime', default=None)
 
     arguments = parser.parse_args(argv)
     try:
@@ -29,7 +30,8 @@ def main(argv=None) -> int:
             for title in registry.load_all():
                 print(f'{title.id}: {title.name} [{title.status} {title.installer}]')
             return 0
-        hub_run.run(arguments.title, arguments.action, arguments.source)
+        hub_run.run(arguments.title, arguments.action, arguments.source,
+                     arguments.runtime)
     except registry.RegistryError as error:
         print(f'error: {error}', file=sys.stderr)
         return 1

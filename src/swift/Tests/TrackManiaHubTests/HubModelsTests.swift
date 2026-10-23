@@ -60,6 +60,35 @@ final class HubModelsTests: XCTestCase {
                        ["hub", "run", "tmu", "import", "--source", source.path])
     }
 
+    func testRunArgumentsAppendRuntimeOnlyWhenChosen() {
+        XCTAssertEqual(HubBackend.runArguments(titleID: "tmnf", actionID: "install", runtime: .download),
+                       ["hub", "run", "tmnf", "install", "--runtime", "download"])
+        XCTAssertEqual(HubBackend.runArguments(titleID: "tmnf", actionID: "install-platform", runtime: .build),
+                       ["hub", "run", "tmnf", "install-platform", "--runtime", "build"])
+        XCTAssertEqual(HubBackend.runArguments(titleID: "tmnf", actionID: "install"),
+                       ["hub", "run", "tmnf", "install"])
+    }
+
+    func testRuntimeChoiceIsNeededOnlyForInstallActionsWithoutRuntime() {
+        let install = HubAction(id: "install", label: "Install", kind: .install)
+        let platform = HubAction(id: "install-platform", label: "Install", kind: .install)
+        let update = HubAction(id: "update", label: "Update", kind: .verify)
+        var missingState = HubInstallationState.empty
+        missingState.runtime = HubProbe(ready: false)
+        var readyState = HubInstallationState.empty
+        readyState.runtime = HubProbe(ready: true)
+        let missing = HubTitle(id: "tmnf", name: "N", state: missingState)
+        let unknown = HubTitle(id: "tmnf", name: "N")
+        let ready = HubTitle(id: "tmnf", name: "N", state: readyState)
+        for title in [missing, unknown] {
+            XCTAssertTrue(title.needsRuntimeChoice(for: install))
+            XCTAssertTrue(title.needsRuntimeChoice(for: platform))
+            XCTAssertFalse(title.needsRuntimeChoice(for: update))
+        }
+        XCTAssertFalse(ready.needsRuntimeChoice(for: install))
+        XCTAssertFalse(ready.needsRuntimeChoice(for: platform))
+    }
+
     func testBackendDrainsLargeCommandOutputBeforeWaiting() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("trackmania-hub-tests-\(UUID().uuidString)", isDirectory: true)

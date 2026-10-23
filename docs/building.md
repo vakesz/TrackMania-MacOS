@@ -2,7 +2,7 @@
 
 The repository produces two deliberately separate artifacts:
 
-- `tmnf-<version>-runtime.tar.xz`: the pinned, patched Wine runtime.
+- `trackmania-mac-<version>-runtime.tar.xz`: the pinned, patched Wine runtime.
 - `TrackMania-Mac-<version>.app.zip`: one native Swift hub app that downloads
   and manages the runtime and game.
 
@@ -55,17 +55,36 @@ make package
 `make package` writes these release inputs under `.build/dist/`:
 
 ```text
-tmnf-<version>-runtime.tar.xz
-tmnf-<version>-runtime.tar.xz.sha256
-tmnf-<version>-source.tar.xz
-tmnf-<version>-source.tar.xz.sha256
+trackmania-mac-<version>-runtime.tar.xz
+trackmania-mac-<version>-runtime.tar.xz.sha256
+trackmania-mac-<version>-source.tar.xz
+trackmania-mac-<version>-source.tar.xz.sha256
 ```
 
-The source archive expands into a single `tmnf/` directory containing the
+The source archive expands into a single `trackmania-mac/` directory containing the
 repository inputs and the corresponding patched upstream source snapshots.
 
 Run `make check` again before publishing. The hub expects the matching
 runtime archive and checksum to exist in the same GitHub Release tag.
+
+### Runtime source modes
+
+The installer (`make install`, `make setup`, `src/shell/cli/install.sh` and the
+hub) takes the runtime from `TMNF_RUNTIME_SOURCE`, or `--runtime=<mode>` on
+`install.sh`, or `RUNTIME=<mode>` on `make`:
+
+- `auto` (default): install `.build/release/runtime` when it exists, else
+  download the release runtime.
+- `download`: always download the release runtime, even if a local build exists.
+- `build`: compile the runtime, then install it. In a checkout this runs
+  `src/shell/tools/build-runtime.sh`. A packaged hub has no build script, so it
+  downloads and verifies `trackmania-mac-<version>-source.tar.xz`, unpacks it under
+  `~/Library/Caches/TMNF/source/<version>` (the path must not contain spaces)
+  and builds there. Interrupted builds resume on the next run.
+
+An installed runtime is never replaced; remove it while the game is closed to
+install again with another mode. `build` needs the prerequisites above and
+cannot be combined with `TMNF_RUNTIME_ARCHIVE`.
 
 ## Build the native hub
 
@@ -104,8 +123,9 @@ from the `APPLE_ID`, `TMNF_TEAM_ID` and `TMNF_APP_PASSWORD` secrets.
 3. Build, sign and notarize the native hub zip for that exact version.
 4. Upload the hub zip and its checksum.
 
-Do not publish a hub whose versioned runtime archive is unavailable: first-run
-installation verifies and downloads that exact asset. The tag workflow enforces
-the matching `VERSION`, runtime asset, checksum and Developer ID notarization
-before it attaches a hub zip; use a new version and coherent runtime build for
+Do not publish a hub whose versioned runtime or source archive is unavailable:
+first-run installation downloads the runtime, and hub builds depend on the
+source archive. The source archive is required. The tag workflow enforces the
+matching `VERSION`, both assets and their checksums, and Developer ID
+notarization before it attaches a hub zip; use a new version and coherent runtime build for
 any archive-format change.

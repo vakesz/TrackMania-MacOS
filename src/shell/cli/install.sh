@@ -30,10 +30,35 @@ install_rosetta() {
 # shellcheck source=src/shell/lib/apps/icons.sh
 . "${TMNF_PROJECT_DIR}/src/shell/lib/apps/icons.sh"
 
+usage() {
+  say 'Usage: install.sh [--runtime=auto|download|build] [directx|setup]'
+}
+
 main() {
+  local runtime_flag=0
+  # The flag wins over TMNF_RUNTIME_SOURCE. It reaches the guarded re-exec through the environment.
+  while test "$#" -gt 0; do
+    case "$1" in
+      --runtime=*|--runtime)
+        test "$runtime_flag" = 0 || die "Give --runtime only once."
+        runtime_flag=1
+        if test "$1" = --runtime; then
+          test "$#" -ge 2 || die "--runtime needs auto, download or build."
+          TMNF_RUNTIME_SOURCE="$2"
+          shift
+        else
+          TMNF_RUNTIME_SOURCE="${1#--runtime=}"
+        fi
+        shift
+        ;;
+      *) break ;;
+    esac
+  done
+  export TMNF_RUNTIME_SOURCE="${TMNF_RUNTIME_SOURCE-auto}"
+  validate_runtime_source
   case "${1:-}" in
-    ''|directx|setup) test "$#" -le 1 || die "Usage: install.sh [directx|setup]" ;;
-    -h|--help) say 'Usage: install.sh [directx|setup]'; return ;;
+    ''|directx|setup) test "$#" -le 1 || { usage >&2; die "Too many arguments."; } ;;
+    -h|--help) usage; return ;;
     *) die "Unknown installation command: $1" ;;
   esac
   validate_launch_options

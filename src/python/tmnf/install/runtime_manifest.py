@@ -62,6 +62,82 @@ def safe_link(name, target):
             parts.append(part)
 
 
+def check_link(root, path, name, allow_dangling=False):
+    """Return the target of a link that stays inside root and resolves to an existing path."""
+    target = os.readlink(path)
+    safe_link(name, target)
+    try:
+        if allow_dangling:
+            if not link_stays_inside(root, path.parent, target):
+                raise ValueError('escapes')
+        else:
+            prefix = path.parent
+            for part in target.split('/'):
+                prefix = prefix / part
+                prefix.resolve(strict=True).relative_to(root)
+            path.stat()  # Also reject invalid kernel paths such as regular-file/..
+    except (ValueError, RuntimeError, OSError) as exc:
+        raise ValueError('Broken or escaping runtime link: {}'.format(name)) from exc
+    return target
+
+
+def link_stays_inside(root, directory, target):
+    """Walk target from directory, following existing links, and tolerate a missing tail.
+
+    Upstream trees ship links that a build later materialises. A '..' after a missing
+    component is refused, since that component could become a link out of root.
+    """
+    current = directory
+    missing = False
+    parts = [part for part in target.split('/') if part not in ('', '.')]
+    for index, part in enumerate(parts):
+        if not missing and not current.is_dir():
+            return False
+        if part == '..':
+            if missing:
+                return False
+            current = current.parent
+        else:
+            candidate = current / part
+            if missing or not os.path.lexists(candidate):
+                missing = True
+                current = candidate
+            else:
+                current = Path(os.path.realpath(candidate))
+                missing = not os.path.lexists(current)
+        try:
+            current.relative_to(root)
+        except ValueError:
+            return False
+    return True
+
+
+def check_tree_links(root, skip=(), allow_dangling=False):
+    """Reject links under root that escape it (or dangle); skip names directly under root."""
+    root = Path(root)
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError('Tree root must be a real directory: {}'.format(root))
+    root = root.resolve()
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        for path in directory.iterdir():
+            if directory == root and path.name in skip:
+                continue
+            name = safe_name(path.relative_to(root).as_posix())
+            mode = path.lstat().st_mode
+            if stat.S_ISLNK(mode):
+                check_link(root, path, name, allow_dangling)
+            elif stat.S_ISDIR(mode):
+                pending.append(path)
+
+
+def safe_root_name(name):
+    if not re.fullmatch(r'[A-Za-z0-9._-]+', name) or name in ('.', '..'):
+        raise ValueError('Unsafe archive root name: {!r}'.format(name))
+    return name
+
+
 def verify_runtime(root, version):
     """Check ownership, required payload, all file hashes, and contained links."""
     root = Path(root)
@@ -76,16 +152,7 @@ def verify_runtime(root, version):
             name = safe_name(path.relative_to(root).as_posix())
             mode = path.lstat().st_mode
             if stat.S_ISLNK(mode):
-                target = os.readlink(path)
-                safe_link(name, target)
-                try:
-                    prefix = path.parent
-                    for part in target.split('/'):
-                        prefix = prefix / part
-                        prefix.resolve(strict=True).relative_to(root)
-                    path.stat()  # Also reject invalid kernel paths such as regular-file/..
-                except (ValueError, RuntimeError, OSError) as exc:
-                    raise ValueError('Broken or escaping runtime link: {}'.format(name)) from exc
+                target = check_link(root, path, name)
                 inventory[name] = ('link', target)
             elif stat.S_ISDIR(mode):
                 inventory[name] = ('directory', stat.S_IMODE(mode))
@@ -133,8 +200,10 @@ def verify_runtime(root, version):
     return inventory
 
 
-def extract_archive(archive, staging, expected):
+def extract_archive(archive, staging, expected, root_name='runtime'):
     """Validate all headers before writing; never extract through archive links."""
+    safe_root_name(root_name)
+    prefix_name = root_name + '/'
     if not re.fullmatch(r'[0-9a-fA-F]{64}', expected):
         raise ValueError('Invalid archive SHA-256')
     # Hash and extract through the same descriptor, not a replaceable cache pathname.
@@ -150,7 +219,7 @@ def extract_archive(archive, staging, expected):
             spellings = {}
             for member in tar.getmembers():
                 name = safe_name(member.name)
-                if name != 'runtime' and not name.startswith('runtime/'):
+                if name != root_name and not name.startswith(prefix_name):
                     raise ValueError('Unexpected runtime archive entry: {}'.format(name))
                 if name in members:
                     raise ValueError('Duplicate runtime archive entry: {}'.format(name))
@@ -160,7 +229,7 @@ def extract_archive(archive, staging, expected):
                     raise ValueError('Unsafe archive permissions: {}'.format(name))
                 if member.isdir() and member.mode & 0o700 != 0o700:
                     raise ValueError('Runtime directories must be owner-accessible: {}'.format(name))
-                if name == 'runtime' and not member.isdir():
+                if name == root_name and not member.isdir():
                     raise ValueError('Archive root must be a directory')
                 # macOS normally has a case-insensitive, normalization-insensitive FS.
                 parts = name.split('/')
@@ -170,10 +239,10 @@ def extract_archive(archive, staging, expected):
                     if spellings.setdefault(folded, prefix) != prefix:
                         raise ValueError('Colliding archive paths: {}'.format(name))
                 if member.issym():
-                    safe_link(name[len('runtime/'):], member.linkname)
+                    safe_link(name[len(prefix_name):], member.linkname)
                 elif member.islnk():
                     target = safe_name(member.linkname)
-                    if not target.startswith('runtime/'):
+                    if not target.startswith(prefix_name):
                         raise ValueError('Hard link escapes runtime: {}'.format(name))
                 members[name] = member
 
@@ -196,7 +265,7 @@ def extract_archive(archive, staging, expected):
                     hard_targets[name] = target.name
 
             staging = Path(staging)
-            root = staging / 'runtime'
+            root = staging / root_name
             root.mkdir()  # The caller owns a unique staging directory; never merge trees.
             directories = {}
             for name, member in members.items():
@@ -240,6 +309,13 @@ def publish_runtime(source, destination, version):
             raise OSError(error, os.strerror(error), str(destination))
 
 
+def cli_root_name(value):
+    try:
+        return safe_root_name(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
@@ -250,6 +326,11 @@ def main():
     extract.add_argument('archive')
     extract.add_argument('staging')
     extract.add_argument('sha256')
+    extract.add_argument('--root', default='runtime', type=cli_root_name)
+    links = commands.add_parser('links')
+    links.add_argument('root')
+    links.add_argument('--skip', action='append', default=[])
+    links.add_argument('--allow-dangling', action='store_true')
     publish = commands.add_parser('publish')
     publish.add_argument('source')
     publish.add_argument('destination')
@@ -258,8 +339,10 @@ def main():
     try:
         if args.command == 'verify':
             verify_runtime(args.root, args.version)
+        elif args.command == 'links':
+            check_tree_links(args.root, args.skip, args.allow_dangling)
         elif args.command == 'extract':
-            extract_archive(args.archive, args.staging, args.sha256)
+            extract_archive(args.archive, args.staging, args.sha256, args.root)
         else:
             publish_runtime(args.source, args.destination, args.version)
     except (ValueError, OSError, tarfile.TarError, UnicodeError) as exc:

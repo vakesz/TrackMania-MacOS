@@ -1,6 +1,15 @@
 .DEFAULT_GOAL := help
 SHELL_SOURCES := $(shell find src/shell -type f \( -name '*.sh' -o -path 'src/shell/cli/tmnf' \) -print)
 
+ifneq ($(RUNTIME),)
+ifneq ($(words $(RUNTIME)),1)
+$(error RUNTIME must be exactly one of: auto download build)
+endif
+ifeq ($(filter auto download build,$(RUNTIME)),)
+$(error RUNTIME must be one of: auto download build)
+endif
+endif
+
 .PHONY: help build package appbundle zip install play configure doctor stop app setup check smoke
 
 help:
@@ -8,13 +17,13 @@ help:
 	@echo 'make package     Write runtime and source release archives'
 	@echo 'make appbundle   Build and sign the native TrackMania Mac hub'
 	@echo 'make zip         Create the distributable native hub .app.zip'
-	@echo 'make install     Install the runtime, game and Applications launchers'
+	@echo 'make install     Install the runtime, game and Applications launchers (RUNTIME=auto|download|build)'
 	@echo 'make play        Play with Competition Patch and all runtime fixes'
 	@echo 'make configure   Open the original graphics/settings launcher'
 	@echo 'make doctor      Check the installed game and runtime'
 	@echo 'make stop        Stop Wine processes in the selected prefix'
 	@echo 'make app         Install the game and settings apps in Applications'
-	@echo 'make setup       Install runtime, prefix and DirectX without the game'
+	@echo 'make setup       Install runtime, prefix and DirectX without the game (RUNTIME=...)'
 	@echo 'make check       Validate scripts and run offline regression tests'
 	@echo 'make smoke       Run runtime regression probes in the selected prefix'
 
@@ -31,9 +40,12 @@ zip:
 	./src/shell/tools/package-app.sh zip
 
 install:
-	./src/shell/cli/install.sh
+	$(if $(RUNTIME),TMNF_RUNTIME_SOURCE='$(RUNTIME)' )./src/shell/cli/install.sh
 
-play configure doctor stop app setup:
+setup:
+	$(if $(RUNTIME),TMNF_RUNTIME_SOURCE='$(RUNTIME)' )./src/shell/cli/tmnf $@
+
+play configure doctor stop app:
 	./src/shell/cli/tmnf $@
 
 check:

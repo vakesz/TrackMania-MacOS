@@ -710,6 +710,56 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
         self.assertFalse(self.prefix.exists())
         self.assertFalse(self.log.exists())
 
+    def test_installer_runtime_flag_is_validated_before_mutation(self):
+        for label, arguments, message in (
+                ('bad value', '--runtime=bogus', 'Invalid TMNF_RUNTIME_SOURCE'),
+                ('bad spaced value', '--runtime bogus directx', 'Invalid TMNF_RUNTIME_SOURCE'),
+                ('missing value', '--runtime', '--runtime needs'),
+                ('empty value', '--runtime=', 'Invalid TMNF_RUNTIME_SOURCE'),
+                ('invalid with help', '--runtime=bogus --help', 'Invalid TMNF_RUNTIME_SOURCE'),
+                ('twice', '--runtime=build --runtime=auto', 'only once'),
+                ('flag after command', 'setup --runtime=build', 'Too many arguments'),
+                ('unknown command', '--runtime=download unsupported', 'Unknown installation command')):
+            with self.subTest(label):
+                result = self.shell('./src/shell/cli/install.sh ' + arguments)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                self.assertFalse(self.prefix.exists())
+                self.assertFalse(self.log.exists())
+
+    def test_installer_runtime_flag_overrides_the_environment(self):
+        # The archive conflict is only reported for build, so build came from the flag.
+        for arguments in ('--runtime=build setup', '--runtime build setup'):
+            with self.subTest(arguments):
+                result = self.shell('./src/shell/cli/install.sh ' + arguments,
+                                    TMNF_RUNTIME_SOURCE='download', TMNF_RUNTIME_ARCHIVE='/nonexistent')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('cannot be combined with TMNF_RUNTIME_SOURCE=build', result.stderr)
+        result = self.shell('./src/shell/cli/install.sh unsupported', TMNF_RUNTIME_SOURCE='')
+        self.assertIn('Invalid TMNF_RUNTIME_SOURCE', result.stderr)
+        result = self.shell('./src/shell/cli/install.sh --runtime=auto unsupported',
+                            TMNF_RUNTIME_SOURCE='bogus')
+        self.assertIn('Unknown installation command', result.stderr)
+
+    def test_installer_help_lists_the_runtime_flag(self):
+        result = self.shell('./src/shell/cli/install.sh --help')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('--runtime=auto|download|build', result.stdout)
+
+    def test_makefile_passes_the_runtime_choice_to_install_and_setup(self):
+        for target in ('install', 'setup'):
+            result = subprocess.run(['make', '-n', target, 'RUNTIME=build'], cwd=ROOT, text=True,
+                                    capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("TMNF_RUNTIME_SOURCE='build' ./src/shell/", result.stdout)
+        result = subprocess.run(['make', '-n', 'install'], cwd=ROOT, text=True, capture_output=True, check=False)
+        self.assertNotIn('TMNF_RUNTIME_SOURCE', result.stdout)
+        for value in ('bogus', 'auto build', '$(shell id)'):
+            result = subprocess.run(['make', '-n', 'install', 'RUNTIME=' + value], cwd=ROOT, text=True,
+                                    capture_output=True, check=False)
+            self.assertNotEqual(result.returncode, 0, value)
+            self.assertIn('RUNTIME must be', result.stderr)
+
     def test_app_identity_is_exact_and_preflight_preserves_launcher(self):
         contents = self.home / 'apps/TrackMania Nations Forever.app/Contents'
         contents.mkdir(parents=True)

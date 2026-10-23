@@ -92,6 +92,39 @@ class HubBackendTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"TMNF_TITLES_DIR": "/private/tmp/t"}):
             self.assertEqual(hub_run._scrubbed_env("tmu")["TMNF_TITLES_DIR"], "/private/tmp/t")
 
+    def test_runtime_source_never_leaks_from_the_caller(self):
+        inherited = {"TMNF_RUNTIME_SOURCE": "build", "TMNF_RUNTIME_ARCHIVE": "/private/tmp/x.tar",
+                     "TMNF_RUNTIME_SHA256": "0" * 64}
+        with mock.patch.dict(os.environ, inherited):
+            self.assertFalse(set(inherited) & set(hub_run._scrubbed_env("tmu")))
+            self.assertFalse((set(inherited) - {"TMNF_RUNTIME_SOURCE"})
+                             & set(hub_run._scrubbed_env("tmu", "download")))
+            self.assertEqual(hub_run._scrubbed_env("tmu", "download")["TMNF_RUNTIME_SOURCE"], "download")
+
+    def test_runtime_flag_sets_env_for_install_actions(self):
+        cases = ((None, "install", []), ("build", "install", []),
+                 ("download", "install-platform", ["setup"]), (None, "install-platform", ["setup"]))
+        for runtime, action, extra in cases:
+            with self.subTest(runtime=runtime, action=action), \
+                    mock.patch.dict(os.environ, {"TMNF_RUNTIME_SOURCE": "build"}), \
+                    mock.patch.object(hub_run, "available_action_ids", return_value={action}), \
+                    mock.patch.object(hub_run.os, "execve", side_effect=KeyboardInterrupt) as execve, \
+                    self.assertRaises(KeyboardInterrupt):
+                hub_run.run("tmnf", action, None, runtime)
+            command, env = execve.call_args.args[1], execve.call_args.args[2]
+            self.assertTrue(command[1].endswith("src/shell/cli/install.sh"))
+            self.assertEqual(command[2:], extra)
+            self.assertEqual(env.get("TMNF_RUNTIME_SOURCE"), runtime)
+
+    def test_runtime_flag_is_rejected_for_other_actions_and_bad_values(self):
+        for action, runtime in (("update", "download"), ("import", "build"), ("install-apps", "build"),
+                                ("install", "auto"), ("install", "bogus"), ("install", "")):
+            with self.subTest(action=action, runtime=runtime), \
+                    mock.patch.object(hub_run.os, "execve") as execve, \
+                    self.assertRaises(SystemExit):
+                hub_run.run("tmnf", action, "/tmp" if action == "import" else None, runtime)
+            execve.assert_not_called()
+
     def test_error_placeholders_report_no_icon_source(self):
         placeholder = snapshot._error_placeholder("broken", "bad")
         self.assertIsNone(placeholder["icon"])

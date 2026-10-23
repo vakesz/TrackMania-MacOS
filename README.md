@@ -48,7 +48,8 @@ four entries are provisional and are not yet qualified for complete gameplay,
 graphics or online services. See [the hub guide](docs/hub-app.md) for details.
 
 For TMNF, it downloads the ready-built runtime, game, DirectX and Competition
-Patch, then creates two separate apps:
+Patch (or builds the runtime on your Mac when you choose that in the hub; see
+the build prerequisites under Option 3), then creates two separate apps:
 
 - **TrackMania Nations Forever** starts the game with Competition Patch.
 - **TrackMania Settings** opens the original launcher to change graphics and
@@ -73,19 +74,24 @@ a source checkout.
 
 ## Option 2: use a source checkout
 
-From the repository root, this downloads the same prebuilt runtime and installs
-TMNF:
+From the repository root, this installs TMNF with the runtime chosen by
+`RUNTIME`:
 
 ```sh
-make install
+make install                  # auto: a local build if present, else download
+make install RUNTIME=download # always the prebuilt release runtime
+make install RUNTIME=build    # compile the runtime here, then install it
 ```
+
+`make setup` takes the same `RUNTIME` choice. `build` has the prerequisites
+listed under Option 3. An already installed runtime is never replaced.
 
 To install from an archive you already downloaded instead, point the installer
 at it and give the checksum from the release:
 
 ```sh
 version="$(cat VERSION)"
-TMNF_RUNTIME_ARCHIVE="$HOME/Downloads/tmnf-${version}-runtime.tar.xz" \
+TMNF_RUNTIME_ARCHIVE="$HOME/Downloads/trackmania-mac-${version}-runtime.tar.xz" \
 TMNF_RUNTIME_SHA256="<checksum from the release>" make install
 ```
 
@@ -94,7 +100,7 @@ a quarantine flag in the browser. Clear it, then install:
 
 ```sh
 version="$(cat VERSION)"
-xattr -dr com.apple.quarantine "$HOME/Downloads/tmnf-${version}-runtime.tar.xz"
+xattr -dr com.apple.quarantine "$HOME/Downloads/trackmania-mac-${version}-runtime.tar.xz"
 ```
 
 Archives that `make install` fetches with `curl` are not quarantined, so this
@@ -119,7 +125,10 @@ makefiles. Installed games and runtime folders support spaces.
 applies the repository patches, then compiles Wine, D9VK, x87sidecar and the
 session helper. It writes the complete runtime to `.build/release/runtime`.
 Afterwards `make install` detects and installs that local runtime instead of
-downloading one. Allow several gigabytes of disk space and a substantial first
+downloading one. `make install RUNTIME=build` does both steps, and in a hub
+install it fetches the release's verified source archive when there is no
+checkout. You need Apple Silicon, Rosetta 2, full Xcode and Homebrew (missing
+formulae are installed with `brew install`). Allow several gigabytes of disk space and a substantial first
 build. Builds use every CPU core by default; use `TMNF_JOBS=4 make build` to
 leave some free.
 

@@ -47,6 +47,9 @@ class RuntimeInstall(unittest.TestCase):
         (self.bundle / 'bin/wine-link').symlink_to('wine')
         self.write_manifest()
         self.archive = self.root / 'runtime.tar.xz'
+        self.serve = self.root / 'serve'
+        self.serve.mkdir()
+        self.stub_log = self.root / 'stub.log'
         self.destination = self.home / "support with spaces and 'quotes/runtime"
         commands = self.root / 'commands'
         commands.mkdir()
@@ -87,15 +90,16 @@ class RuntimeInstall(unittest.TestCase):
             for member in extras:
                 tar.addfile(member, io.BytesIO(b'x' * member.size) if member.isreg() else None)
 
-    def install(self, checksum=None, explicit=True, conditional=False, umask='022'):
+    def install(self, checksum=None, explicit=True, conditional=False, umask='022', extra_env=None, after_source=''):
         env = dict(self.env)
+        env.update(extra_env or {})
         if explicit:
             env.update(TMNF_RUNTIME_ARCHIVE=str(self.archive),
                        TMNF_RUNTIME_SHA256=checksum if checksum is not None else
                        hashlib.sha256(self.archive.read_bytes()).hexdigest())
         return subprocess.run(
             ['bash', '-euc', 'umask "$2"; . src/shell/lib/common.sh; TMNF_PROJECT_DIR="$1"; '
-             '. "$TMNF_PROJECT_DIR/src/shell/lib/install/runtime.sh"; ' +
+             '. "$TMNF_PROJECT_DIR/src/shell/lib/install/runtime.sh"; ' + after_source +
              ('if install_wine_runtime; then exit 0; else exit 1; fi' if conditional else
               'install_wine_runtime'), 'fixture', str(self.project), umask],
             cwd=ROOT, env=env, text=True, capture_output=True, check=False)
@@ -421,6 +425,319 @@ class RuntimeInstall(unittest.TestCase):
         self.assertFalse(self.destination.exists())
         self.assertEqual(list(self.destination.parent.glob('.runtime-install.*')), [other])
         self.assertEqual((other / 'keep').read_text(), 'another install')
+
+    BUILD_STUB = ('#!/bin/bash\nproject="$(cd "$(dirname "$0")/../../.." && pwd)"\n'
+                  'echo "build $project path=$(command -v brew || echo nobrew)" >>"$STUB_LOG"\n'
+                  'rm -rf "$project/.build/release/runtime"; mkdir -p "$project/.build/release"\n'
+                  'cp -pRP "$FIXTURE_BUNDLE" "$project/.build/release/runtime"\n')
+
+    def source_env(self, mode, **extra):
+        curl = self.root / 'commands/curl'
+        curl.write_text('#!/bin/bash\nout=\nurl=\nwhile test "$#" -gt 0; do\n'
+                        '  case "$1" in\n'
+                        '    --output) out="$2"; shift ;;\n'
+                        '    --retry|--connect-timeout|--speed-limit|--speed-time) shift ;;\n'
+                        '    --*) ;;\n'
+                        '    *) url="$1" ;;\n'
+                        '  esac\n  shift\ndone\n'
+                        'echo "curl $url" >>"$STUB_LOG"\n'
+                        'cp "$SERVE_DIR/$(basename "$url")" "$out" || exit 22\n')
+        curl.chmod(0o755)
+        env = dict(TMNF_RUNTIME_SOURCE=mode, STUB_LOG=str(self.stub_log), SERVE_DIR=str(self.serve),
+                   FIXTURE_BUNDLE=str(self.bundle))
+        env.update(extra)
+        return env
+
+    def stub_lines(self):
+        return self.stub_log.read_text().splitlines() if self.stub_log.exists() else []
+
+    def serve_source(self, extras=(), checksum=None, script=True):
+        archive = self.serve / 'trackmania-mac-{}-source.tar.xz'.format(self.version)
+        with tarfile.open(archive, 'w:xz') as tar:
+            root = tarfile.TarInfo('trackmania-mac')
+            root.type, root.mode = tarfile.DIRTYPE, 0o755
+            tar.addfile(root)
+            if script:
+                for directory in ('trackmania-mac/src', 'trackmania-mac/src/shell', 'trackmania-mac/src/shell/tools'):
+                    info = tarfile.TarInfo(directory)
+                    info.type, info.mode = tarfile.DIRTYPE, 0o755
+                    tar.addfile(info)
+                data = self.BUILD_STUB.encode()
+                info = tarfile.TarInfo('trackmania-mac/src/shell/tools/build-runtime.sh')
+                info.size, info.mode = len(data), 0o755
+                tar.addfile(info, io.BytesIO(data))
+            for member in extras:
+                tar.addfile(member, io.BytesIO(b'x' * member.size) if member.isreg() else None)
+        checksum = checksum or hashlib.sha256(archive.read_bytes()).hexdigest()
+        (self.serve / (archive.name + '.sha256')).write_text(checksum + '  ' + archive.name + '\n')
+
+    def serve_runtime(self):
+        self.package()
+        name = 'trackmania-mac-{}-runtime.tar.xz'.format(self.version)
+        shutil.copy2(self.archive, self.serve / name)
+        (self.serve / (name + '.sha256')).write_text(
+            hashlib.sha256(self.archive.read_bytes()).hexdigest() + '  ' + name + '\n')
+
+    def test_invalid_runtime_source_is_rejected_before_mutation(self):
+        env = self.source_env('bogus')
+        self.package()
+        result = self.install(extra_env=env, explicit=False)
+        self.assert_rejected(result)
+        self.assertIn('Invalid TMNF_RUNTIME_SOURCE', result.stderr)
+        self.assertFalse((self.home / 'cache').exists())
+        self.assertEqual(self.stub_lines(), [])
+
+    def test_download_mode_ignores_a_local_build(self):
+        built = self.project / '.build/release/runtime'
+        shutil.copytree(self.bundle, built, symlinks=True)
+        (built / 'lib/d9vk/d3d9.dll').write_bytes(b'damaged')
+        env = self.source_env('download')
+        self.serve_runtime()
+        result = self.install(extra_env=env, explicit=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.stub_lines()), 2)
+        self.assertTrue(all('-runtime.tar.xz' in line for line in self.stub_lines()))
+        self.assert_clean()
+
+    def test_auto_mode_prefers_a_local_build_without_downloading(self):
+        shutil.copytree(self.bundle, self.project / '.build/release/runtime', symlinks=True)
+        env = self.source_env('auto')
+        result = self.install(extra_env=env, explicit=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.stub_lines(), [])
+
+    def test_explicit_mode_reports_an_already_installed_runtime(self):
+        self.package()
+        self.assertEqual(self.install().returncode, 0)
+        for mode, expected in (('auto', 'is installed at'), ('download', 'already installed at'),
+                               ('build', 'already installed at')):
+            with self.subTest(mode=mode):
+                result = self.install(extra_env=self.source_env(mode), explicit=False)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(expected, result.stdout)
+        self.assertEqual(self.stub_lines(), [])
+
+    def test_build_mode_rejects_an_explicit_archive(self):
+        env = self.source_env('build')
+        self.package()
+        self.assert_rejected(self.install(extra_env=env))
+
+    def test_build_in_a_checkout_runs_its_builder_then_installs(self):
+        script = self.project / 'src/shell/tools/build-runtime.sh'
+        script.parent.mkdir(parents=True)
+        script.write_text(self.BUILD_STUB)
+        result = self.install(extra_env=self.source_env('build'), explicit=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.stub_lines()), 1)
+        self.assertIn('build ' + str(self.project), self.stub_lines()[0])
+        self.assertTrue((self.destination / 'bin/wine-link').is_symlink())
+        self.assert_clean()
+
+    def test_failed_build_is_not_replaced_by_a_download(self):
+        script = self.project / 'src/shell/tools/build-runtime.sh'
+        script.parent.mkdir(parents=True)
+        script.write_text('#!/bin/bash\nexit 3\n')
+        self.serve_runtime()
+        result = self.install(extra_env=self.source_env('build'), explicit=False)
+        self.assert_rejected(result)
+        self.assertIn('runtime build failed', result.stderr)
+        self.assertEqual(self.stub_lines(), [])
+
+    def test_build_from_the_payload_downloads_verifies_and_reuses_the_source(self):
+        env = self.source_env('build')
+        self.serve_source()
+        result = self.install(extra_env=env, explicit=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        tree = self.home / 'cache/source' / self.version
+        self.assertEqual([line.split()[0] for line in self.stub_lines()], ['curl', 'curl', 'build'])
+        self.assertIn('build ' + str(tree), self.stub_lines()[2])
+        self.assertTrue((tree / '.tmnf-source-sha256').is_file())
+        self.assertEqual(list((self.home / 'cache/source').glob('.extract.*')), [])
+        self.assert_clean()
+        shutil.rmtree(self.destination)
+        result = self.install(extra_env=env, explicit=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Using extracted source', result.stdout)
+        self.assertEqual(sum(line.endswith('-source.tar.xz') for line in self.stub_lines()), 1)
+
+    def test_source_checksum_mismatch_is_rejected_without_building(self):
+        self.serve_source(checksum='0' * 64)
+        self.assert_rejected(self.install(extra_env=self.source_env('build'), explicit=False))
+        self.assertFalse((self.home / 'cache/source').exists())
+        self.assertFalse(any(line.startswith('build') for line in self.stub_lines()))
+
+    def test_source_checksum_file_must_be_hex(self):
+        self.serve_source(checksum='not-a-checksum')
+        self.assert_rejected(self.install(extra_env=self.source_env('build'), explicit=False))
+        self.assertFalse(any(line.startswith('build') for line in self.stub_lines()))
+
+    def test_unsafe_source_members_are_rejected_without_building(self):
+        def member(name, kind=tarfile.REGTYPE, link=''):
+            info = tarfile.TarInfo(name)
+            info.type, info.linkname, info.mode = kind, link, 0o644
+            return info
+        for label, extras in (('absolute', [member('/tmp/tmnf-escape')]),
+                              ('parent', [member('trackmania-mac/../escape')]),
+                              ('other root', [member('other/file')]),
+                              ('link escape', [member('trackmania-mac/link', tarfile.SYMTYPE, '../../etc')]),
+                              ('absolute link', [member('trackmania-mac/link', tarfile.SYMTYPE, '/etc')]),
+                              ('hard link escape', [member('trackmania-mac/link', tarfile.LNKTYPE, 'other/file')]),
+                              ('fifo', [member('trackmania-mac/fifo', tarfile.FIFOTYPE)]),
+                              ('device', [member('trackmania-mac/dev', tarfile.CHRTYPE)])):
+            with self.subTest(label):
+                shutil.rmtree(self.home / 'cache', ignore_errors=True)
+                self.serve_source(extras)
+                self.assert_rejected(self.install(extra_env=self.source_env('build'), explicit=False))
+                self.assertFalse((self.home / 'cache/source' / self.version).exists())
+                self.assertFalse(any(line.startswith('build') for line in self.stub_lines()))
+                self.assertFalse(Path('/tmp/tmnf-escape').exists())
+
+    def test_whitespace_in_the_build_path_is_rejected_before_downloading(self):
+        self.serve_source()
+        env = self.source_env('build', TMNF_CACHE=str(self.home / 'cache dir'))
+        result = self.install(extra_env=env, explicit=False)
+        self.assert_rejected(result)
+        self.assertIn('without spaces', result.stderr)
+        self.assertEqual(self.stub_lines(), [])
+
+    def test_a_changed_extracted_source_is_never_reused_or_removed(self):
+        env = self.source_env('build')
+        self.serve_source()
+        self.assertEqual(self.install(extra_env=env, explicit=False).returncode, 0)
+        shutil.rmtree(self.destination)
+        tree = self.home / 'cache/source' / self.version
+        (tree / '.tmnf-source-sha256').write_text('1' * 64 + '\n')
+        self.assert_rejected(self.install(extra_env=env, explicit=False))
+        self.assertTrue(tree.is_dir())
+
+    def test_build_finds_homebrew_outside_a_minimal_path(self):
+        brew = self.root / 'homebrew/bin'
+        brew.mkdir(parents=True)
+        (brew / 'brew').write_text('#!/bin/bash\nexit 0\n')
+        (brew / 'brew').chmod(0o755)
+        script = self.project / 'src/shell/tools/build-runtime.sh'
+        script.parent.mkdir(parents=True)
+        script.write_text(self.BUILD_STUB)
+        override = 'homebrew_bin_dirs() {{ printf "%s\\n" {} {}; }}; '.format(self.root / 'missing', brew)
+        result = self.install(extra_env=self.source_env('build'), explicit=False, after_source=override)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('path=' + str(brew / 'brew'), self.stub_lines()[0])
+
+    def test_empty_runtime_source_is_invalid_not_auto(self):
+        result = self.install(extra_env=self.source_env(''), explicit=False)
+        self.assert_rejected(result)
+        self.assertIn('Invalid TMNF_RUNTIME_SOURCE', result.stderr)
+
+    def test_source_with_dangling_or_chained_links_is_rejected(self):
+        def link(name, target):
+            info = tarfile.TarInfo(name)
+            info.type, info.linkname, info.mode = tarfile.SYMTYPE, target, 0o777
+            return info
+        for label, extras in (('dangling', [link('trackmania-mac/a', 'x/..')]),
+                              ('chain', [link('trackmania-mac/a', 'x/..'), link('trackmania-mac/L', 'a/..')])):
+            with self.subTest(label):
+                shutil.rmtree(self.home / 'cache', ignore_errors=True)
+                self.serve_source(extras)
+                self.assert_rejected(self.install(extra_env=self.source_env('build'), explicit=False))
+                self.assertFalse((self.home / 'cache/source' / self.version).exists())
+                self.assertFalse(any(line.startswith('build') for line in self.stub_lines()))
+
+    def test_source_may_hold_dangling_links_that_stay_inside(self):
+        def entry(name, kind, link=''):
+            info = tarfile.TarInfo(name)
+            info.type, info.linkname, info.mode = kind, link, 0o755 if kind == tarfile.DIRTYPE else 0o777
+            return info
+        self.serve_source([entry('trackmania-mac/upstream', tarfile.DIRTYPE),
+                           entry('trackmania-mac/upstream/Tools', tarfile.SYMTYPE, '../Package/Latest/Tools')])
+        result = self.install(extra_env=self.source_env('build'), explicit=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        tree = self.home / 'cache/source' / self.version
+        self.assertTrue((tree / 'upstream/Tools').is_symlink())
+        self.assertFalse((tree / 'upstream/Tools').exists())
+
+    def test_tree_link_check_modes(self):
+        tree = self.root / 'linktree'
+        (tree / 'sub').mkdir(parents=True)
+        (tree / 'real').mkdir()
+        (self.root / 'outside').mkdir()
+        cases = (('sub/ok', '../Package/Latest/Tools', True),
+                 ('sub/existing', '../real', True),
+                 ('sub/missing-then-parent', 'x/..', False),
+                 ('sub/escape', '../../outside', False),
+                 ('sub/escape-missing', '../../outside/none', False),
+                 ('sub/absolute', '/etc', False),
+                 ('sub/file-parent', 'file/..', False))
+        (tree / 'sub/file').write_text('x')
+        for name, target, allowed in cases:
+            link = tree / name
+            link.symlink_to(target)
+            with self.subTest(name=name):
+                # Strict mode (runtimes) rejects every dangling link.
+                if not link.exists():
+                    with self.assertRaises(ValueError):
+                        runtime_manifest.check_tree_links(tree)
+                if allowed:
+                    runtime_manifest.check_tree_links(tree, allow_dangling=True)
+                else:
+                    with self.assertRaises(ValueError):
+                        runtime_manifest.check_tree_links(tree, allow_dangling=True)
+            link.unlink()
+
+    def test_reused_source_is_rechecked_for_links_and_marker_type(self):
+        env = self.source_env('build')
+        self.serve_source()
+        self.assertEqual(self.install(extra_env=env, explicit=False).returncode, 0)
+        tree = self.home / 'cache/source' / self.version
+        shutil.rmtree(self.destination)
+        (tree / 'escape').symlink_to('/etc')
+        result = self.install(extra_env=env, explicit=False)
+        self.assert_rejected(result)
+        self.assertIn('unsafe links', result.stderr)
+        (tree / 'escape').unlink()
+        marker = tree / '.tmnf-source-sha256'
+        saved = marker.read_text()
+        marker.unlink()
+        (tree / 'real-marker').write_text(saved)
+        marker.symlink_to('real-marker')
+        self.assert_rejected(self.install(extra_env=env, explicit=False))
+        marker.unlink()
+        marker.write_text(saved)
+        # Links inside the build output are not source inputs.
+        (tree / '.build').mkdir(exist_ok=True)
+        (tree / '.build/outside').symlink_to('/etc')
+        self.assertEqual(self.install(extra_env=env, explicit=False).returncode, 0)
+
+    def test_archive_root_name_must_be_a_plain_component(self):
+        archive = self.root / 'any.tar.xz'
+        with tarfile.open(archive, 'w:xz') as tar:
+            tar.add(self.bundle, arcname='runtime')
+        checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
+        for name in ('', '.', '..', 'a/b', '/abs', 'with space', 'new\nline'):
+            with self.subTest(name=name):
+                staging = self.root / 'unpacked-root'
+                staging.mkdir()
+                with self.assertRaises(ValueError):
+                    runtime_manifest.extract_archive(archive, staging, checksum, name)
+                self.assertEqual(list(staging.iterdir()), [])
+                shutil.rmtree(staging)
+                result = subprocess.run([sys.executable, '-I', str(ROOT / 'src/python/tmnf/install/runtime_manifest.py'),
+                                         'extract', str(archive), str(self.root), checksum, '--root=' + name],
+                                        capture_output=True, text=True, check=False)
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_extract_root_is_configurable_and_default_is_runtime(self):
+        archive = self.root / 'tmnf.tar.xz'
+        with tarfile.open(archive, 'w:xz') as tar:
+            tar.add(self.bundle, arcname='trackmania-mac')
+        checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
+        staging = self.root / 'unpacked'
+        staging.mkdir()
+        runtime_manifest.extract_archive(archive, staging, checksum, 'trackmania-mac')
+        self.assertTrue((staging / 'trackmania-mac/bin/wine-link').is_symlink())
+        other = self.root / 'default'
+        other.mkdir()
+        with self.assertRaises(ValueError):
+            runtime_manifest.extract_archive(archive, other, checksum)
 
     def test_concurrent_identical_installs_do_not_nest_or_replace(self):
         self.package()

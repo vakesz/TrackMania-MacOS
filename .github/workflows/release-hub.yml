@@ -17,7 +17,7 @@ jobs:
       TMNF_NOTARY_PROFILE: tmnf-ci
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned
-      - name: Verify tag, runtime release asset and signing configuration
+      - name: Verify tag, runtime and source release assets and signing configuration
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
@@ -35,18 +35,21 @@ jobs:
           test "$TMNF_NOTARIZE" = 1 || { echo 'TMNF_NOTARIZE=1 is required for a tag release.' >&2; exit 1; }
           test -n "$APPLE_ID" && test -n "$TMNF_TEAM_ID" && test -n "$TMNF_APP_PASSWORD" \
             || { echo 'Apple notarization credentials are required for a tag release.' >&2; exit 1; }
-          asset="tmnf-${version}-runtime.tar.xz"
           staging="$(mktemp -d)"
           trap 'rm -rf "$staging"' EXIT
-          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$staging" \
-            --pattern "$asset" --pattern "$asset.sha256"
-          test -s "$staging/$asset" && test -s "$staging/$asset.sha256" \
-            || { echo "Release $tag must contain $asset and $asset.sha256 before publishing the hub." >&2; exit 1; }
-          expected="$(awk 'NR == 1 { print $1 }' "$staging/$asset.sha256")"
-          actual="$(shasum -a 256 "$staging/$asset" | awk '{print $1}')"
-          expected="$(printf '%s' "$expected" | tr 'A-F' 'a-f')"
-          [[ "$expected" =~ ^[0-9a-f]{64}$ ]] && test "$expected" = "$actual" \
-            || { echo "Published runtime checksum verification failed for $asset." >&2; exit 1; }
+          # The hub installs the runtime from the first asset and builds it from the second.
+          for kind in runtime source; do
+            asset="trackmania-mac-${version}-${kind}.tar.xz"
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$staging" \
+              --pattern "$asset" --pattern "$asset.sha256"
+            test -s "$staging/$asset" && test -s "$staging/$asset.sha256" \
+              || { echo "Release $tag must contain $asset and $asset.sha256 before publishing the hub." >&2; exit 1; }
+            expected="$(awk 'NR == 1 { print $1 }' "$staging/$asset.sha256")"
+            actual="$(shasum -a 256 "$staging/$asset" | awk '{print $1}')"
+            expected="$(printf '%s' "$expected" | tr 'A-F' 'a-f')"
+            [[ "$expected" =~ ^[0-9a-f]{64}$ ]] && test "$expected" = "$actual" \
+              || { echo "Published checksum verification failed for $asset." >&2; exit 1; }
+          done
       - name: Import Developer ID certificate
         if: env.APPLE_CERT_P12 != ''
         run: |

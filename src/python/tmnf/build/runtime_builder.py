@@ -22,6 +22,8 @@ from tmnf.build.game_profile import generate
 from tmnf.install.runtime_manifest import verify_runtime
 
 ROOT = Path(__file__).resolve().parents[4]
+# Release asset prefix and source archive root; the shell side mirrors it in common.sh.
+RELEASE_NAME = 'trackmania-mac'
 # Capture before local imports and lock waits: old code must not stamp newer sources.
 LOADED_PYTHON_INPUTS = {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
                       for name in ('src/python/tmnf/build/__init__.py',
@@ -720,18 +722,18 @@ def archive_metadata(info):
 
 def source_archive(archive):
     def project_filter(info):
-        path = Path(info.name).relative_to('tmnf')
+        path = Path(info.name).relative_to(RELEASE_NAME)
         return None if project_excluded(path) else archive_metadata(info)
 
     def source_filter(info):
-        path = Path(info.name).relative_to('tmnf/upstream')
+        path = Path(info.name).relative_to(f'{RELEASE_NAME}/upstream')
         return None if source_excluded(path.parts[0], Path(*path.parts[1:])) else archive_metadata(info)
 
     with tarfile.open(archive, 'w:xz', preset=3) as tar:
         for entry in PROJECT_ENTRIES:
-            tar.add(ROOT / entry, arcname=f'tmnf/{entry}', filter=project_filter)
+            tar.add(ROOT / entry, arcname=f'{RELEASE_NAME}/{entry}', filter=project_filter)
         for name in LOCK:
-            tar.add(SOURCES / name, arcname=f'tmnf/upstream/{name}', filter=source_filter)
+            tar.add(SOURCES / name, arcname=f'{RELEASE_NAME}/upstream/{name}', filter=source_filter)
     verify_no_build_paths_in_archive(archive)
 
 
@@ -765,7 +767,7 @@ def package():
     with tempfile.TemporaryDirectory(prefix='.package-', dir=DIST) as directory:
         staged = []
         for kind in ('runtime', 'source'):
-            archive = Path(directory) / f'tmnf-{VERSION}-{kind}.tar.xz'
+            archive = Path(directory) / f'{RELEASE_NAME}-{VERSION}-{kind}.tar.xz'
             with Progress(f'Writing {archive.name}'):
                 if kind == 'runtime':
                     with tarfile.open(archive, 'w:xz', preset=3) as tar:

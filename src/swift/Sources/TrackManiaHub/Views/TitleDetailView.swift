@@ -3,6 +3,7 @@ import SwiftUI
 struct TitleDetailView: View {
     let title: HubTitle
     @ObservedObject var model: HubViewModel
+    @State private var runtimeChoiceAction: HubAction?
 
     var body: some View {
         ScrollView {
@@ -152,6 +153,25 @@ struct TitleDetailView: View {
             .frame(maxWidth: 760, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
+        .confirmationDialog(
+            "Install the Wine runtime",
+            isPresented: Binding(get: { runtimeChoiceAction != nil },
+                                 set: { if !$0 { runtimeChoiceAction = nil } }),
+            titleVisibility: .visible,
+            presenting: runtimeChoiceAction
+        ) { action in
+            Button("Download prebuilt (recommended)") {
+                model.run(action, for: title, runtime: .download)
+            }
+            Button("Build from source…") {
+                model.run(action, for: title, runtime: .build)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("Downloading fetches the verified runtime for this release and takes a few minutes. "
+                + "Building from source compiles the runtime from this release's source archive "
+                + "and needs Xcode, Rosetta 2 and Homebrew; it can take hours.")
+        }
     }
 
     private var primaryAction: HubAction? {
@@ -166,6 +186,8 @@ struct TitleDetailView: View {
     private func perform(_ action: HubAction) {
         if action.kind == .import {
             model.chooseImportSource(for: title, action: action)
+        } else if title.needsRuntimeChoice(for: action) {
+            runtimeChoiceAction = action
         } else {
             model.run(action, for: title)
         }

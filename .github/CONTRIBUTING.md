@@ -1,8 +1,8 @@
 # Contributing
 
-Thanks for helping improve TrackMania-MacOS. This is a runtime for one game on Apple
-Silicon, so a change is judged by whether TMNF still installs, builds and plays
-correctly.
+Thanks for helping improve TrackMania-MacOS. This is a runtime for the TrackMania
+Forever family on Apple Silicon, so a change is judged by whether the supported
+title (Nations Forever) still installs, builds and plays correctly.
 
 ## Before you start
 
@@ -27,17 +27,10 @@ make install
 ## Before you open a pull request
 
 ```sh
-make check     # script syntax, shellcheck, offline tests
-make smoke     # runtime probes in the installed prefix
+make check     # shell syntax, shellcheck, ruff, Python and Swift tests
 ```
 
-`make smoke` requires an installed runtime and initialized prefix, Python 3,
-and both MinGW-w64 C compilers on `PATH` (`brew install mingw-w64`). It uses
-the selected prefix, so close the game and Settings app first. The HTTPS check
-requires network access, and audio checks need a working output device. See
-[validation](../docs/building.md#validation) for isolated installation paths and
-the limits of these probes; passing API checks does not replace playing a race,
-checking materials and listening to the game.
+`make install` installs the runtime and game via the bundled installer.
 
 - Keep shell scripts shellcheck-clean; CI runs `make check` on every push.
 - A runtime patch goes under `patches/<component>/`. It must apply with

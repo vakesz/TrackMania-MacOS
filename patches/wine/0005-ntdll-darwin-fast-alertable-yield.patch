@@ -19,8 +19,8 @@ The environment check remains per-call; process-init caching and performance
 measurement are deferred.
 
 Based on Wine 36b6a2cf679fb395f668a917b76537190e212d9c. Regression and timing probe:
-  WINEDARWINFASTWAIT=0 ./tools/smoke-sync.sh
-  WINEDARWINFASTWAIT=1 ./tools/smoke-sync.sh
+  WINEDARWINFASTWAIT=0 ./src/shell/tools/probes/smoke-sync.sh
+  WINEDARWINFASTWAIT=1 ./src/shell/tools/probes/smoke-sync.sh
 
 diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
 --- a/dlls/ntdll/unix/sync.c

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">United Forever</title>
+  <desc id="description">An original icon of a stadium ring loop with a spark at its apex, in violet and magenta over deep indigo.</desc>
+  <defs>
+    <linearGradient id="backdrop" x1="130" y1="80" x2="900" y2="980" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2A1B54"/>
+      <stop offset="0.55" stop-color="#150F36"/>
+      <stop offset="1" stop-color="#0A0720"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="200" y1="820" x2="840" y2="220" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E5D2FF"/>
+      <stop offset="1" stop-color="#8F6BFF"/>
+    </linearGradient>
+    <linearGradient id="spark" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#FFE27A"/>
+      <stop offset="1" stop-color="#FF8A3D"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.05" r="0.95">
+      <stop stop-color="#7A4FD6" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#7A4FD6" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+    <clipPath id="tile"><rect x="48" y="48" width="928" height="928" rx="218"/></clipPath>
+  </defs>
+
+  <rect x="48" y="48" width="928" height="928" rx="218" fill="url(#backdrop)"/>
+  <rect x="62" y="62" width="900" height="900" rx="204" fill="none" stroke="#E5D2FF" stroke-opacity="0.22" stroke-width="8"/>
+  <ellipse cx="512" cy="210" rx="425" ry="340" fill="url(#glow)" clip-path="url(#tile)"/>
+  <g filter="url(#shadow)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <ellipse cx="512" cy="560" rx="300" ry="190" stroke="#05030F" stroke-width="190"/>
+    <ellipse cx="512" cy="560" rx="300" ry="190" stroke="url(#accent)" stroke-width="136"/>
+    <ellipse cx="512" cy="560" rx="300" ry="190" stroke="#1B1146" stroke-width="72"/>
+    <ellipse cx="512" cy="560" rx="300" ry="190" stroke="#F6EEFF" stroke-opacity="0.85" stroke-width="10" stroke-dasharray="40 36"/>
+    <path d="M512 330 L548 262 L512 190 L476 262 Z" fill="url(#spark)" stroke="none"/>
+    <path d="M240 330 C300 250 400 215 512 215 C624 215 724 250 784 330" stroke="#E5D2FF" stroke-opacity="0.35" stroke-width="14"/>
+  </g>
+</svg>

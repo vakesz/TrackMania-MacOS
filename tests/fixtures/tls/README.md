@@ -30,7 +30,7 @@ From the repository root:
 
 ```sh
 python3 -m unittest discover -s tests -p test_network.py
-python3 tools/tls-test-server.py
+python3 src/python/tmnf/probes/tls_test_server.py
 ```
 
 The server prints one JSON object containing a URL for each leaf listed above,
@@ -42,83 +42,11 @@ fixtures requires Python 3.9 or newer, with no dependencies or external network.
 Regenerate the public test material with OpenSSL 1.1.1 or newer:
 
 ```sh
-python3 tools/tls-test-server.py --generate-fixtures tests/fixtures/tls
+python3 src/python/tmnf/probes/tls_test_server.py --generate-fixtures tests/fixtures/tls
 ```
 
 Regeneration replaces both roots and all leaves. An old imported root will no
 longer validate the regenerated control. Never keep a prefix across regeneration.
-
-## Opt-in WinHTTP suite
-
-The runtime suite skips unless `MACTMNF_TEST_RUNTIME` names a runtime directory.
-From the repository root, on a supported Mac with both MinGW compilers installed:
-
-```sh
-MACTMNF_TEST_RUNTIME="$PWD/.build/release/runtime" \
-  python3 -m unittest discover -s tests -p test_network_runtime.py -v
-```
-
-Without an overlay, this runs the existing binaries in that runtime, not the current source tree.
-The runner prints its path and installed version. It never calls the CDN smoke
-test and does not use `MACTMNF_PREFIX`, `WINEPREFIX`, the game installation, or a
-caller-supplied prefix. The no-argument `smoke-network.sh` remains the separate
-live-CDN check in the selected user prefix; it never installs test roots.
-
-Each runtime test creates a private `/tmp/mactmnf-tls-runtime-*` directory with
-separate fresh prefixes and HOME directories for i686 and x86_64. Every Wine and
-wineserver invocation has an explicit scratch `WINEPREFIX`. Child environments
-do not inherit proxies, DLL overrides, translation hooks, or user HOME settings.
-Initialization suppresses mscoree/mshtml installers and has 60-second command
-deadlines. A bounded server wait finishes initialization before checking registry
-files. The Python TLS server supplies only loopback URLs through its JSON output.
-
-### Optional app-local WinHTTP overlay
-
-Set `MACTMNF_TEST_WINHTTP_DLLS` to the `native` directory produced by
-`tools/build-winhttp-probe.py` to test isolated DLLs over the existing runtime:
-
-```sh
-MACTMNF_TEST_RUNTIME="$PWD/.build/release/runtime" \
-MACTMNF_TEST_WINHTTP_DLLS="/absolute/path/to/winhttp-isolated-0010/native" \
-  python3 -m unittest discover -s tests -p test_network_runtime.py -v
-```
-
-The overlay must contain `i386-windows/winhttp.dll` and
-`x86_64-windows/winhttp.dll`, with the builder's `build.json` in its parent.
-The runner verifies each DLL's recorded SHA-256, PE signature, machine type,
-and absence of Wine's builtin marker before any Wine invocation. It logs the
-source paths, hashes, recorded Wine revision and patch hash separately from the
-installed runtime version. The manifest records build provenance, not release
-qualification or an independent rebuild of the DLLs.
-
-Both probes live in separate scratch `bin-i686` and `bin-x86_64` directories.
-The runner copies each matching DLL beside its probe, using exclusive creation,
-and enables `winhttp=n` only when this overlay option is set. It never overwrites
-a prefix DLL or follows a prefix DLL symlink into the runtime. All supplied DLLs
-and runtime files remain read-only inputs. This option has no effect on
-`smoke-network.sh`, and it does not enable runtime tests without
-`MACTMNF_TEST_RUNTIME`.
-
-The builder applies `0010` then `0011` with a separate exact file scope for each
-patch. It rebuilds all eight WinHTTP C sources per architecture because `0011`
-changes `struct netconn` in the private header. Only recorded Makefile recipes
-are executed, in a new external output directory; `make` is never invoked.
-Imports, resources and the export spec remain read-only existing inputs. The
-manifest records the ordered patch hashes, rebuilt source names, patched source
-hashes, commands, Makefile hash and DLL hashes. The reader also accepts the old
-single-patch manifest so existing `0010` overlays can serve as red controls.
-
-In local mode, `network.c` prints `GetModuleFileNameW` for the loaded WinHTTP
-module before making requests. Every overlay probe must report an absolute
-Windows path ending in the current unique scratch directory,
-`bin-ARCH\winhttp.dll`. A missing path, a builtin/system path, or the wrong
-architecture's application directory fails before the TLS result is credited.
-The SIGTERM child test receives the same overlay option and checks the same
-module proof before import. No loader-trace text substitutes for this API proof.
-
-With the overlay enabled, the missing-root control must also report exactly
-error `12175` and flag `0x08`. The post-import controls and three negative cases
-retain their normal certificate verification and exact error/flag requirements.
 
 ### Sync and async request modes
 
@@ -290,7 +218,7 @@ qualifies a complete 0.3.0 runtime or release package.
 ## Observed isolated patch 0011 results
 
 On 2026-09-07, all fixtures were regenerated together using
-`tools/tls-test-server.py --generate-fixtures tests/fixtures/tls`. Both CA signing
+`src/python/tmnf/probes/tls_test_server.py --generate-fixtures tests/fixtures/tls`. Both CA signing
 keys were discarded. No old imported root was reused. Offline tests independently
 check the eight leaves' issuers, names, validity windows, serverAuth signatures
 at a fixed in-range time, and absence of network retrieval extensions.
@@ -391,7 +319,7 @@ SHA-256 is `5bb857d67463a13df88309e4c197a4900aba54fe9f3ee1ecbf4e35b3a290b1bb`.
 | i686 | `080a6090d26b2e319bcd966fdd213257d04d7a5a05a7e5b1d580e5f0373275f1` |
 | x86_64 | `d9bfabb7250e293cee1aed5add1bb7b42817dc007da2fd9b0be59014d042a635` |
 
-`tools/build-winhttp-probe.py --fault-base BASE --output NEW_DIRECTORY` builds
+`src/python/tmnf/build/winhttp_probe_builder.py --fault-base BASE --output NEW_DIRECTORY` builds
 separate, explicitly instrumented test DLLs. It reuses the base's recorded
 compilation and native-link recipes, compiling one wrapper object with Wine's
 headers and placing it before the import libraries. It links with
@@ -423,22 +351,6 @@ runtime suite passed in 387.584 seconds, including the existing 288 fixture/flag
 combinations, 20 pool sequences, 12 no-subscription checks, importer proofs,
 app-local module proofs and SIGTERM cleanup after import. Its captured output is
 `/Users/vakesz/.local/share/opencode/tool-output/tool_07c58a06b001y3UMTO1auu4Eq4`.
-
-To repeat the combined run using these existing artifacts:
-
-```sh
-scratch=/var/folders/0j/wvhpysw515n21xxh9y6f3k9m0000gn/T/opencode
-MACTMNF_TEST_RUNTIME="$PWD/.build/release/runtime" \
-MACTMNF_TEST_WINHTTP_DLLS="$scratch/winhttp-0011-correctness-v4/native" \
-MACTMNF_TEST_WINHTTP_FAULT_DLLS="$scratch/winhttp-0011-v4-lookup-fault-linked/native" \
-  python3 tests/test_network_runtime.py
-```
-
-`MACTMNF_TEST_WINHTTP_FAULT_ONLY=1` explicitly omits the certificate/pool matrix
-but retains importer controls and both-mode lookup-failure tests. For a red
-comparison select the preserved `v3` normal and instrumented artifacts. Neither
-the fault overlay nor the fault-only flag opts into Wine without
-`MACTMNF_TEST_RUNTIME`.
 
 The injection proves cleanup after `netconn_get_certificate` returns NULL; it
 does not force an underlying SSPI allocation failure or a Crypt32 policy-API

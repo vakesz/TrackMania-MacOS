@@ -10,8 +10,8 @@
 
 - macOS version and Mac model:
 - [ ] `make check` passes (script syntax, shellcheck, offline tests)
-- [ ] `make smoke` passes, for a runtime change
-- [ ] Built with `make build` and installed with `make install`
+- [ ] `make check` passes, for a runtime change
+- [ ] Built with `make install` and verified with `make check`
 - [ ] The game reaches a menu, starts a race, renders correctly and plays audio
 
 ## Notes

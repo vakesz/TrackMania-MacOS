@@ -8,7 +8,7 @@ flag before compiling. Ordinary calls retain their SDK-specific behavior.
 
 Based on Wine 36b6a2cf679. Native D3DX43 passes all 34 profile cases with
 the legacy flag; Wine before this change fails 24 of them. Run
-./tools/smoke-shaders.sh for the legacy and modern paths.
+./src/shell/tools/probes/smoke-shaders.sh for the legacy and modern paths.
 
 diff --git a/dlls/d3dx9_36/shader.c b/dlls/d3dx9_36/shader.c
 index c82478ad0c9..602beca9939 100644

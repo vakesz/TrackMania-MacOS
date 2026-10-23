@@ -1,4 +1,4 @@
-MacTMNF scripts, tests and original build tooling use the MIT license below.
+TMNF scripts, tests and original build tooling use the MIT license below.
 Patches to Wine, D9VK and x87sidecar retain the respective upstream licenses.
 Runtime archives include third-party notices in licenses/ and are distributed
 alongside the corresponding source archive. This license does not cover the
@@ -6,7 +6,7 @@ TrackMania game, Competition Patch bundle, DirectX or Apple software.
 
 MIT License
 
-Copyright (c) 2026 MacTMNF contributors
+Copyright (c) 2026 TMNF contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

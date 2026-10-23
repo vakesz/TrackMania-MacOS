@@ -1,0 +1,88 @@
+name: Release hub app
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  hub-app:
+    runs-on: macos-15
+    env:
+      APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+      APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+      TMNF_SIGN_IDENTITY: ${{ secrets.TMNF_SIGN_IDENTITY }}
+      TMNF_NOTARIZE: ${{ secrets.TMNF_NOTARIZE }}
+      TMNF_NOTARY_PROFILE: tmnf-ci
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned
+      - name: Verify tag, runtime and source release assets and signing configuration
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          TMNF_TEAM_ID: ${{ secrets.TMNF_TEAM_ID }}
+          TMNF_APP_PASSWORD: ${{ secrets.TMNF_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          version="$(tr -d '\r\n' < VERSION)"
+          tag="v${version}"
+          test "$GITHUB_REF_NAME" = "$tag" \
+            || { echo "Tag $GITHUB_REF_NAME does not match VERSION $version" >&2; exit 1; }
+          test -n "$APPLE_CERT_P12" || { echo 'APPLE_CERT_P12 is required for a tag release.' >&2; exit 1; }
+          test -n "$TMNF_SIGN_IDENTITY" || { echo 'TMNF_SIGN_IDENTITY is required for a tag release.' >&2; exit 1; }
+          test "$TMNF_NOTARIZE" = 1 || { echo 'TMNF_NOTARIZE=1 is required for a tag release.' >&2; exit 1; }
+          test -n "$APPLE_ID" && test -n "$TMNF_TEAM_ID" && test -n "$TMNF_APP_PASSWORD" \
+            || { echo 'Apple notarization credentials are required for a tag release.' >&2; exit 1; }
+          staging="$(mktemp -d)"
+          trap 'rm -rf "$staging"' EXIT
+          # The runtime archive is what the hub installs. The source archive is the
+          # corresponding source for it; the hub does not build from it.
+          for kind in runtime source; do
+            asset="trackmania-mac-${version}-${kind}.tar.xz"
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$staging" \
+              --pattern "$asset" --pattern "$asset.sha256"
+            test -s "$staging/$asset" && test -s "$staging/$asset.sha256" \
+              || { echo "Release $tag must contain $asset and $asset.sha256 before publishing the hub." >&2; exit 1; }
+            expected="$(awk 'NR == 1 { print $1 }' "$staging/$asset.sha256")"
+            actual="$(shasum -a 256 "$staging/$asset" | awk '{print $1}')"
+            expected="$(printf '%s' "$expected" | tr 'A-F' 'a-f')"
+            [[ "$expected" =~ ^[0-9a-f]{64}$ ]] && test "$expected" = "$actual" \
+              || { echo "Published checksum verification failed for $asset." >&2; exit 1; }
+          done
+      - name: Import Developer ID certificate
+        if: env.APPLE_CERT_P12 != ''
+        run: |
+          cert="$RUNNER_TEMP/tmnf-cert.p12"
+          echo "$APPLE_CERT_P12" | base64 --decode > "$cert"
+          security create-keychain -p actions actions.keychain
+          security default-keychain -s actions.keychain
+          security unlock-keychain -p actions actions.keychain
+          security import "$cert" -k actions.keychain -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions actions.keychain
+          rm "$cert"
+      - name: Store notarytool credentials
+        if: env.TMNF_NOTARIZE == '1'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          TMNF_TEAM_ID: ${{ secrets.TMNF_TEAM_ID }}
+          TMNF_APP_PASSWORD: ${{ secrets.TMNF_APP_PASSWORD }}
+        run: |
+          xcrun notarytool store-credentials "$TMNF_NOTARY_PROFILE" \
+            --apple-id "$APPLE_ID" --team-id "$TMNF_TEAM_ID" --password "$TMNF_APP_PASSWORD"
+      - name: Build hub app archive
+        run: ./src/shell/tools/package-app.sh all
+      - name: Upload app archive artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, pinned
+        with:
+          name: TrackMania-Mac-hub
+          path: .build/dist/TrackMania-Mac-*.app.zip*
+      - name: Attach app archive to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2, pinned
+        with:
+          files: .build/dist/TrackMania-Mac-*.app.zip*
+      - name: Remove signing keychain
+        if: always()
+        run: security delete-keychain actions.keychain || true

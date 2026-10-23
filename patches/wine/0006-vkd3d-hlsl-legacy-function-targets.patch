@@ -14,7 +14,7 @@ reflects native SDK output; Wine FX2 shader-state emission remains unsupported.
 
 Based on Wine 36b6a2cf679. Native SDKs 30 and 36 establish the expected
 success/failure and executable shader output. SDKs 37 and 43 verify the
-modern behavior. Run ./tools/smoke-shaders.sh for both architectures.
+modern behavior. Run ./src/shell/tools/probes/smoke-shaders.sh for both architectures.
 
 diff --git a/libs/vkd3d/include/vkd3d_shader.h b/libs/vkd3d/include/vkd3d_shader.h
 index dcfdd16c503..86b106d0246 100644

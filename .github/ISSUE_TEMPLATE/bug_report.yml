@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Run `./bin/mactmnf doctor` first. It prints most of what is asked below.
+        Run `./src/shell/cli/tmnf doctor` first. It prints most of what is asked below.
         For a security problem, use the security policy instead of a public issue.
   - type: textarea
     id: what
@@ -27,7 +27,7 @@ body:
       label: How you installed
       options:
         - Release runtime archive
-        - Built from source (make build)
+        - Built from source
     validations:
       required: true
   - type: textarea
@@ -41,7 +41,7 @@ body:
     id: logs
     attributes:
       label: Relevant logs
-      description: From ~/Library/Logs/MacTMNF (play.log, configure.log). Trim long files.
+      description: From ~/Library/Logs/TMNF (play.log, configure.log). Trim long files.
       render: text
     validations:
       required: false

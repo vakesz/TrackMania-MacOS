@@ -266,7 +266,7 @@ class X87PatchTests(unittest.TestCase):
                                 '-DCMAKE_OSX_ARCHITECTURES=arm64'], check=True)
                 subprocess.run(['cmake', '--build', str(build), '-j', '8'], check=True)
                 env = dict(os.environ, MACTMNF_X87_SRC=str(build), MACTMNF_X87_SOURCE_ONLY='1')
-                subprocess.run(['bash', str(ROOT / 'tools/smoke-x87sidecar.sh')],
+                subprocess.run(['bash', str(ROOT / 'src/shell/tools/probes/smoke-x87sidecar.sh')],
                                env=env, check=True, timeout=300)
 
 

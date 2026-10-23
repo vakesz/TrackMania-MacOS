@@ -3,7 +3,7 @@ import struct
 import unittest
 from pathlib import Path
 
-from tools.game_profile import generate
+from tmnf.build.game_profile import generate
 
 ROOT = Path(__file__).resolve().parents[1]
 # Captured from the generator before field annotations and validation were added.

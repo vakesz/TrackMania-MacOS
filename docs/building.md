@@ -1,189 +1,136 @@
 # Building and releasing
 
-## Source ownership
+The repository produces two deliberately separate artifacts:
 
-`make build` owns `.build/release`. It never patches a checkout elsewhere on the
-machine. `config/sources.json` pins every top-level runtime source by archive
-SHA-256 or Git commit. D9VK's Git submodules and MoltenVK's `ExternalRevisions`
-pin their nested dependencies. Homebrew provides build tools, not bundled Wine
-libraries. Apple supplies the SDK, system frameworks and Rosetta.
+- `trackmania-mac-<version>-runtime.tar.xz`: the pinned, patched Wine runtime.
+- `TrackMania-Mac-<version>.app.zip`: one native Swift hub app that downloads
+  and manages the runtime and game.
 
-The public commands are `make build`, `make install` and `make package`.
-Maintainers can run `tools/build.sh --only fetch|deps|wine|d9vk|sidecar|session|bundle|package`
-while diagnosing a build. Run the full build before packaging a release.
+The distributed zip contains exactly one `.app`. After a TMNF install, that hub
+creates the separately installed Game and Settings apps; they are not bundled
+inside the download.
 
-Prepared sources record the ordered patch set as well as upstream identity.
-An old stamp or changed patch set makes `make build` delete and re-prepare that
-source directory; prepared trees under `.build/release/sources` are build
-products, so keep source edits in `patches/`, never in the prepared tree. Full
-builds use clean dependency staging. Toolchain/SDK changes invalidate compiler
-work; do not keep unique source edits in compiler output.
+## Source layout
 
-Build and packaging operations share a lock. A partial or failed build cannot
-reuse the previous completion stamp. Packaging checks the complete runtime and
-corresponding-source snapshots before publishing archives and checksums. Help
-and packaging do not provision the native build toolchain.
+- `patches/` and `config/sources.json` are the source-build contract. Keep both
+  in every source release.
+- `config/titles/*.json` is the title registry; `config/pins.json` pins
+  upstream downloads.
+- `assets/titles/*.svg` is hand-authored title artwork, rasterized to PNG only
+  inside the app bundle at package time; `assets/branding/` holds the hub icon.
+- `src/c/` holds the Windows session helper source.
+- `src/python/tmnf/` holds the Python packages: `app` (icon extraction, app
+  launcher), `build` (runtime build), `guard`, `hub` (snapshot and run
+  backend), `install`, `probes` and `session`.
+- `src/shell/cli/` holds the `tmnf` entry point and installer;
+  `src/shell/lib/commands/` implements its verbs, `src/shell/lib/apps/` builds
+  app wrappers, icons and the launcher payload, and `src/shell/lib/install/`
+  holds installer steps. `src/shell/tools/` holds build and package scripts.
+- `src/swift/` holds the native hub UI. It calls `tmnf hub snapshot` and
+  `tmnf hub run`; it does not duplicate install rules.
 
-Compiler-cache identity is checkpointed before compilation, separately from
-release completion. Interrupted work can resume when its inputs, toolchain and
-prepared sources still match; an incomplete build cannot be packaged. The exact
-libunistring scratch file `lib/libunistring.sym-t1` is excluded from source
-inventories, while the actual symbol list and source remain checked. Source-drift
-errors now identify the changed paths instead of requiring blind rebuilds.
+Generated runtime output belongs under `.build/` and is never a source input.
 
-The `session` stage builds the 64-bit Windows supervisor at
-`runtime/libexec/mactmnf-session.exe`. It also supervises 32-bit games.
-Helper-only builds invalidate only helper compiler work and release completion,
-not Wine or dependency output. The runtime contract includes the helper and
-the native conhost image used to recognize console infrastructure.
-
-The layout under `.build/release` is:
-
-- `sources/`: downloaded source with local patches applied.
-- `work/`: dependency and compiler output.
-- `runtime/`: the relocatable installation tree.
-- `logs/build.log`: compiler commands and full build output.
-
-The terminal shows one status line per step (configure, make, hashing, and so
-on) with the elapsed time and the last line the command wrote to `build.log`;
-when output is not a terminal it prints a line per minute instead. A second
-`make build` or `make package` waits for the running one and says which
-process holds the lock. Compiler output under `work/` is reused when the build
-inputs, toolchain and prepared sources are unchanged; otherwise the build says
-what changed before discarding it.
-
-The build compiles x86_64 Unix Wine and both i386 and x86_64 Windows DLLs.
-x87sidecar is native arm64. MoltenVK uses Xcode; a command-line-tools-only
-installation is insufficient to build it. The current development host is an
-M1 Pro with Xcode 27 and macOS 27. The macOS 14 deployment target does not by
-itself prove runtime compatibility on macOS 14, 15 or 26.
-
-Wine includes the macOS graphics, Vulkan, CoreAudio, font and TLS paths. Linux
-backends, GStreamer, SDL, USB, printing and packet capture are disabled.
-This is a TMNF runtime, not a general replacement for a full Wine distribution.
-
-## Validation
-
-`make check` is offline. Runtime smoke tests need an Apple Silicon host with
-Rosetta 2, Python 3, an installed runtime, and an initialized Wine prefix.
-Both `i686-w64-mingw32-gcc` and `x86_64-w64-mingw32-gcc` must be on `PATH`;
-Homebrew's `mingw-w64` supplies them. The HTTPS probe needs network access to
-the game's CDN, and audio checks need a working macOS output device. Close
-the game and Settings app first. `make smoke` uses the selected prefix and can
-change its audio configuration; it does not create an isolated prefix for you.
+## Validate a checkout
 
 ```sh
 make check
-make build
-make install
-make smoke
 ```
 
-For a fresh installation test, set `MACTMNF_ROOT`, `MACTMNF_SUPPORT` and
-`MACTMNF_APPS_DIR` to empty test folders below your home directory. Keep those
-variables set for every command in the test. This avoids altering your usual
-installation. The game must reach a menu, start a race, render materials
-correctly and play audio. Open both generated apps from Finder as well. A
-successful `wine --version` or a live process alone is insufficient.
+This runs Bash syntax checks, ShellCheck, Ruff, Python tests, the shell CLI
+integration test and `swift test`.
 
-The probes cover shader compiler profiles and legacy flags, alertable waits and
-APC delivery, x87 precision, and DirectSound device enumeration and playback
-cursor progress. The current shader probe does not exercise `texm3x3` lowering.
-Audio tests exercise stereo/mono buffers and 3D buffer/listener state, but do not
-prove audible output or positional mixing. The HTTPS probe is a positive request to the game's
-download server with normal certificate verification; it does not test rejection
-of invalid certificates. The source-only x87sidecar probes additionally exercise
-multiple translation modes. Without a source build, that script falls back to
-the installed Wine integration probes. None of these checks proves compatibility
-on an untested macOS release or measures whole-game frame times.
+## Build a runtime from source
 
-Each probe has a host-side deadline. Cleanup targets only its subprocess group,
-not every Wine process sharing a prefix. Detached processes may need explicit
-cleanup in the dedicated test prefix. The aggregate smoke target collects
-independent failures and runs the external CDN check last.
-
-The opt-in suites create their own temporary homes and prefixes. They never
-reuse the game prefix, and the session suite compiles controlled executables
-instead of installing game content:
+Use an Apple Silicon Mac, Rosetta 2, full Xcode, Homebrew and a checkout path
+without spaces. The first build needs substantial time and disk space.
 
 ```sh
-MACTMNF_TEST_RUNTIME="$PWD/.build/release/runtime" \
-  python3 -m unittest discover -s tests -p test_session_runtime.py -v
-MACTMNF_TEST_RUNTIME="$PWD/.build/release/runtime" \
-  python3 -m unittest discover -s tests -p test_network_runtime.py -v
-```
-
-Set `TMPDIR` to an existing temporary directory if the environment does not
-already provide one. The session suite may briefly show a test-only virtual
-desktop. It includes host/CLI handoff, prefix isolation, translator-enabled
-launch, image-identity, multimedia-timer and shader-token checks. It reports
-the tested runtime version separately from the current source version.
-
-The local TLS suite trusts a public test CA only inside disposable prefixes.
-It requires a valid control and exact WinHTTP rejection diagnostics. Existing
-runtime 0.2.0 rejects the three invalid certificates but returns error 12157
-without secure-failure callback flags, so those strict compatibility assertions
-remain failing on the unmodified runtime. Patch 0010 corrects that reporting;
-isolated rebuilt DLL overlays pass both synchronous and asynchronous cases on
-both architectures. Patch 0011 additionally fixes combined-error ignore handling,
-changed-policy connection reuse and failed-certificate-query ownership. The
-expanded matrix and fault-injected lookup tests pass. Callback-driven close/retry,
-further certificate categories, native Windows comparison and complete-runtime
-qualification remain separate gates.
-
-With the existing pinned, unmodified WinHTTP source and completed Wine work
-available, the diagnostic builder can rebuild the affected WinHTTP module without
-touching that work tree or the installed runtime:
-
-```sh
-scratch="$(mktemp -d)"
-python3 tools/build-winhttp-probe.py --output "$scratch/winhttp"
-MACTMNF_TEST_RUNTIME="$PWD/.build/release/runtime" \
-MACTMNF_TEST_WINHTTP_DLLS="$scratch/winhttp/native" \
-  python3 -m unittest discover -s tests -p test_network_runtime.py -v
-```
-
-The native-test DLLs load only beside the scratch probes. They are not release
-artifacts. See `tests/fixtures/tls/README.md`; do not install its test CA in a
-real prefix or macOS Keychain.
-
-## Release files
-
-Update `VERSION` before the full build used for release qualification when the
-runtime or default installation changes. The installer reuses a verified
-same-version installed runtime, so testing an old version does not qualify new
-source changes. Then:
-
-```sh
-make check
+sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
 make build
 make package
 ```
 
-`.build/dist` receives:
+`make build` writes the verified runtime under `.build/release/runtime`.
+`make package` writes these release inputs under `.build/dist/`:
 
-- `mactmnf-VERSION-runtime.tar.xz` and its `.sha256` file.
-- `mactmnf-VERSION-source.tar.xz` and its `.sha256` file.
+```text
+trackmania-mac-<version>-runtime.tar.xz
+trackmania-mac-<version>-runtime.tar.xz.sha256
+trackmania-mac-<version>-source.tar.xz
+trackmania-mac-<version>-source.tar.xz.sha256
+```
 
-The runtime contains Wine, dependency dylibs, D9VK, x87sidecar, generated game
-settings, renderer configuration, source pins, per-file hashes and licenses.
-Mach-O library references are made relative, and changed binaries are ad-hoc
-signed. These artifacts are not Developer ID signed or notarized.
+The source archive expands into a single `trackmania-mac/` directory containing the
+repository inputs and the corresponding patched upstream source snapshots. It is
+the corresponding source for the runtime archive; the hub does not build from it.
 
-The source archive contains these scripts and patches plus the corresponding
-upstream source, including nested dependencies. Keep both archives together in
-the same GitHub Release. Generated account-free default settings are included;
-personal profiles and account data are not. Do not ship game installers, personal
-game profiles, DirectX redistributables, local diagnostics, caches or your Wine
-prefix.
+Run `make check` again before publishing. The hub expects the matching
+runtime archive and checksum to exist in the same GitHub Release tag.
 
-Before publishing, install from the packaged runtime into an empty test folder,
-verify that the apps still work after moving the checkout, and build from an
-extracted source archive. Check that the archive licenses match the libraries
-actually bundled. This also catches missing source and accidental local paths.
+### Runtime source modes
 
-Create a GitHub Release in `vakesz/TrackMania-MacOS`, tagged `vVERSION`, and attach
-all four files. Keep it a draft until the installation and visual checks pass.
-No command in this repository creates a remote, commits, pushes or publishes.
-The installer downloads the exact version's checksum and archive over HTTPS;
-SHA-256 verifies integrity, not an independent publisher signature.
+The installer (`make install`, `make setup`, `src/shell/cli/install.sh` and the
+hub) takes the runtime from `TMNF_RUNTIME_SOURCE`, or `--runtime=<mode>` on
+`install.sh`, or `RUNTIME=<mode>` on `make`:
+
+- `auto` (default): install `.build/release/runtime` when it exists, else
+  download the release runtime.
+- `download`: always download the release runtime, even if a local build exists.
+- `build`: compile the runtime, then install it. In a checkout this runs
+  `src/shell/tools/build-runtime.sh` in place and keeps `.build`. A packaged hub
+  has no build script, so it clones the exact commit the hub was built from
+  (recorded in `config/build-revision` by `make appbundle`) with git, builds under
+  `~/Library/Caches/TMNF/build/<commit>` (the path must not contain spaces) and
+  removes that folder after a successful install. After a failure the folder is
+  kept and the next run resumes in it. It needs git (full Xcode), network access
+  and a commit that has been pushed to GitHub. A hub built from uncommitted
+  changes records `dirty` and cannot build; use a checkout instead.
+
+An installed runtime is never replaced; remove it while the game is closed to
+install again with another mode. `build` needs the prerequisites above and
+cannot be combined with `TMNF_RUNTIME_ARCHIVE`.
+
+## Build the native hub
+
+```sh
+make appbundle
+make zip
+```
+
+`make appbundle` compiles the release `TrackManiaHub` executable, places it in
+`.build/app/TrackMania Mac.app`, embeds the shell launcher payload and ad-hoc
+signs the result. It uses `uv` to stage the exact portable arm64 CPython 3.12.14
+runtime inside the app, so the hub and later Game/Settings app wrappers do not
+depend on a host Python installation. Set `TMNF_BUNDLED_PYTHON_ROOT` to an
+already installed compatible uv-managed Python root for an offline package
+build. `make zip` rebuilds that app, signs it and writes the zip and SHA-256
+checksum under `.build/dist/`.
+
+The executable at `Contents/MacOS/TrackMania Mac` is a signed arm64 Mach-O
+binary, not a shell wrapper; launcher resources sit below
+`Contents/Resources/launcher`. The packager signs only after the binary and
+resources are final, verifies the bundle, then uses `ditto -c -k --keepParent`
+to preserve the signature. The UI needs no JIT, DYLD or unsigned-executable-memory
+entitlement.
+
+For Developer ID distribution, set `TMNF_SIGN_IDENTITY="Developer ID Application:
+Name (TEAMID)"`. Notarization is opt-in: set `TMNF_NOTARIZE=1` and
+`TMNF_NOTARY_PROFILE` to a keychain profile created with
+`xcrun notarytool store-credentials`; no password is passed on a command line.
+The release workflow (`.github/workflows/release-hub.yml`) creates that profile
+from the `APPLE_ID`, `TMNF_TEAM_ID` and `TMNF_APP_PASSWORD` secrets.
+
+## Release order
+
+1. Build and verify the runtime/source archives.
+2. Upload all four runtime/source artifacts to the release tag.
+3. Build, sign and notarize the native hub zip for that exact version.
+4. Upload the hub zip and its checksum.
+
+Do not publish a hub whose versioned runtime archive is unavailable: first-run
+installation downloads it. The source archive is published as the runtime's
+corresponding source. The tag workflow enforces the matching `VERSION`, both
+assets and their checksums, and Developer ID notarization before it attaches a
+hub zip; use a new version and coherent runtime build for any archive-format
+change. Build the hub from a clean, pushed commit so its build mode works.

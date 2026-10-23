@@ -1,0 +1,79 @@
+#!/bin/bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+# shellcheck source=src/shell/lib/common.sh
+. "${SCRIPT_DIR}/../lib/common.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: tmnf <command> [arguments]
+
+Commands:
+  install      Download and install Wine and TMNF
+  update       Verify or reinstall the pinned official TMNF release
+  directx      Install the June 2010 DirectX runtime used by TMNF
+  play         Start TMNF with Competition Patch
+  play-vanilla Start unmodified TMNF; forward optional game arguments
+  configure    Open TMNF's graphics launcher
+  d9vk         Install the bundled D9VK Direct3D 9 DLL into the prefix
+  doctor       Check the installation and print useful diagnostics
+  stop         Stop Wine processes belonging to the TMNF prefix
+  app          Install the game and settings apps in Applications
+  setup        Install runtime, prefix and DirectX without the game
+  titles       List supported TrackMania titles and their status
+  hub          Native-hub backend (snapshot or run)
+  import       Run a retail setup or copy a Steam game folder (TMNF_TITLE)
+  uninstall    Remove the TMNF prefix after confirmation
+  help         Show this help
+EOF
+}
+
+# shellcheck source=src/shell/lib/apps/wrappers.sh
+. "${TMNF_PROJECT_DIR}/src/shell/lib/apps/wrappers.sh"
+# shellcheck source=src/shell/lib/commands/import.sh
+. "${TMNF_PROJECT_DIR}/src/shell/lib/commands/import.sh"
+# shellcheck source=src/shell/lib/commands/hub.sh
+. "${TMNF_PROJECT_DIR}/src/shell/lib/commands/hub.sh"
+# shellcheck source=src/shell/lib/commands/play.sh
+. "${TMNF_PROJECT_DIR}/src/shell/lib/commands/play.sh"
+# shellcheck source=src/shell/lib/commands/maintain.sh
+. "${TMNF_PROJECT_DIR}/src/shell/lib/commands/maintain.sh"
+
+command="${1:-help}"
+case "$command" in
+  play|play-vanilla|configure|d9vk|uninstall|import)
+    validate_launch_options
+    require_owned_prefix || die "A managed Wine prefix is required."
+    guard_prefix_operation "${TMNF_PROJECT_DIR}/src/shell/cli/tmnf" "$@"
+    ;;
+  update|app)
+    validate_launch_options
+    guard_prefix_operation "${TMNF_PROJECT_DIR}/src/shell/cli/tmnf" "$@"
+    ;;
+  hub|titles)
+    # Snapshot and listing must work even with an unrelated launch-option env
+    # var mistyped; launch options only matter for play paths below.
+    tmnf_title_is_known "$TMNF_TITLE" || die "Unknown title: $TMNF_TITLE"
+    ;;
+esac
+case "$command" in
+  install) exec "${TMNF_PROJECT_DIR}/src/shell/cli/install.sh" "${@:2}" ;;
+  directx) exec "${TMNF_PROJECT_DIR}/src/shell/cli/install.sh" directx ;;
+  setup) exec "${TMNF_PROJECT_DIR}/src/shell/cli/install.sh" setup ;;
+  update) update_game ;;
+  play) play_game "${@:2}" ;;
+  play-vanilla) play_vanilla "${@:2}" ;;
+  configure) configure_game ;;
+  d9vk) install_d9vk ;;
+  doctor) doctor ;;
+  stop) stop_game ;;
+  app) install_app ;;
+  titles) hub_command titles ;;
+  hub) hub_command "${@:2}" ;;
+  import) import_source "${2:-}" ;;
+  uninstall) uninstall_game "${2:-}" ;;
+  help|-h|--help) usage ;;
+  *) usage >&2; die "unknown command: $command" ;;
+esac

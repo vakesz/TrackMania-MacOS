@@ -1,0 +1,15 @@
+{
+  "directx_version": "9.29.1974.1 (June 2010)",
+  "directx_url": "https://download.microsoft.com/download/8/4/a/84a35bf1-dafe-4ae8-82af-ad2ae20b6b14/directx_Jun2010_redist.exe",
+  "directx_sha256": "053f76dcbb28802e23341b6a787e3b0791c0fa5c8d4d011b1044172dbf89c73b",
+  "tmloader_url": "https://tomashu.pages.dev/modloader/modloader/TMLoader-1.0.3-win32.zip",
+  "tmloader_bundle_version": "1.0.3",
+  "tmloader_sha256": "85d758e75f23084f24ef948836a0fa4e5fe4c77bb1e8897df9ee01f8bd245eb9",
+  "tmloader_exe_sha256": "0cf4c92ad1cb2dc7b92f95b2ec63d9058fd930c200632aaa2aab3a5a3a65e2c3",
+  "tmloader_game_version": "2.12.0-compat",
+  "tmloader_game_sha256": "0a885e194131063be9f78d9e5cf81e0f3017dfc4331d176812109b6aefc633bf",
+  "tmloader_coremod_version": "1.0.9",
+  "tmloader_coremod_sha256": "f3ffdcaf2b15c040823d60bcc559e7f287f767b483c1b42588212cdf714d08cf",
+  "tmcomp_version": "1.5.3",
+  "tmcomp_dll_sha256": "eef7200a2f6d5a8b31ae43534752e807c3c146248bd941fdf54b21b61225a135"
+}

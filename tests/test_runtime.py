@@ -13,14 +13,14 @@ import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location('runtime_manifest', ROOT / 'lib/runtime_manifest.py')
+SPEC = importlib.util.spec_from_file_location('runtime_manifest', ROOT / 'src/python/tmnf/install/runtime_manifest.py')
 runtime_manifest = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(runtime_manifest)
 
 
 class RuntimeInstall(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='mactmnf-release-test-',
+        self.temp = tempfile.TemporaryDirectory(prefix='tmnf-release-test-',
                                                 dir='/private/tmp')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
@@ -36,9 +36,9 @@ class RuntimeInstall(unittest.TestCase):
             executable.chmod(0o755)
         (self.bundle / 'bin/wineboot').symlink_to('wine')
         self.version = (ROOT / 'VERSION').read_text().strip()
-        (self.bundle / '.mactmnf-runtime').write_text(self.version + '\n')
+        (self.bundle / '.tmnf-runtime').write_text(self.version + '\n')
         for name in runtime_manifest.REQUIRED_FILES + ('licenses/fixture.txt',):
-            if name == '.mactmnf-runtime':
+            if name == '.tmnf-runtime':
                 continue
             path = self.bundle / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -47,6 +47,9 @@ class RuntimeInstall(unittest.TestCase):
         (self.bundle / 'bin/wine-link').symlink_to('wine')
         self.write_manifest()
         self.archive = self.root / 'runtime.tar.xz'
+        self.serve = self.root / 'serve'
+        self.serve.mkdir()
+        self.stub_log = self.root / 'stub.log'
         self.destination = self.home / "support with spaces and 'quotes/runtime"
         commands = self.root / 'commands'
         commands.mkdir()
@@ -54,16 +57,24 @@ class RuntimeInstall(unittest.TestCase):
         curl = commands / 'curl'
         curl.write_text('#!/bin/bash\nprintf "Unexpected fixture network request\\n" >&2\nexit 97\n')
         curl.chmod(0o755)
-        # Deliberately do not inherit HOME, MACTMNF_*, Wine, Python, or shell settings.
+        # Deliberately do not inherit HOME, TMNF_*, Wine, Python, or shell settings.
         self.env = {'HOME': str(self.home), 'PATH': str(commands) + ':/usr/bin:/bin:/usr/sbin:/sbin',
                     'LC_ALL': 'C', 'TMPDIR': str(self.root), 'PYTHONDONTWRITEBYTECODE': '1',
-                    'MACTMNF_RUNTIME': str(self.destination),
-                    'MACTMNF_CACHE': str(self.home / 'cache'),
-                    'MACTMNF_APPS_DIR': str(self.home / 'Applications')}
+                    'TMNF_RUNTIME': str(self.destination),
+                    'TMNF_CACHE': str(self.home / 'cache'),
+                    'TMNF_APPS_DIR': str(self.home / 'Applications')}
         self.project = self.root / 'project'
-        (self.project / 'lib').mkdir(parents=True)
-        for name in ('runtime.sh', 'runtime_manifest.py', 'managed_paths.py'):
-            shutil.copy2(ROOT / 'lib' / name, self.project / 'lib' / name)
+        (self.project / 'src/shell/lib/install').mkdir(parents=True)
+        (self.project / 'src/python/tmnf/install').mkdir(parents=True)
+        (self.project / 'src/python/tmnf/guard').mkdir(parents=True)
+        for package in ('src/python/tmnf', 'src/python/tmnf/install', 'src/python/tmnf/guard'):
+            (self.project / package / '__init__.py').write_text('')
+        shutil.copy2(ROOT / 'src/shell/lib/install/runtime.sh',
+                     self.project / 'src/shell/lib/install/runtime.sh')
+        shutil.copy2(ROOT / 'src/python/tmnf/install/runtime_manifest.py',
+                     self.project / 'src/python/tmnf/install/runtime_manifest.py')
+        shutil.copy2(ROOT / 'src/python/tmnf/guard/managed_paths.py',
+                     self.project / 'src/python/tmnf/guard/managed_paths.py')
 
     def write_manifest(self, root=None):
         root = root or self.bundle
@@ -79,15 +90,16 @@ class RuntimeInstall(unittest.TestCase):
             for member in extras:
                 tar.addfile(member, io.BytesIO(b'x' * member.size) if member.isreg() else None)
 
-    def install(self, checksum=None, explicit=True, conditional=False, umask='022'):
+    def install(self, checksum=None, explicit=True, conditional=False, umask='022', extra_env=None, after_source=''):
         env = dict(self.env)
+        env.update(extra_env or {})
         if explicit:
-            env.update(MACTMNF_RUNTIME_ARCHIVE=str(self.archive),
-                       MACTMNF_RUNTIME_SHA256=checksum if checksum is not None else
+            env.update(TMNF_RUNTIME_ARCHIVE=str(self.archive),
+                       TMNF_RUNTIME_SHA256=checksum if checksum is not None else
                        hashlib.sha256(self.archive.read_bytes()).hexdigest())
         return subprocess.run(
-            ['bash', '-euc', 'umask "$2"; . lib/common.sh; MACTMNF_PROJECT_DIR="$1"; '
-             '. "$MACTMNF_PROJECT_DIR/lib/runtime.sh"; ' +
+            ['bash', '-euc', 'umask "$2"; . src/shell/lib/common.sh; TMNF_PROJECT_DIR="$1"; '
+             '. "$TMNF_PROJECT_DIR/src/shell/lib/install/runtime.sh"; ' + after_source +
              ('if install_wine_runtime; then exit 0; else exit 1; fi' if conditional else
               'install_wine_runtime'), 'fixture', str(self.project), umask],
             cwd=ROOT, env=env, text=True, capture_output=True, check=False)
@@ -141,15 +153,6 @@ class RuntimeInstall(unittest.TestCase):
         self.package()
         self.assert_rejected(self.install())
 
-    def test_wineboot_loader_symlink_does_not_replace_required_pe_program(self):
-        (self.bundle / 'lib/wine/x86_64-windows/wineboot.exe').unlink()
-        self.write_manifest()
-        self.assertEqual(os.readlink(self.bundle / 'bin/wineboot'), 'wine')
-        self.assertTrue(os.access(self.bundle / 'bin/wineboot', os.X_OK))
-        self.package()
-        result = self.install()
-        self.assert_rejected(result)
-        self.assertIn('Missing required runtime file: lib/wine/x86_64-windows/wineboot.exe', result.stderr)
 
     def test_unlisted_extra_file_is_rejected(self):
         (self.bundle / 'extra').write_text('not in manifest')
@@ -166,7 +169,10 @@ class RuntimeInstall(unittest.TestCase):
                 try:
                     self.write_manifest()
                     self.package()
-                    self.assert_rejected(self.install())
+                    result = self.install()
+                    self.assert_rejected(result)
+                    if name == 'lib/wine/x86_64-windows/wineboot.exe':
+                        self.assertIn('Missing required runtime file: ' + name, result.stderr)
                 finally:
                     if target is not None:
                         path.symlink_to(target)
@@ -181,13 +187,13 @@ class RuntimeInstall(unittest.TestCase):
         self.assert_rejected(self.install())
 
     def test_session_pe_helper_does_not_need_unix_execute_permissions(self):
-        helper = self.bundle / 'libexec/mactmnf-session.exe'
+        helper = self.bundle / 'libexec/tmnf-session.exe'
         helper.chmod(0o644)
         self.assertFalse(os.access(helper, os.X_OK))
         self.package()
         result = self.install()
         self.assertEqual(result.returncode, 0, result.stderr)
-        installed = self.destination / 'libexec/mactmnf-session.exe'
+        installed = self.destination / 'libexec/tmnf-session.exe'
         self.assertEqual(installed.read_bytes(), b'fixture')
         self.assertFalse(os.access(installed, os.X_OK))
 
@@ -419,6 +425,282 @@ class RuntimeInstall(unittest.TestCase):
         self.assertFalse(self.destination.exists())
         self.assertEqual(list(self.destination.parent.glob('.runtime-install.*')), [other])
         self.assertEqual((other / 'keep').read_text(), 'another install')
+
+    BUILD_STUB = ('#!/bin/bash\ntest -z "${BUILD_FAIL:-}" || exit 3\nproject="$(cd "$(dirname "$0")/../../.." && pwd)"\n'
+                  'echo "build $project path=$(command -v brew || echo nobrew)" >>"$STUB_LOG"\n'
+                  'rm -rf "$project/.build/release/runtime"; mkdir -p "$project/.build/release"\n'
+                  'cp -pRP "$FIXTURE_BUNDLE" "$project/.build/release/runtime"\n')
+
+    def source_env(self, mode, **extra):
+        curl = self.root / 'commands/curl'
+        curl.write_text('#!/bin/bash\nout=\nurl=\nwhile test "$#" -gt 0; do\n'
+                        '  case "$1" in\n'
+                        '    --output) out="$2"; shift ;;\n'
+                        '    --retry|--connect-timeout|--speed-limit|--speed-time) shift ;;\n'
+                        '    --*) ;;\n'
+                        '    *) url="$1" ;;\n'
+                        '  esac\n  shift\ndone\n'
+                        'echo "curl $url" >>"$STUB_LOG"\n'
+                        'cp "$SERVE_DIR/$(basename "$url")" "$out" || exit 22\n')
+        curl.chmod(0o755)
+        env = dict(TMNF_RUNTIME_SOURCE=mode, STUB_LOG=str(self.stub_log), SERVE_DIR=str(self.serve),
+                   FIXTURE_BUNDLE=str(self.bundle), STUB_GIT=str(self.root / 'git-stub'),
+                   STUB_BUILD_SCRIPT=str(self.root / 'build-stub.sh'))
+        env.update(extra)
+        return env
+
+    def stub_lines(self):
+        return self.stub_log.read_text().splitlines() if self.stub_log.exists() else []
+
+    def serve_runtime(self):
+        self.package()
+        name = 'trackmania-mac-{}-runtime.tar.xz'.format(self.version)
+        shutil.copy2(self.archive, self.serve / name)
+        (self.serve / (name + '.sha256')).write_text(
+            hashlib.sha256(self.archive.read_bytes()).hexdigest() + '  ' + name + '\n')
+
+    def test_invalid_runtime_source_is_rejected_before_mutation(self):
+        env = self.source_env('bogus')
+        self.package()
+        result = self.install(extra_env=env, explicit=False)
+        self.assert_rejected(result)
+        self.assertIn('Invalid TMNF_RUNTIME_SOURCE', result.stderr)
+        self.assertFalse((self.home / 'cache').exists())
+        self.assertEqual(self.stub_lines(), [])
+
+    def test_download_mode_ignores_a_local_build(self):
+        built = self.project / '.build/release/runtime'
+        shutil.copytree(self.bundle, built, symlinks=True)
+        (built / 'lib/d9vk/d3d9.dll').write_bytes(b'damaged')
+        env = self.source_env('download')
+        self.serve_runtime()
+        result = self.install(extra_env=env, explicit=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.stub_lines()), 2)
+        self.assertTrue(all('-runtime.tar.xz' in line for line in self.stub_lines()))
+        self.assert_clean()
+
+    def test_auto_mode_prefers_a_local_build_without_downloading(self):
+        shutil.copytree(self.bundle, self.project / '.build/release/runtime', symlinks=True)
+        env = self.source_env('auto')
+        result = self.install(extra_env=env, explicit=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.stub_lines(), [])
+
+    def test_explicit_mode_reports_an_already_installed_runtime(self):
+        self.package()
+        self.assertEqual(self.install().returncode, 0)
+        for mode, expected in (('auto', 'is installed at'), ('download', 'already installed at'),
+                               ('build', 'already installed at')):
+            with self.subTest(mode=mode):
+                result = self.install(extra_env=self.source_env(mode), explicit=False)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(expected, result.stdout)
+        self.assertEqual(self.stub_lines(), [])
+
+    def test_build_mode_rejects_an_explicit_archive(self):
+        env = self.source_env('build')
+        self.package()
+        self.assert_rejected(self.install(extra_env=env))
+
+    def test_build_in_a_checkout_runs_its_builder_then_installs(self):
+        script = self.project / 'src/shell/tools/build-runtime.sh'
+        script.parent.mkdir(parents=True)
+        script.write_text(self.BUILD_STUB)
+        result = self.install(extra_env=self.source_env('build'), explicit=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.stub_lines()), 1)
+        self.assertIn('build ' + str(self.project), self.stub_lines()[0])
+        self.assertTrue((self.destination / 'bin/wine-link').is_symlink())
+        self.assert_clean()
+
+    def test_failed_build_is_not_replaced_by_a_download(self):
+        script = self.project / 'src/shell/tools/build-runtime.sh'
+        script.parent.mkdir(parents=True)
+        script.write_text('#!/bin/bash\nexit 3\n')
+        self.serve_runtime()
+        result = self.install(extra_env=self.source_env('build'), explicit=False)
+        self.assert_rejected(result)
+        self.assertIn('runtime build failed', result.stderr)
+        self.assertEqual(self.stub_lines(), [])
+
+    GIT_STUB = r"""#!/bin/bash
+dir=.
+ALL="$*"
+while test "$#" -gt 0; do
+  case "$1" in
+    -c) shift 2 ;;
+    -C) dir="$2"; shift 2 ;;
+    *) break ;;
+  esac
+done
+echo "git $* env=$GIT_TERMINAL_PROMPT,$GIT_CONFIG_GLOBAL,$GIT_CONFIG_NOSYSTEM" >>"$STUB_LOG"
+echo "argv=$ALL gitdir=${GIT_DIR-unset} params=${GIT_CONFIG_PARAMETERS-unset}" >>"$STUB_LOG.argv"
+case "$1" in
+  init) mkdir -p "$dir/.git" ;;
+  remote) ;;
+  fetch) test -z "${FETCH_FAIL:-}" || exit 1 ;;
+  checkout)
+    mkdir -p "$dir/src/shell/tools"
+    cp "$STUB_BUILD_SCRIPT" "$dir/src/shell/tools/build-runtime.sh"
+    if test -n "${WRONG_HEAD:-}"; then printf '%s' ffffffffffffffffffffffffffffffffffffffff >"$dir/.git/SHA"
+    else printf '%s' "${!#}" >"$dir/.git/SHA"; fi ;;
+  rev-parse) cat "$dir/.git/SHA" 2>/dev/null || exit 1 ;;
+  status) printf '%s' "${STATUS_OUT:-}" ;;
+esac
+"""
+    REVISION = 'a' * 40
+    USE_STUB_GIT = 'find_git() { printf %s "$STUB_GIT"; }; '
+
+    def clone_install(self, revision=None, after_source=None, **extra):
+        """Build mode in a hub payload: no builder in the project, a stub git and builder."""
+        if revision is not None:
+            (self.project / 'config').mkdir(exist_ok=True)
+            (self.project / 'config/build-revision').write_text(revision)
+        env = self.source_env('build', **extra)
+        git = self.root / 'git-stub'
+        git.write_text(self.GIT_STUB)
+        git.chmod(0o755)
+        (self.root / 'build-stub.sh').write_text(self.BUILD_STUB)
+        return self.install(extra_env=env, explicit=False,
+                            after_source=self.USE_STUB_GIT if after_source is None else after_source)
+
+    def workspace(self):
+        return self.home / 'cache/build' / self.REVISION
+
+    def test_hub_build_clones_the_recorded_commit_builds_installs_and_cleans_up(self):
+        result = self.clone_install(self.REVISION + '\nclean\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = self.stub_lines()
+        self.assertIn('git fetch -q --depth 1 origin ' + self.REVISION + ' env=0,/dev/null,1', lines)
+        self.assertTrue(any(line.startswith('build ' + str(self.workspace())) for line in lines))
+        self.assertTrue((self.destination / 'bin/wine-link').is_symlink())
+        self.assertFalse(self.workspace().exists())
+        self.assertEqual(list((self.home / 'cache/build').iterdir()), [])
+        self.assertFalse((self.project / '.build').exists())
+        self.assert_clean()
+
+    def test_failed_hub_build_keeps_the_workspace_and_a_rerun_resumes(self):
+        result = self.clone_install(self.REVISION + '\nclean\n', BUILD_FAIL='1')
+        self.assert_rejected(result)
+        self.assertIn(str(self.workspace()), result.stderr)
+        self.assertTrue(self.workspace().is_dir())
+        result = self.clone_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Resuming the build', result.stdout)
+        self.assertEqual(sum(line.startswith('git fetch') for line in self.stub_lines()), 1)
+        self.assertFalse(self.workspace().exists())
+
+    def test_unusable_build_revision_is_rejected_before_any_fetch(self):
+        for label, text, message in (('missing', None, 'no build revision'),
+                                     ('short', 'abc123\nclean\n', 'malformed'),
+                                     ('uppercase', 'A' * 40 + '\nclean\n', 'malformed'),
+                                     ('no state', self.REVISION + '\n', 'malformed'),
+                                     ('extra line', self.REVISION + '\nclean\nmore\n', 'malformed'),
+                                     ('dirty', self.REVISION + '\ndirty\n', 'uncommitted changes')):
+            with self.subTest(label):
+                revision = self.project / 'config/build-revision'
+                revision.unlink(missing_ok=True)
+                result = self.clone_install(text)
+                self.assert_rejected(result)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(self.stub_lines(), [])
+                self.assertFalse((self.home / 'cache/build').exists())
+
+    def test_existing_workspace_must_be_a_real_directory_at_the_recorded_commit(self):
+        other = self.root / 'elsewhere'
+        other.mkdir()
+        wrong = self.workspace()
+        wrong.mkdir(parents=True)
+        (wrong / '.git').mkdir()
+        (wrong / '.git/SHA').write_text('b' * 40)
+        result = self.clone_install(self.REVISION + '\nclean\n')
+        self.assert_rejected(result)
+        self.assertIn('not at commit', result.stderr)
+        self.assertTrue((wrong / '.git/SHA').is_file())
+        shutil.rmtree(wrong)
+        wrong.symlink_to(other)
+        result = self.clone_install()
+        self.assert_rejected(result)
+        self.assertIn('Unexpected build workspace', result.stderr)
+        self.assertTrue(wrong.is_symlink())
+        self.assertFalse(any(line.startswith(('git fetch', 'build')) for line in self.stub_lines()))
+
+    def test_resumed_workspace_must_be_unmodified(self):
+        self.workspace().mkdir(parents=True)
+        (self.workspace() / '.git').mkdir()
+        (self.workspace() / '.git/SHA').write_text(self.REVISION)
+        for label, status in (('tracked', ' M src/shell/cli/install.sh'), ('untracked', '?? stray.c')):
+            with self.subTest(label):
+                result = self.clone_install(self.REVISION + '\nclean\n', STATUS_OUT=status)
+                self.assert_rejected(result)
+                self.assertIn('was modified', result.stderr)
+                self.assertTrue(self.workspace().is_dir())
+                self.assertFalse(any(line.startswith('build') for line in self.stub_lines()))
+                self.stub_log.unlink()
+
+    def test_git_runs_isolated_from_inherited_repository_settings(self):
+        env = dict(GIT_DIR='/nonexistent/elsewhere', GIT_CONFIG_PARAMETERS="'core.pager=x'")
+        result = self.clone_install(self.REVISION + '\nclean\n', **env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = Path(str(self.stub_log) + '.argv').read_text().splitlines()
+        self.assertTrue(calls)
+        for call in calls:
+            self.assertIn('-c core.fsmonitor=false -c core.hooksPath=/dev/null', call)
+            self.assertIn('-c credential.helper=', call)
+            self.assertIn('gitdir=unset params=unset', call)
+
+    def test_stale_clone_directories_are_removed_but_symlinks_are_left(self):
+        build = self.home / 'cache/build'
+        (build / '.clone.crash').mkdir(parents=True)
+        (build / '.clone.crash/partial').write_text('x')
+        target = self.root / 'precious'
+        target.mkdir()
+        (target / 'keep').write_text('x')
+        (build / '.clone.link').symlink_to(target)
+        result = self.clone_install(self.REVISION + '\nclean\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((build / '.clone.crash').exists())
+        self.assertTrue((build / '.clone.link').is_symlink())
+        self.assertTrue((target / 'keep').is_file())
+
+    def test_wrong_fetched_head_or_failed_fetch_leaves_no_workspace(self):
+        for label, extra, message in (('head', dict(WRONG_HEAD='1'), 'does not match'),
+                                      ('fetch', dict(FETCH_FAIL='1'), 'Was it pushed')):
+            with self.subTest(label):
+                result = self.clone_install(self.REVISION + '\nclean\n', **extra)
+                self.assert_rejected(result)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(list((self.home / 'cache/build').iterdir()), [])
+                self.assertFalse(any(line.startswith('build') for line in self.stub_lines()))
+                self.stub_log.unlink()
+
+    def test_hub_build_needs_git_and_a_cache_path_without_spaces(self):
+        result = self.clone_install(self.REVISION + '\nclean\n', after_source='find_git() { :; }; ')
+        self.assert_rejected(result)
+        self.assertIn('git is required', result.stderr)
+        result = self.clone_install(TMNF_CACHE=str(self.home / 'cache dir'))
+        self.assert_rejected(result)
+        self.assertIn('without spaces', result.stderr)
+        self.assertEqual(self.stub_lines(), [])
+
+    def test_build_finds_homebrew_outside_a_minimal_path(self):
+        brew = self.root / 'homebrew/bin'
+        brew.mkdir(parents=True)
+        (brew / 'brew').write_text('#!/bin/bash\nexit 0\n')
+        (brew / 'brew').chmod(0o755)
+        script = self.project / 'src/shell/tools/build-runtime.sh'
+        script.parent.mkdir(parents=True)
+        script.write_text(self.BUILD_STUB)
+        override = 'homebrew_bin_dirs() {{ printf "%s\\n" {} {}; }}; '.format(self.root / 'missing', brew)
+        result = self.install(extra_env=self.source_env('build'), explicit=False, after_source=override)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('path=' + str(brew / 'brew'), self.stub_lines()[0])
+
+    def test_empty_runtime_source_is_invalid_not_auto(self):
+        result = self.install(extra_env=self.source_env(''), explicit=False)
+        self.assert_rejected(result)
+        self.assertIn('Invalid TMNF_RUNTIME_SOURCE', result.stderr)
 
     def test_concurrent_identical_installs_do_not_nest_or_replace(self):
         self.package()

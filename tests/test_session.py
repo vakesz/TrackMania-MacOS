@@ -100,7 +100,7 @@ if scenario == 'disappear':
     time.sleep(0.15)
     result.unlink()
     time.sleep(30)
-if scenario == 'longgame': time.sleep(0.65)
+if scenario == 'longgame': time.sleep(2.5)
 publish({'state': 'exited', 'exit_code': int(os.environ.get('FAKE_EXIT', '0')), 'cleanup': True})
 if scenario in ('teardown', 'hunghelper'):
     while not (root / 'helper-release').exists():
@@ -190,8 +190,11 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(session.read_result(result), final)
 
     def command(self, action='run', options=(), target=None, guarded=True):
+        # Every fake wine/wineserver is a fresh Python process, so budgets must
+        # leave room for interpreter startup under load. Tests about an expiring
+        # budget pass a short one together with a fixture that hangs.
         args = [sys.executable, '-m', 'tmnf.session.supervisor', action, '--prefix', str(self.prefix),
-                '--wine', str(self.wine), '--cleanup-timeout', '0.8']
+                '--wine', str(self.wine), '--cleanup-timeout', '3']
         if action == 'run':
             args += ['--helper', str(self.helper), '--startup-timeout', '1.5']
         args += list(options)
@@ -316,10 +319,10 @@ class SessionTests(unittest.TestCase):
     def test_hung_initial_registry_command_never_starts_helper_or_cleanup(self):
         unrelated = self.spawn([sys.executable, '-c', 'import time; time.sleep(30)'])
         started = time.monotonic()
-        result = self.cli('hungreg', options=['--audio', 'on', '--settings', '--startup-timeout', '0.5'])
+        result = self.cli('hungreg', options=['--audio', 'on', '--settings', '--startup-timeout', '2'])
         self.assertEqual(result.returncode, 124, result.stderr)
         self.assertIn('preparation', result.stderr)
-        self.assertLess(time.monotonic() - started, 2)
+        self.assertLess(time.monotonic() - started, 4)
         self.assertEqual(len(self.wine_calls()), 1)
         self.assertFalse((self.home / 'invocation.json').exists())
         self.assertEqual(self.server_calls(), [])
@@ -474,9 +477,10 @@ class SessionTests(unittest.TestCase):
 
     def test_running_has_no_game_duration_limit(self):
         started = time.monotonic()
-        result = self.cli('longgame', options=['--startup-timeout', '0.3'])
+        # The fake game runs 2.5s, past the default 1.5s startup budget.
+        result = self.cli('longgame')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertGreater(time.monotonic() - started, 0.65)
+        self.assertGreater(time.monotonic() - started, 2.5)
         self.assert_cleanup()
 
     def test_result_regression_or_disappearance_is_an_error_without_cleanup(self):

@@ -4,7 +4,7 @@
 # inherit it from there and never depend on the user's developer tools.
 
 stage_launcher_payload() {
-  local project="$1" destination="$2" module
+  local project="$1" destination="$2" module art
 
   mkdir -p "${destination}/src/shell" "${destination}/src/python/tmnf" "${destination}/config"
   cp -R "${project}/src/shell/cli" "${project}/src/shell/lib" "${destination}/src/shell/"
@@ -17,10 +17,19 @@ stage_launcher_payload() {
   done
   # Bytecode never ships: the launcher must run installed sources as-is.
   find "${destination}/src" \( -name '__pycache__' -o -name '*.pyc' \) -prune -exec rm -rf {} +
-  cp "${project}/config/dxvk.conf" "${destination}/config/"
+  cp "${project}/config/dxvk.conf" "${project}/config/pins.json" "${destination}/config/"
   mkdir -p "${destination}/config/titles"
   cp "${project}/config/titles/"*.json "${destination}/config/titles/"
   cp "${project}/VERSION" "${destination}/"
+  # Original per-title artwork, rasterized to PNG at package time. A checkout
+  # has no PNGs; the hub then falls back to the SVGs in assets/titles.
+  if test -d "${project}/assets/titles"; then
+    mkdir -p "${destination}/assets/titles"
+    for art in "${project}/assets/titles/"*.png ; do
+      test -f "$art" || continue
+      cp "$art" "${destination}/assets/titles/"
+    done
+  fi
   if test -d "${project}/python"; then
     test -x "${project}/python/bin/python3" \
       || die "Bundled Python is invalid: ${project}/python/bin/python3"

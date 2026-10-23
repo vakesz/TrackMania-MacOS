@@ -11,6 +11,15 @@ import sys
 
 
 def safe_path(value):
+    """Validate a managed path and return it resolved exactly once.
+
+    Trailing slashes are normalized away (so a symlink cannot hide behind
+    "link/"), the final component must not be a symlink, and the RESOLVED path
+    must lie below an allowed root. Ancestor symlinks are allowed as long as
+    they resolve inside those roots. Destructive callers must act on the
+    returned path, never on the original string.
+    """
+    value = value.rstrip('/') or '/'
     path = Path(value)
     if (not path.is_absolute() or any(part in ('.', '..') for part in value.split('/'))
             or any(ord(char) < 32 for char in value) or path.is_symlink()):
@@ -181,13 +190,14 @@ def save_dir_names():
 def check_uninstall(prefix, userdata):
     """Read-only guard for known profile folders, not custom Shell Folders registry paths.
 
+    Returns the resolved prefix path, the only path a caller may remove.
     Raises ValueError/OSError/RuntimeError if ownership or save safety is uncertain.
     The caller must hold the prefix operation lock through removal. Custom registry
     save locations require an explicit user backup; this is not a registry parser.
     """
     check_layout([str(prefix), str(userdata)])
     check_prefix(str(prefix))
-    prefix = Path(prefix).resolve()
+    prefix = safe_path(str(prefix))
 
     max_depth = 32
     max_entries = 200_000
@@ -222,6 +232,7 @@ def check_uninstall(prefix, userdata):
                 child = documents / name
                 if os.path.lexists(child):
                     inspect(child)
+    return prefix
 
 
 def setup_documents(prefix, userdata):
@@ -334,8 +345,10 @@ def main():
             if len(args.paths) != 2:
                 raise ValueError('{} requires PREFIX USERDATA'.format(args.command))
             if args.command == 'uninstall':
-                check_uninstall(*args.paths)
+                resolved_prefix = check_uninstall(*args.paths)
                 print('warning: Custom Windows Shell Folders registry save locations are not checked; back them up explicitly before removal.', file=sys.stderr)
+                # The one path the caller may remove: resolved once, already verified.
+                print(resolved_prefix)
             else:
                 setup_documents(*args.paths)
         elif args.command == 'profile-baseline':

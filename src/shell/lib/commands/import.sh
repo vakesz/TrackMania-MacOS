@@ -6,6 +6,9 @@
 # never stored. Provisional titles stay provisional until user media is
 # inventoried; nothing here pretends otherwise.
 
+# shellcheck source=src/shell/lib/apps/icons.sh
+. "${TMNF_PROJECT_DIR}/src/shell/lib/apps/icons.sh"
+
 import_source() {
   local source="$1"
   local mount cleanup
@@ -57,16 +60,36 @@ import_source() {
       run_wine "$source" || die "The retail installer failed: $source"
       test -f "$GAME_EXE" || die \
         "The installer exited without creating the expected game executable: $GAME_EXE. Check its install location and retry."
+      ensure_title_icon || warn "Could not extract the game icon for the hub."
       say "$TMNF_TITLE game files are installed. Use the hub to install its Game and Settings apps."
       ;;
   esac
 }
 
+# check_game_dir_chain — no component between the prefix and the game folder
+# may be a symlink, so the copy cannot be redirected outside the prefix.
+check_game_dir_chain() {
+  local drive_c="${TMNF_PREFIX}/drive_c" path part
+  local -a parts
+  test ! -L "$TMNF_PREFIX" || die "Refusing a symlink at the prefix: $TMNF_PREFIX"
+  test ! -L "$drive_c" || die "Refusing a symlink at the managed destination: $drive_c"
+  case "$GAME_DIR" in
+    "${drive_c}/"*) ;;
+    *) die "The game folder is outside the prefix: $GAME_DIR" ;;
+  esac
+  IFS=/ read -r -a parts <<<"${GAME_DIR#"${drive_c}"/}"
+  path="$drive_c"
+  for part in "${parts[@]}"; do
+    path="${path}/${part}"
+    test ! -L "$path" || die "Refusing a symlink at the managed game destination: $path"
+  done
+}
+
 # import_steam_folder FOLDER — steam-copy titles.
 import_steam_folder() {
-  local source="$1" symlink_files
+  local source="$1" symlink_files staging cleanup
 
-  case "$(tmnf_title_field "$TMNF_TITLE" installer)" in
+  case "$TMNF_TITLE_INSTALLER" in
     steam-copy) ;;
     *) die "$TMNF_TITLE imports from a disk image or setup program, not a game folder." ;;
   esac
@@ -79,20 +102,37 @@ import_steam_folder() {
     die "Refusing a source that contains symlinks:\n$symlink_files"
   fi
 
-  if test -L "$GAME_DIR"; then
-    die "Refusing a symlink at the managed game destination: $GAME_DIR"
-  fi
+  check_game_dir_chain
   if test -e "$GAME_DIR" && test -n "$(find "$GAME_DIR" -mindepth 1 -maxdepth 1 -print -quit)"; then
     die "The managed game destination is not empty: $GAME_DIR. Move it aside before importing."
   fi
-  mkdir -p "$GAME_DIR"
+  mkdir -p "$(dirname "$GAME_DIR")"
+  check_game_dir_chain
+  # Copy into a staging directory inside the prefix, re-scan the copy, and only
+  # then move it into place, so a source that changes mid-copy never reaches
+  # the managed game destination with a symlink in it.
+  staging="$(mktemp -d "${TMNF_PREFIX}/.import-staging.XXXXXX")" || die "Cannot stage the import."
+  printf -v cleanup 'rm -rf -- %q' "$staging"
+  # shellcheck disable=SC2064
+  trap "$cleanup" EXIT
   say "Copying $TMNF_TITLE game files into the prefix"
   say "  from: $source"
   say "  into: $GAME_DIR"
-  ditto "$source" "$GAME_DIR" || die "Cannot copy the game files."
-  if test ! -f "$GAME_EXE"; then
-    die "Copied, but the game executable is missing at $GAME_EXE."
+  ditto "$source" "$staging" || die "Cannot copy the game files."
+  symlink_files="$(find "$staging" -type l 2>/dev/null | head -n 10)"
+  if test -n "$symlink_files"; then
+    die "Refusing a copy that contains symlinks:\n$symlink_files"
   fi
+  test -f "${staging}/${GAME_EXE#"${GAME_DIR}"/}" \
+    || die "Copied, but the game executable is missing at $GAME_EXE."
+  chmod 755 "$staging"
+  check_game_dir_chain
+  if test -d "$GAME_DIR"; then
+    rmdir "$GAME_DIR" || die "The managed game destination is not empty: $GAME_DIR."
+  fi
+  mv "$staging" "$GAME_DIR" || die "Cannot move the game files into place."
+  trap - EXIT
+  ensure_title_icon || warn "Could not extract the game icon for the hub."
   say "Copied. Finish the Windows-side prerequisites with:"
   say "  TMNF_TITLE=$TMNF_TITLE src/shell/cli/tmnf directx"
   say "  TMNF_TITLE=$TMNF_TITLE src/shell/cli/tmnf d9vk"

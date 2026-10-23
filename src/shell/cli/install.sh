@@ -27,9 +27,8 @@ install_rosetta() {
 . "${TMNF_PROJECT_DIR}/src/shell/lib/install/game.sh"
 # shellcheck source=src/shell/lib/install/patch.sh
 . "${TMNF_PROJECT_DIR}/src/shell/lib/install/patch.sh"
-
-TMNF_TITLE_INSTALL_KIND="$(tmnf_title_field "$TMNF_TITLE" installer)"
-TMNF_TITLE_NEEDS_PATCH="$(tmnf_title_field "$TMNF_TITLE" needs_tmloader)"
+# shellcheck source=src/shell/lib/apps/icons.sh
+. "${TMNF_PROJECT_DIR}/src/shell/lib/apps/icons.sh"
 
 main() {
   case "${1:-}" in
@@ -55,11 +54,12 @@ main() {
   fi
 
   if test "${1:-}" != "setup"; then
-    case "$TMNF_TITLE_INSTALL_KIND" in
+    case "$TMNF_TITLE_INSTALLER" in
       online|online-retail|online-trial)
         install_game
+        ensure_title_icon || warn "Could not extract the game icon for the hub."
         install_directx_runtime
-        if test "$TMNF_TITLE_NEEDS_PATCH" = true; then
+        if test "$TMNF_TITLE_NEEDS_TMLOADER" = true; then
           install_competition_patch
         fi
         ;;
@@ -81,7 +81,7 @@ run the shared platform setup, then use the hub's import action.
     return
   fi
 
-  case "$TMNF_TITLE_INSTALL_KIND" in
+  case "$TMNF_TITLE_INSTALLER" in
     online|online-retail|online-trial)
       "${TMNF_PROJECT_DIR}/src/shell/cli/tmnf" app
       "${TMNF_PROJECT_DIR}/src/shell/cli/tmnf" doctor
@@ -89,7 +89,7 @@ run the shared platform setup, then use the hub's import action.
     *)
       say "Platform setup complete (runtime, prefix, DirectX, D9VK)."
       say "Next, provide the existing game files:"
-      if test "$TMNF_TITLE_INSTALL_KIND" = steam-copy; then
+      if test "$TMNF_TITLE_INSTALLER" = steam-copy; then
         say "  TMNF_TITLE=$TMNF_TITLE src/shell/cli/tmnf import /path/to/steamapps/common/game-folder"
       else
         say "  TMNF_TITLE=$TMNF_TITLE src/shell/cli/tmnf import /path/to/retail-setup.dmg"

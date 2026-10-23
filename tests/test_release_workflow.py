@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ReleaseWorkflowTests(unittest.TestCase):
     def test_tag_release_is_gated_on_matching_runtime_and_notarization(self):
-        workflow = (ROOT / ".github/workflows/release-thin.yml").read_text()
+        workflow = (ROOT / ".github/workflows/release-hub.yml").read_text()
         gate = workflow.index("Verify tag, runtime release asset and signing configuration")
         build = workflow.index("Build hub app archive")
         attach = workflow.index("Attach app archive to GitHub Release")

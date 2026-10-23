@@ -4,3 +4,5 @@
 __pycache__/
 .ruff_cache/
 upstream/
+.pytest_cache/
+assets/titles/*.png

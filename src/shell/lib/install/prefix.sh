@@ -38,7 +38,7 @@ initialize_prefix() {
   # profile arrangements and require explicit backup/repair when seeding is unsafe.
   tmnf_python -m tmnf.guard.managed_paths setup-documents "$TMNF_PREFIX" "$TMNF_USERDATA" \
     || die "Documents setup is incomplete; no external settings were seeded."
-  save_dir="$(tmnf_title_first_save_dir "$TMNF_TITLE")"
+  save_dir="$TMNF_TITLE_FIRST_SAVE_DIR"
   test -n "$save_dir" || save_dir=TmForever
   mkdir -p "${TMNF_USERDATA}/${save_dir}/Config"
   if test ! -e "${TMNF_USERDATA}/${save_dir}/Config/Default.SystemConfig.Gbx" \

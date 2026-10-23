@@ -12,7 +12,7 @@ import unittest
 from unittest import mock
 
 from tmnf.guard import operation_guard as guard
-from tmnf.session import session
+from tmnf.session import supervisor as session
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -190,7 +190,7 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(session.read_result(result), final)
 
     def command(self, action='run', options=(), target=None, guarded=True):
-        args = [sys.executable, '-m', 'tmnf.session.session', action, '--prefix', str(self.prefix),
+        args = [sys.executable, '-m', 'tmnf.session.supervisor', action, '--prefix', str(self.prefix),
                 '--wine', str(self.wine), '--cleanup-timeout', '0.8']
         if action == 'run':
             args += ['--helper', str(self.helper), '--startup-timeout', '1.5']

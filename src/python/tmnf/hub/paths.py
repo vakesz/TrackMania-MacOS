@@ -15,11 +15,14 @@ import typing
 from . import registry
 
 
-def _bool_env(variable: str, default: bool) -> bool:
-    value = os.environ.get(variable)
-    if value is None:
-        return default
-    return value.lower() in ('1', 'true', 'yes', 'on')
+# Title-derived values. Hub actions run with these scrubbed from the
+# environment (see run.py), so the state view must ignore them too; otherwise
+# the hub would describe a different installation than the one an action
+# manages. Only the shared TMNF_APPS_DIR, TMNF_SUPPORT and TMNF_CACHE apply.
+# TMNF_TITLES_DIR is deliberately absent: the registry directory is honored by
+# every consumer (shell, snapshot, run).
+TITLE_ENV = ('TMNF_ROOT', 'TMNF_PREFIX', 'TMNF_APP', 'TMNF_SETTINGS_APP',
+             'TMNF_USERDATA', 'TMNF_RUNTIME', 'TMNF_LAUNCHER', 'TMNF_WINE')
 
 
 class TitlePaths(typing.NamedTuple):
@@ -43,6 +46,20 @@ class TitlePaths(typing.NamedTuple):
         """Per-title cached .icns extracted from the official game executable."""
         return self.support / 'icons' / f'{self.title_id}.icns'
 
+    def bundled_icon(self, suffix: str) -> pathlib.Path:
+        """Original per-title artwork shipped with the project (PNG in packaged builds)."""
+        return registry.project_dir() / 'assets' / 'titles' / f'{self.title_id}.{suffix}'
+
+    def resolve_icon(self) -> typing.Tuple[typing.Optional[pathlib.Path], typing.Optional[str]]:
+        """Game icon, else bundled PNG, else bundled SVG, as (path, source)."""
+        if self.icon.is_file():
+            return self.icon, 'game'
+        for suffix in ('png', 'svg'):
+            candidate = self.bundled_icon(suffix)
+            if candidate.is_file():
+                return candidate, 'bundled'
+        return None, None
+
     @property
     def runtime_wine(self) -> pathlib.Path:
         return self.runtime / 'bin' / 'wine'
@@ -52,39 +69,29 @@ def runtime_version() -> str:
     return (registry.project_dir() / 'VERSION').read_text().strip()
 
 
-def directxpins() -> typing.Tuple[str, str]:
-    """(version, sha256) of the DirectX End-User Runtimes June 2010 pin."""
-    version = '9.29.1974.1 (June 2010)'
-    sha256 = ('053f76dcbb28802e23341b6a787e3b0791c0fa5c8d4d011b1044172dbf89'
-              'c73b')
-    return version, sha256
-
-
 def compute(title: registry.Title) -> TitlePaths:
     version = runtime_version()
-    root = pathlib.Path(os.environ.get('TMNF_ROOT')
-                        or pathlib.Path.home() / 'Games' / title.prefix_subdir)
-    user_data = pathlib.Path(root) / 'UserData'
-    prefix = pathlib.Path(os.environ.get('TMNF_PREFIX') or root / 'prefix')
+    root = pathlib.Path.home() / 'Games' / title.prefix_subdir
+    user_data = root / 'UserData'
+    prefix = root / 'prefix'
 
     support = pathlib.Path(os.environ.get('TMNF_SUPPORT')
                            or pathlib.Path.home() / 'Library' / 'Application Support' / 'TMNF')
-    runtime = pathlib.Path(os.environ.get('TMNF_RUNTIME') or support / 'runtime' / version)
+    runtime = support / 'runtime' / version
     cache = pathlib.Path(os.environ.get('TMNF_CACHE')
                          or pathlib.Path.home() / 'Library' / 'Caches' / 'TMNF')
 
     apps_env = os.environ.get('TMNF_APPS_DIR')
     if apps_env:
         apps_dir = pathlib.Path(apps_env)
-    elif _bool_env('TMNF_APPS_WRITABLE_SYSTEM', os.access('/Applications', os.W_OK)):
+    elif os.access('/Applications', os.W_OK):
         apps_dir = pathlib.Path('/Applications')
     else:
         apps_dir = pathlib.Path.home() / 'Applications'
 
-    app = pathlib.Path(os.environ.get('TMNF_APP') or apps_dir / title.app_name)
-    settings_app = pathlib.Path(
-        os.environ.get('TMNF_SETTINGS_APP') or app.parent / title.settings_app_name)
-    launcher = pathlib.Path(os.environ.get('TMNF_LAUNCHER') or support / 'launcher')
+    app = apps_dir / title.app_name
+    settings_app = app.parent / title.settings_app_name
+    launcher = support / 'launchers' / title.id
 
     game_dir = prefix / 'drive_c' / 'Program Files (x86)' / title.game_dir_name
     return TitlePaths(
@@ -103,10 +110,6 @@ def local_runtime_fallback() -> typing.Optional[pathlib.Path]:
 
 
 def wine_binary(paths: TitlePaths) -> typing.Optional[pathlib.Path]:
-    override = os.environ.get('TMNF_WINE')
-    if override:
-        candidate = pathlib.Path(override)
-        return candidate if candidate.is_file() else None
     if (paths.runtime / 'bin' / 'wine').is_file():
         return paths.runtime / 'bin' / 'wine'
     fallback = local_runtime_fallback()

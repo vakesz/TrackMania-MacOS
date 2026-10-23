@@ -6,7 +6,3 @@
 hub_command() {
   exec /usr/bin/env PYTHONPATH="${TMNF_PYTHONPATH}" "${TMNF_PYTHON}" -m tmnf.hub "$@"
 }
-
-hub_list_titles() {
-  exec /usr/bin/env PYTHONPATH="${TMNF_PYTHONPATH}" "${TMNF_PYTHON}" -m tmnf.hub titles
-}

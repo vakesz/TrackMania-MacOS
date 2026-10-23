@@ -1,4 +1,4 @@
-name: Release thin hub app
+name: Release hub app
 on:
   push:
     tags:
@@ -7,22 +7,23 @@ on:
 permissions:
   contents: write
 jobs:
-  thin-app:
+  hub-app:
     runs-on: macos-15
     env:
       APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
       APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
       TMNF_SIGN_IDENTITY: ${{ secrets.TMNF_SIGN_IDENTITY }}
       TMNF_NOTARIZE: ${{ secrets.TMNF_NOTARIZE }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      TMNF_TEAM_ID: ${{ secrets.TMNF_TEAM_ID }}
-      TMNF_APP_PASSWORD: ${{ secrets.TMNF_APP_PASSWORD }}
+      TMNF_NOTARY_PROFILE: tmnf-ci
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned
       - name: Verify tag, runtime release asset and signing configuration
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          TMNF_TEAM_ID: ${{ secrets.TMNF_TEAM_ID }}
+          TMNF_APP_PASSWORD: ${{ secrets.TMNF_APP_PASSWORD }}
         run: |
           set -euo pipefail
           version="$(tr -d '\r\n' < VERSION)"
@@ -49,13 +50,23 @@ jobs:
       - name: Import Developer ID certificate
         if: env.APPLE_CERT_P12 != ''
         run: |
-          echo "$APPLE_CERT_P12" | base64 --decode > /tmp/tmnf-cert.p12
+          cert="$RUNNER_TEMP/tmnf-cert.p12"
+          echo "$APPLE_CERT_P12" | base64 --decode > "$cert"
           security create-keychain -p actions actions.keychain
           security default-keychain -s actions.keychain
           security unlock-keychain -p actions actions.keychain
-          security import /tmp/tmnf-cert.p12 -k actions.keychain -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
+          security import "$cert" -k actions.keychain -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions actions.keychain
-          rm /tmp/tmnf-cert.p12
+          rm "$cert"
+      - name: Store notarytool credentials
+        if: env.TMNF_NOTARIZE == '1'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          TMNF_TEAM_ID: ${{ secrets.TMNF_TEAM_ID }}
+          TMNF_APP_PASSWORD: ${{ secrets.TMNF_APP_PASSWORD }}
+        run: |
+          xcrun notarytool store-credentials "$TMNF_NOTARY_PROFILE" \
+            --apple-id "$APPLE_ID" --team-id "$TMNF_TEAM_ID" --password "$TMNF_APP_PASSWORD"
       - name: Build hub app archive
         run: ./src/shell/tools/package-app.sh all
       - name: Upload app archive artifact
@@ -68,3 +79,6 @@ jobs:
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2, pinned
         with:
           files: .build/dist/TrackMania-Mac-*.app.zip*
+      - name: Remove signing keychain
+        if: always()
+        run: security delete-keychain actions.keychain || true

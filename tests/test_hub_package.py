@@ -45,7 +45,24 @@ class HubPackageTests(unittest.TestCase):
         self.assertFalse((launcher / "python/include").exists())
         self.assertFalse((launcher / "python/lib/python3.12/site-packages").exists())
         self.assertFalse(list((launcher / "python").rglob("__pycache__")))
-        self.assertFalse((launcher / "src/shell/lib/app/hub.sh").exists())
+        python_root = launcher / "python"
+        self.assertFalse([p for p in (python_root / "lib").iterdir()
+                          if any(t in p.name.lower() for t in ("tcl", "tk"))])
+        self.assertFalse(list(python_root.rglob("_tkinter*")))
+        titles = {p.stem for p in (ROOT / "config/titles").glob("*.json")}
+        self.assertEqual({p.stem for p in (ROOT / "assets/titles").glob("*.svg")}, titles)
+        self.assertEqual({p.stem for p in (launcher / "assets/titles").glob("*.png")}, titles)
+        self.assertFalse(list((launcher / "assets/titles").glob("*.svg")))
+        for png in (launcher / "assets/titles").glob("*.png"):
+            dims = subprocess.check_output(
+                ["sips", "-g", "pixelWidth", "-g", "pixelHeight", str(png)], text=True)
+            self.assertIn("pixelWidth: 512", dims)
+            self.assertIn("pixelHeight: 512", dims)
+        for path in python_root.rglob("*"):
+            if path.is_file() and not path.is_symlink() and (
+                    path.suffix in (".so", ".dylib") or path.name.startswith("python3")):
+                if "Mach-O" in subprocess.check_output(["file", "-b", str(path)], text=True):
+                    subprocess.run(["codesign", "--verify", "--strict", str(path)], check=True)
         self.assertFalse((launcher / "src/python/tmnf/config.py").exists())
 
         file_type = subprocess.check_output(["file", str(executable)], text=True)
@@ -57,6 +74,7 @@ class HubPackageTests(unittest.TestCase):
             info = plistlib.load(stream)
         self.assertEqual(info["CFBundleExecutable"], "TrackMania Mac")
         self.assertEqual(info["CFBundleIconFile"], "AppIcon")
+        self.assertEqual(info["LSApplicationCategoryType"], "public.app-category.games")
         self.assertEqual(info["CFBundleShortVersionString"], VERSION)
         self.assertEqual(info["CFBundleVersion"], VERSION)
         lint = subprocess.run(["plutil", "-lint", str(APP / "Contents/Info.plist")],
@@ -105,7 +123,7 @@ class HubPackageTests(unittest.TestCase):
             staged = subprocess.run(
                 ["/bin/bash", "-euc", '. "$1"; stage_launcher_payload "$2" "$3"; '
                  '"$3/python/bin/python3" -c "import ssl"', "fixture",
-                 str(launcher / "src/shell/lib/app/launcher_payload.sh"), str(launcher),
+                 str(launcher / "src/shell/lib/apps/payload.sh"), str(launcher),
                  str(installed_support)],
                 text=True, capture_output=True, timeout=30,
                 env={"HOME": str(home), "PATH": "/usr/bin:/bin"})
@@ -131,6 +149,14 @@ class HubPackageTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             subprocess.run(["codesign", "--verify", "--deep", "--strict",
                             str(Path(directory) / "TrackMania Mac.app")], check=True)
+
+    def test_xml_escape(self):
+        result = subprocess.run(
+            ["/bin/bash", "-c", '. "$1"; xml_escape "$2"', str(ROOT / "src/shell/tools/_t"),
+             str(ROOT / "src/shell/lib/plist.sh"), "a&b<c>\"d'e"],
+            text=True, capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "a&amp;b&lt;c&gt;&quot;d&apos;e")
 
 
 if __name__ == "__main__":

@@ -3,9 +3,7 @@
 # Sourced by tmnf after common.sh.
 
 update_game() {
-  local kind label
-  kind="$(tmnf_title_field "$TMNF_TITLE" installer)"
-  label="$(tmnf_title_field "$TMNF_TITLE" name)"
+  local kind="$TMNF_TITLE_INSTALLER" label="$TMNF_TITLE_NAME"
 
   case "$kind" in
     online-retail|online-trial)
@@ -18,8 +16,11 @@ update_game() {
   esac
 
   local needs_patch=false
-  if test "$(tmnf_title_field "$TMNF_TITLE" needs_tmloader)" = true; then
+  if test "$TMNF_TITLE_NEEDS_TMLOADER" = true; then
     needs_patch=true
+  fi
+  if test -f "$GAME_EXE"; then
+    ensure_title_icon || warn "Could not extract the game icon for the hub."
   fi
   if verify_file "$GAME_EXE" "$TMNF_GAME_EXE_SHA256" \
     && { test "$needs_patch" = false || competition_patch_is_ready; } \
@@ -48,10 +49,10 @@ doctor() {
   local needs_patch title_name title_short game_expected_sha
 
   validate_launch_options
-  title_name="$(tmnf_title_field "$TMNF_TITLE" name)"
-  title_short="$(tmnf_title_field "$TMNF_TITLE" short_name)"
+  title_name="$TMNF_TITLE_NAME"
+  title_short="$TMNF_TITLE_SHORT_NAME"
   game_expected_sha="${TMNF_GAME_EXE_SHA256:-}"
-  needs_patch="$(tmnf_title_field "$TMNF_TITLE" needs_tmloader)"
+  needs_patch="$TMNF_TITLE_NEEDS_TMLOADER"
 
   if test -f "${TMNF_PREFIX}/system.reg" && require_owned_prefix >/dev/null 2>&1; then
     if tmnf_python -m tmnf.guard.operation_guard held "$TMNF_PREFIX" >/dev/null 2>&1; then
@@ -170,15 +171,17 @@ stop_game() {
   local wine_bin
   wine_bin="$(wine_binary)" || die "Wine is not installed."
   require_owned_prefix || die "Refusing to stop an unmanaged prefix."
-  tmnf_python -m tmnf.session.session stop --prefix "$TMNF_PREFIX" --wine "$wine_bin"
+  tmnf_python -m tmnf.session.supervisor stop --prefix "$TMNF_PREFIX" --wine "$wine_bin"
   say "Stopped the TMNF Wine prefix."
 }
 
 uninstall_game() {
-  local answer=""
+  local answer="" prefix_real
   validate_managed_layout || die "Unsafe installation layout; userdata must be outside the prefix."
-  tmnf_python -m tmnf.guard.managed_paths uninstall "$TMNF_PREFIX" "$TMNF_USERDATA" \
+  # The guard prints the prefix resolved once; removal acts on that path only.
+  prefix_real="$(tmnf_python -m tmnf.guard.managed_paths uninstall "$TMNF_PREFIX" "$TMNF_USERDATA")" \
     || die "Refusing removal until the reported user-data locations are safe."
+  test -n "$prefix_real" || die "The guard did not report a prefix to remove."
   if test "${1:-}" != "--yes"; then
     printf 'Remove the TMNF prefix at %s? [y/N] ' "$TMNF_PREFIX"
     read -r answer || answer=""
@@ -187,7 +190,7 @@ uninstall_game() {
       *) say "Cancelled."; return 0 ;;
     esac
   fi
-  rm -rf "$TMNF_PREFIX"
-  say "Removed $TMNF_PREFIX"
+  rm -rf -- "$prefix_real"
+  say "Removed $prefix_real"
   say "The cached installers and private Wine runtime were kept."
 }

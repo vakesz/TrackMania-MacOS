@@ -30,16 +30,16 @@ Commands:
 EOF
 }
 
-# shellcheck source=src/shell/lib/app/apps.sh
-. "${TMNF_PROJECT_DIR}/src/shell/lib/app/apps.sh"
-# shellcheck source=src/shell/lib/app/import.sh
-. "${TMNF_PROJECT_DIR}/src/shell/lib/app/import.sh"
-# shellcheck source=src/shell/lib/app/hub_backend.sh
-. "${TMNF_PROJECT_DIR}/src/shell/lib/app/hub_backend.sh"
-# shellcheck source=src/shell/lib/app/play.sh
-. "${TMNF_PROJECT_DIR}/src/shell/lib/app/play.sh"
-# shellcheck source=src/shell/lib/app/maintain.sh
-. "${TMNF_PROJECT_DIR}/src/shell/lib/app/maintain.sh"
+# shellcheck source=src/shell/lib/apps/wrappers.sh
+. "${TMNF_PROJECT_DIR}/src/shell/lib/apps/wrappers.sh"
+# shellcheck source=src/shell/lib/commands/import.sh
+. "${TMNF_PROJECT_DIR}/src/shell/lib/commands/import.sh"
+# shellcheck source=src/shell/lib/commands/hub.sh
+. "${TMNF_PROJECT_DIR}/src/shell/lib/commands/hub.sh"
+# shellcheck source=src/shell/lib/commands/play.sh
+. "${TMNF_PROJECT_DIR}/src/shell/lib/commands/play.sh"
+# shellcheck source=src/shell/lib/commands/maintain.sh
+. "${TMNF_PROJECT_DIR}/src/shell/lib/commands/maintain.sh"
 
 command="${1:-help}"
 case "$command" in
@@ -70,7 +70,7 @@ case "$command" in
   doctor) doctor ;;
   stop) stop_game ;;
   app) install_app ;;
-  titles) hub_list_titles ;;
+  titles) hub_command titles ;;
   hub) hub_command "${@:2}" ;;
   import) import_source "${2:-}" ;;
   uninstall) uninstall_game "${2:-}" ;;

@@ -230,7 +230,7 @@ test -x "${FAKE_HOME}/Applications/TrackMania Settings.app/Contents/MacOS/TMNF"
 if grep -Fq "$PROJECT_DIR" "${TMNF_APP}/Contents/MacOS/TMNF"; then
   echo 'Installed app still depends on the checkout' >&2; exit 1
 fi
-cp -R "${TMNF_SUPPORT}/launcher" "${TEST_ROOT}/relocated launcher"
+cp -R "${TMNF_SUPPORT}/launchers/tmnf" "${TEST_ROOT}/relocated launcher"
 : >"$CALL_LOG"
 env -i PATH="$PATH" HOME="$FAKE_HOME" TMNF_TEST_LOG="$CALL_LOG" \
   "${TEST_ROOT}/relocated launcher/src/shell/cli/tmnf" configure

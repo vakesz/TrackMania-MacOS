@@ -129,7 +129,7 @@ class SmokeScripts(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         for name in ("src/shell/tools/probes", "src/shell/lib", "src/python/tmnf/probes",
-                     "config/titles", "bin", "prefix", "home", "source/bin"):
+                     "src/python/tmnf/hub", "config/titles", "bin", "prefix", "home", "source/bin"):
             (self.root / name).mkdir(parents=True)
         for script in (ROOT / "src/shell/tools/probes").glob("smoke-*.sh"):
             shutil.copy2(script, self.root / "src/shell/tools/probes" / script.name)
@@ -137,6 +137,10 @@ class SmokeScripts(unittest.TestCase):
         shutil.copy2(ROOT / "src/python/tmnf/__init__.py", self.root / "src/python/tmnf/__init__.py")
         shutil.copy2(ROOT / "src/python/tmnf/probes/__init__.py",
                      self.root / "src/python/tmnf/probes/__init__.py")
+        for module in ("__init__.py", "registry.py"):
+            shutil.copy2(ROOT / "src/python/tmnf/hub" / module,
+                         self.root / "src/python/tmnf/hub" / module)
+        shutil.copy2(ROOT / "config/pins.json", self.root / "config/pins.json")
         shutil.copy2(ROOT / "src/shell/lib/common.sh", self.root / "src/shell/lib/common.sh")
         shutil.copy2(ROOT / "src/shell/lib/titles.sh", self.root / "src/shell/lib/titles.sh")
         shutil.copy2(ROOT / "config/titles/tmnf.json", self.root / "config/titles/tmnf.json")

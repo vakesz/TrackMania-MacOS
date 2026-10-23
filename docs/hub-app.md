@@ -29,6 +29,16 @@ then starts the normal CLI/installer in a fresh process with `TMNF_TITLE` set
 before title-dependent paths are calculated. This prevents one title from using
 another title's prefix or game path.
 
+Each title entry carries `icon` (an absolute path or `null`) and `iconSource`
+(`"game"`, `"bundled"` or `null`). The icon is chosen in this order: the `.icns`
+extracted from the locally installed game executable
+(`~/Library/Application Support/TMNF/icons/<id>.icns`, never redistributed),
+then the project's own artwork as a PNG, then as an SVG (`assets/titles/<id>`).
+Clients should load either format; `iconSource` only says whether the art is the
+game's own. Each title also installs its own launcher support directory,
+`~/Library/Application Support/TMNF/launchers/<id>`, so installing one title's
+apps never changes what another title's apps launch.
+
 Nations Forever exposes install/repair, update and app-wrapper actions. United
 Forever and Canyon can also use their pinned official installers. Original can
 be installed from user-owned retail media, while Turbo can copy an existing
@@ -69,18 +79,5 @@ next primary action.
 
 ## Packaging and signing
 
-```sh
-make appbundle
-make zip
-```
-
-The executable at `Contents/MacOS/TrackMania Mac` is a signed arm64 Mach-O
-binary, not a shell wrapper. Its launcher resources sit below
-`Contents/Resources/launcher`. The packager signs only after the binary and
-resources are final, verifies the bundle, then uses `ditto -c -k --keepParent`
-to preserve the signature in the zip.
-
-Set `TMNF_SIGN_IDENTITY="Developer ID Application: Name (TEAMID)"` for
-Developer ID signing. Set `TMNF_NOTARIZE=1` with the documented Apple credential
-environment variables to notarize and staple the release. The native UI needs no
-JIT, DYLD or unsigned-executable-memory entitlement.
+Building, signing, notarizing and releasing the hub app are covered in
+[building.md](building.md).

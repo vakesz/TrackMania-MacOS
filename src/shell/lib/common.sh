@@ -58,91 +58,42 @@ tmnf_python() {
 # shellcheck source=src/shell/lib/titles.sh
 . "${TMNF_PROJECT_DIR}/src/shell/lib/titles.sh"
 
-# Per-title paths and names live in config/titles/*.json; this only loads them.
-# Prints prefix_subdir, game_dir_name, game_exe, launcher_exe, app_name and
-# settings_app_name, one per line. Anything else is rejected.
-_tmnf_load_title() {
-  tmnf_python - "$1" <<'PY'
-import json
-import sys
-fields = ('prefix_subdir', 'game_dir_name', 'game_exe', 'launcher_exe',
-          'app_name', 'settings_app_name')
-try:
-    data = json.load(open(sys.argv[1]))
-except (OSError, ValueError):
-    sys.exit(1)
-values = []
-for key in fields:
-    value = data.get(key)
-    if not isinstance(value, str) or not value:
-        sys.exit(1)
-    if any(char in value for char in '\n\r\x00'):
-        sys.exit(1)
-    values.append(value)
-if values[0].startswith('/') or values[0].startswith('~') \
-        or any(part in ('', '.', '..') for part in values[0].split('/')):
-    sys.exit(1)
-for value in values[1:]:
-    if '/' in value or value in ('.', '..'):
-        sys.exit(1)
-sys.stdout.write(''.join(value + '\n' for value in values))
-PY
-}
-
+# Per-title paths and names live in config/titles/*.json and the release pins in
+# config/pins.json; one Python start (tmnf_load_title) defines all of them.
 case "${1:-}" in
   hub|titles)
     # The Python hub backend contains broken registry files per title and
     # computes its paths from the registry itself; a strict shell-side gate
-    # here would break that containment. Keep the title fields defined so the
-    # guarded defaults below never trip `set -u`.
-    _title_root_leaf=""
-    _title_game_dir=""
-    _title_game_exe=""
-    _title_launcher_exe=""
-    _title_app=""
-    _title_settings=""
+    # here would break that containment. No Python is started here: the hub
+    # reads the pins itself, so the title and pin fields are only defined
+    # (empty) to keep the guarded defaults below from tripping `set -u`.
+    TMNF_TITLE_PREFIX_SUBDIR=""
+    TMNF_TITLE_GAME_DIR_NAME=""
+    TMNF_TITLE_GAME_EXE=""
+    TMNF_TITLE_LAUNCHER_EXE=""
+    TMNF_TITLE_APP_NAME=""
+    TMNF_TITLE_SETTINGS_APP_NAME=""
+    DIRECTX_VERSION="" DIRECTX_URL="" DIRECTX_SHA256=""
+    TMLOADER_URL="" TMLOADER_BUNDLE_VERSION="" TMLOADER_SHA256="" TMLOADER_EXE_SHA256=""
+    TMLOADER_GAME_VERSION="" TMLOADER_GAME_SHA256=""
+    TMLOADER_COREMOD_VERSION="" TMLOADER_COREMOD_SHA256=""
+    TMCOMP_VERSION="" TMCOMP_DLL_SHA256=""
     ;;
   *)
     tmnf_title_is_known "$TMNF_TITLE" \
       || die "Unknown TMNF_TITLE: $TMNF_TITLE (see ${TMNF_TITLES_DIR}/*.json)"
-    _TMNF_TITLE_SPEC="$(_tmnf_load_title "${TMNF_TITLES_DIR}/${TMNF_TITLE}.json")" \
+    tmnf_load_title "$TMNF_TITLE" \
       || die "Invalid title registry entry: ${TMNF_TITLES_DIR}/${TMNF_TITLE}.json"
-    {
-      IFS= read -r _title_root_leaf &&
-      IFS= read -r _title_game_dir &&
-      IFS= read -r _title_game_exe &&
-      IFS= read -r _title_launcher_exe &&
-      IFS= read -r _title_app &&
-      IFS= read -r _title_settings
-    } <<<"$_TMNF_TITLE_SPEC" \
-      || die "Cannot parse title registry entry: ${TMNF_TITLES_DIR}/${TMNF_TITLE}.json"
-    unset _TMNF_TITLE_SPEC
-
-    : "${TMNF_ROOT:=${HOME}/Games/${_title_root_leaf}}"
+    : "${TMNF_ROOT:=${HOME}/Games/${TMNF_TITLE_PREFIX_SUBDIR}}"
     ;;
 esac
 
 TMNF_VERSION="$(cat "${TMNF_PROJECT_DIR}/VERSION")"
-TMNF_GAME_URL="https://nadeo-download.cdn.ubi.com/trackmaniaforever/tmnationsforever_setup.exe"
-TMNF_GAME_SHA256="2f659138ed4409da404970841e18f03d29921beaf6a424824c8312ddb20f6355"
 TMNF_GAME_VERSION="2.11.26"
 TMNF_GAME_EXE_SHA256="3847cf9f20bfc63914450060ed528c12104f743d96ad23d6e76abd178de8c84f"
-TMLOADER_URL="https://tomashu.pages.dev/modloader/modloader/TMLoader-1.0.3-win32.zip"
-TMLOADER_BUNDLE_VERSION="1.0.3"
-TMLOADER_SHA256="85d758e75f23084f24ef948836a0fa4e5fe4c77bb1e8897df9ee01f8bd245eb9"
-TMLOADER_EXE_SHA256="0cf4c92ad1cb2dc7b92f95b2ec63d9058fd930c200632aaa2aab3a5a3a65e2c3"
-TMLOADER_GAME_VERSION="2.12.0-compat"
-TMLOADER_GAME_SHA256="0a885e194131063be9f78d9e5cf81e0f3017dfc4331d176812109b6aefc633bf"
-TMLOADER_COREMOD_VERSION="1.0.9"
-TMLOADER_COREMOD_SHA256="f3ffdcaf2b15c040823d60bcc559e7f287f767b483c1b42588212cdf714d08cf"
-TMCOMP_VERSION="1.5.3"
-TMCOMP_DLL_SHA256="eef7200a2f6d5a8b31ae43534752e807c3c146248bd941fdf54b21b61225a135"
 RUNTIME_VERSION="$TMNF_VERSION"
 RUNTIME_RELEASE_URL="https://github.com/vakesz/TrackMania-MacOS/releases/download/v${RUNTIME_VERSION}"
 RUNTIME_ARCHIVE_NAME="tmnf-${RUNTIME_VERSION}-runtime.tar.xz"
-DIRECTX_VERSION="9.29.1974.1 (June 2010)"
-DIRECTX_URL="https://download.microsoft.com/download/8/4/a/84a35bf1-dafe-4ae8-82af-ad2ae20b6b14/directx_Jun2010_redist.exe"
-DIRECTX_SHA256="053f76dcbb28802e23341b6a787e3b0791c0fa5c8d4d011b1044172dbf89c73b"
 
 : "${TMNF_CACHE:=${HOME}/Library/Caches/TMNF}"
 : "${TMNF_SUPPORT:=${HOME}/Library/Application Support/TMNF}"
@@ -152,9 +103,9 @@ if test -w /Applications; then
 else
   : "${TMNF_APPS_DIR:=${HOME}/Applications}"
 fi
-: "${TMNF_APP:=${TMNF_APPS_DIR}/${_title_app}}"
-: "${TMNF_SETTINGS_APP:=$(dirname "$TMNF_APP")/${_title_settings}}"
-: "${TMNF_LAUNCHER:=${TMNF_SUPPORT}/launcher}"
+: "${TMNF_APP:=${TMNF_APPS_DIR}/${TMNF_TITLE_APP_NAME}}"
+: "${TMNF_SETTINGS_APP:=$(dirname "$TMNF_APP")/${TMNF_TITLE_SETTINGS_APP_NAME}}"
+: "${TMNF_LAUNCHER:=${TMNF_SUPPORT}/launchers/${TMNF_TITLE}}"
 # "fullscreen" (the default) launches the game directly so it uses its own
 # display mode, set in TrackMania Settings. A WxH value instead runs it inside
 # an explorer virtual desktop of that size, whose title bar shrinks the drawable
@@ -178,10 +129,9 @@ fi
 : "${TMNF_D9VK_DLL:=${runtime_dir}/lib/d9vk/d3d9.dll}"
 : "${TMNF_SIDECAR:=${runtime_dir}/bin/x87sidecar}"
 
-readonly GAME_DIR="${TMNF_PREFIX}/drive_c/Program Files (x86)/${_title_game_dir}"
-readonly GAME_EXE="${GAME_DIR}/${_title_game_exe}"
-readonly LAUNCHER_EXE="${GAME_DIR}/${_title_launcher_exe}"
-readonly INSTALLER_PATH="${TMNF_CACHE}/tmnationsforever_setup.exe"
+readonly GAME_DIR="${TMNF_PREFIX}/drive_c/Program Files (x86)/${TMNF_TITLE_GAME_DIR_NAME}"
+readonly GAME_EXE="${GAME_DIR}/${TMNF_TITLE_GAME_EXE}"
+readonly LAUNCHER_EXE="${GAME_DIR}/${TMNF_TITLE_LAUNCHER_EXE}"
 readonly DIRECTX_ARCHIVE="${TMNF_CACHE}/directx_Jun2010_redist.exe"
 readonly DIRECTX_MARKER="${TMNF_PREFIX}/.tmnf-directx-jun2010"
 readonly TMLOADER_ARCHIVE="${TMNF_CACHE}/TMLoader-${TMLOADER_BUNDLE_VERSION}.zip"

@@ -9,9 +9,9 @@ import time
 import unittest
 from unittest import mock
 
-from tmnf.app import app_launch
+from tmnf.app import launch
 
-SCRIPT = Path(__file__).resolve().parents[1] / 'src/python/tmnf/app/app_launch.py'
+SCRIPT = Path(__file__).resolve().parents[1] / 'src/python/tmnf/app/launch.py'
 
 
 class AppLaunch(unittest.TestCase):
@@ -98,28 +98,28 @@ class AppLaunch(unittest.TestCase):
         self.assertTrue(self.log.read_bytes().endswith(b'exit status=143\n'))
 
     def test_rotation_threshold_order_and_three_backups(self):
-        self.write_log(self.log, b'x' * (app_launch.ROTATE_BYTES - 1))
+        self.write_log(self.log, b'x' * (launch.ROTATE_BYTES - 1))
         self.assertEqual(self.cli().returncode, 0)
         self.assertFalse(self.backup(1).exists())
         for number in range(1, 4):
             self.write_log(self.backup(number), str(number).encode())
         completed = self.log.read_bytes()
-        self.assertGreater(len(completed), app_launch.ROTATE_BYTES)
+        self.assertGreater(len(completed), launch.ROTATE_BYTES)
         self.assertEqual(self.cli().returncode, 0)
         self.assertEqual(self.backup(1).read_bytes(), completed)
         self.assertEqual(self.backup(2).read_bytes(), b'1')
         self.assertEqual(self.backup(3).read_bytes(), b'2')
         self.assertFalse(self.backup(4).exists())
-        self.write_log(self.log, b'e' * app_launch.ROTATE_BYTES)
+        self.write_log(self.log, b'e' * launch.ROTATE_BYTES)
         self.assertEqual(self.cli().returncode, 0)
-        self.assertEqual(self.backup(1).read_bytes(), b'e' * app_launch.ROTATE_BYTES)
+        self.assertEqual(self.backup(1).read_bytes(), b'e' * launch.ROTATE_BYTES)
 
     def test_unrelated_files_prefix_and_symlinks_are_untouched(self):
         prefix = self.root / 'prefix'
         prefix.mkdir()
         sentinel = prefix / 'system.reg'
         sentinel.write_bytes(b'prefix stays intact')
-        self.write_log(self.log, b'x' * app_launch.ROTATE_BYTES)
+        self.write_log(self.log, b'x' * launch.ROTATE_BYTES)
         unrelated = self.log.parent / 'play.log.other'
         unrelated.symlink_to(sentinel)
         self.write_log(self.backup(4), b'not ours')
@@ -136,7 +136,7 @@ class AppLaunch(unittest.TestCase):
         for path in paths:
             for kind in ('symlink', 'dangling', 'fifo', 'directory', 'writable', 'hardlink'):
                 with self.subTest(path=path.name, kind=kind):
-                    self.write_log(self.log, b'x' * app_launch.ROTATE_BYTES)
+                    self.write_log(self.log, b'x' * launch.ROTATE_BYTES)
                     path.unlink(missing_ok=True)
                     if kind in ('symlink', 'dangling'):
                         path.symlink_to(target if kind == 'symlink' else self.root / 'missing')
@@ -153,7 +153,7 @@ class AppLaunch(unittest.TestCase):
                     self.assertEqual(result.returncode, 1, result.stderr)
                     self.assertFalse(self.marker.exists())
                     if path != self.log:
-                        self.assertEqual(self.log.stat().st_size, app_launch.ROTATE_BYTES)
+                        self.assertEqual(self.log.stat().st_size, launch.ROTATE_BYTES)
                     if kind == 'directory':
                         path.rmdir()
                     else:
@@ -163,9 +163,9 @@ class AppLaunch(unittest.TestCase):
 
     def test_wrong_file_owner_is_rejected(self):
         self.write_log(self.log, b'preserve')
-        with mock.patch.object(app_launch.os, 'getuid', return_value=os.getuid() + 1):
+        with mock.patch.object(launch.os, 'getuid', return_value=os.getuid() + 1):
             with self.assertRaises(ValueError):
-                with app_launch._open_file(self.log):
+                with launch._open_file(self.log):
                     self.fail('Opened another user\'s log')
         self.assertEqual(self.log.read_bytes(), b'preserve')
 
@@ -209,7 +209,7 @@ class AppLaunch(unittest.TestCase):
 
     def test_concurrent_attempt_is_refused_and_lock_inode_is_stable(self):
         ready, release = self.root / 'ready', self.root / 'release'
-        self.stub('os.write(1, b"x" * ' + str(app_launch.ROTATE_BYTES) + ')\n'
+        self.stub('os.write(1, b"x" * ' + str(launch.ROTATE_BYTES) + ')\n'
                   + 'pathlib.Path(' + repr(str(ready)) + ').touch()\n'
                   + 'while not pathlib.Path(' + repr(str(release)) + ').exists(): time.sleep(0.01)')
         first = self.spawn()
@@ -259,7 +259,7 @@ class AppLaunch(unittest.TestCase):
         ready, release, done = (self.root / name for name in ('ready', 'release', 'done'))
         self.stub('assert __import__("stat").S_ISREG(os.fstat(1).st_mode)\n'
                   + 'assert __import__("stat").S_ISREG(os.fstat(2).st_mode)\n'
-                  + 'os.write(1, b"x" * ' + str(app_launch.ROTATE_BYTES) + ')\n'
+                  + 'os.write(1, b"x" * ' + str(launch.ROTATE_BYTES) + ')\n'
                   + 'if os.fork(): sys.exit(124)\n'
                   + 'signal.signal(signal.SIGPIPE, signal.SIG_DFL)\n'
                   + 'pathlib.Path(' + repr(str(ready)) + ').touch()\n'
@@ -271,7 +271,7 @@ class AppLaunch(unittest.TestCase):
         self.wait_file(ready)
         self.stub()
         self.assertEqual(self.cli().returncode, 0)
-        self.assertGreater(self.backup(1).stat().st_size, app_launch.ROTATE_BYTES)
+        self.assertGreater(self.backup(1).stat().st_size, launch.ROTATE_BYTES)
         release.touch()
         self.wait_file(done)
         self.assertIn(b'survived\n', self.backup(1).read_bytes())

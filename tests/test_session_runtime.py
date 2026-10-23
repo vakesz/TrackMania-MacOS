@@ -273,7 +273,7 @@ class SessionRuntimeTests(unittest.TestCase):
 
     def run_host(self, executable, args=(), watches=(), startup_timeout=30):
         command = [sys.executable, '-m', 'tmnf.guard.operation_guard', 'run', self.prefix,
-                   sys.executable, '-m', 'tmnf.session.session', 'run', '--prefix', self.prefix,
+                   sys.executable, '-m', 'tmnf.session.supervisor', 'run', '--prefix', self.prefix,
                    '--wine', self.wine, '--helper', self.helper,
                    '--startup-timeout', str(startup_timeout), '--cleanup-timeout', '15']
         for watch in watches or (executable,):

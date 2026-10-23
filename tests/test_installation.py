@@ -79,6 +79,10 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
                               env=dict(self.env, **overrides), text=True, capture_output=True, timeout=timeout)
 
     def modded_fixture(self):
+        pins_key_by_constant = {
+            'TMLOADER_EXE_SHA256': 'tmloader_exe_sha256', 'TMCOMP_DLL_SHA256': 'tmcomp_dll_sha256',
+            'TMLOADER_GAME_SHA256': 'tmloader_game_sha256',
+            'TMLOADER_COREMOD_SHA256': 'tmloader_coremod_sha256'}
         project = self.home / 'fixture project'
         project.mkdir()
         for name in ('src', 'config'):
@@ -90,6 +94,8 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         game, loader, patch, target, coremod = map(Path, result.stdout.splitlines())
         common = project / 'src/shell/lib/common.sh'
         source = common.read_text()
+        pins_file = project / 'config/pins.json'
+        pins = json.loads(pins_file.read_text())
         # Only this copy accepts fake payloads. Pin the base game too so update
         # repairs the profile without downloading the official installer.
         for constant, path in (('TMNF_GAME_EXE_SHA256', game), ('TMLOADER_EXE_SHA256', loader),
@@ -97,10 +103,14 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
                                ('TMLOADER_COREMOD_SHA256', coremod)):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('fake pinned ' + constant)
+            if constant in pins_key_by_constant:
+                pins[pins_key_by_constant[constant]] = digest(path)
+                continue
             source, count = re.subn(r'^' + constant + r'="[0-9a-f]{64}"$',
                                     '{}="{}"'.format(constant, digest(path)), source, flags=re.MULTILINE)
             self.assertEqual(count, 1)
         common.write_text(source)
+        pins_file.write_text(json.dumps(pins))
         (game.parent / 'TmForeverLauncher.exe').touch()
         (self.prefix / '.tmnf-prefix').write_text('tmnf:1\n')
         (self.prefix / 'system.reg').touch()
@@ -120,6 +130,12 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
             with self.subTest(value=value), self.assertRaises(ValueError):
                 safe_path(value)
         self.assertEqual(safe_path(str(self.prefix) + '//'), self.prefix)
+
+    def test_trailing_slash_cannot_hide_a_final_symlink(self):
+        alias = self.home / 'alias'
+        alias.symlink_to(self.home, target_is_directory=True)
+        with self.assertRaises(ValueError):
+            safe_path(str(alias) + '/')
 
     def test_symlinks_and_physical_overlap(self):
         alias = self.home / 'alias'
@@ -145,6 +161,11 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
 
     def test_installed_game_app_runs_without_checkout(self):
         project, _, _, _, _, _ = self.modded_fixture()
+        # The wrapper fails closed without the launcher's own Python, so the
+        # installed payload needs one (the packaged hub bundles a real tree).
+        bundled = project / 'python/bin/python3'
+        bundled.parent.mkdir(parents=True)
+        bundled.symlink_to(sys.executable)
         result = self.shell('./src/shell/cli/tmnf app', cwd=project)
         self.assertEqual(result.returncode, 0, result.stderr)
         entry = self.home / 'apps/TrackMania Nations Forever.app/Contents/MacOS/TMNF'

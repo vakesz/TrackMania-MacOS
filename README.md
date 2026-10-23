@@ -1,15 +1,27 @@
-# TrackMania Nations Forever for Apple Silicon
+# TrackMania Mac
 
-Install TMNF with Competition Patch, working textures and audio, and a patched
-Wine runtime tuned for this game. The runtime includes D9VK, MoltenVK and an
-x87 translator that preserves the game's 24-bit floating-point precision.
+Install and play the TrackMania Forever family on Apple Silicon with a native
+hub app and a patched Wine runtime. The runtime includes D9VK, MoltenVK and an
+x87 translator that preserves the games' 24-bit floating-point precision.
+Nations Forever installs with Competition Patch, working textures and audio.
 
-This is an independent community project. The game and Microsoft DirectX are
-downloaded from their original hosts during installation, not redistributed here.
+| Title | Install source | Status |
+| --- | --- | --- |
+| Nations Forever (`tmnf`) | free Nadeo download | supported |
+| United Forever (`tmu`) | official retail installer (serial key needed) | provisional |
+| Original (`tm-original`) | your own retail disk image or setup executable | provisional |
+| TrackMania 2 Canyon (`tm-canyon`) | official ManiaPlanet trial | provisional |
+| Turbo (`tm-turbo`) | existing Steam game folder | provisional |
+
+Provisional titles install, but renderer, DRM, online services and full
+gameplay have not been qualified under Wine. See [docs/hub-app.md](docs/hub-app.md).
+
+This is an independent community project. Games and Microsoft DirectX are
+downloaded from their original hosts or supplied by you, not redistributed here.
 
 | In game | Main menu |
 | --- | --- |
-| ![TMNF racing on an M1 Pro with the DXVK FPS overlay](docs/images/ingame.png) | ![TMNF main menu with Competition Patch and CoreMod loaded](docs/images/menu.png) |
+| ![Nations Forever racing on an M1 Pro with the DXVK FPS overlay](docs/images/ingame.png) | ![Nations Forever main menu with Competition Patch and CoreMod loaded](docs/images/menu.png) |
 
 Both screenshots are from an M1 Pro in a 1280x720 window with the DXVK frame
 rate overlay enabled (`DXVK_HUD=fps,frametimes`).
@@ -177,16 +189,15 @@ settings.
 
 ## Development
 
-`make check` runs shell checks, Python tests, the CLI integration test and native
-Swift hub tests. It needs uv, Swift and a checkout clone.
+`make check` runs shell checks, Ruff, Python tests, the CLI integration test and
+the Swift hub tests. Build, packaging, signing and release steps are in
+[docs/building.md](docs/building.md); patch details are in
+[docs/runtime.md](docs/runtime.md); contribution rules are in
+[.github/CONTRIBUTING.md](.github/CONTRIBUTING.md).
 
-Run `make smoke` from a source checkout only when a runtime and initialized prefix
-exist, with Rosetta 2, Python 3 and network access for the HTTPS probe.
-Close the game and Settings app first; audio checks need a working output device.
-
-`make package` packages an already verified source build into the versioned
-runtime and source archives. Before distributing them, run `make check` and
-follow the [building and release guide](docs/building.md).
+Run `make smoke` only from a checkout with a built runtime and initialized
+prefix, with Rosetta 2, Python 3 and network access for the HTTPS probe. Close
+the game and Settings app first; audio checks need a working output device.
 
 This project's own scripts and tests use the MIT license. Patches and bundled third-party
 code retain their upstream licenses. See [LICENSE](LICENSE) and the `licenses`

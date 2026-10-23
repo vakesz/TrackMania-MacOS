@@ -9,7 +9,7 @@ TITLES = ROOT / 'config/titles'
 REQUIRED = {'id', 'name', 'engine', 'installer', 'status', 'prefix_subdir',
             'prefix_marker', 'app_name', 'settings_app_name', 'game_exe',
             'launcher_exe', 'save_dirs', 'needs_directx', 'needs_tmloader'}
-ENGINES = {'tmf-classic', 'maniaplanet', 'turbo', 'tm-original'}
+ENGINES = {'tmf-classic', 'maniaplanet', 'turbo'}
 INSTALLERS = {'online', 'online-retail', 'online-trial', 'steam-copy', 'disk-image'}
 DOWNLOADERS = {'online', 'online-retail', 'online-trial'}
 SHA256 = re.compile(r'^[0-9a-f]{64}$')
@@ -64,29 +64,48 @@ class TitleRegistryTests(unittest.TestCase):
             self.assertNotIn(data['prefix_subdir'], subdirs, data['prefix_subdir'])
             subdirs[data['prefix_subdir']] = data['id']
 
-    def test_downloader_pins_match_common_sh(self):
-        """The registry and common.sh must state the same official TMNF pin."""
-        data = json.loads((TITLES / 'tmnf.json').read_text())
-        common = (ROOT / 'src/shell/lib/common.sh').read_text()
-        self.assertIn(f'TMNF_GAME_URL="{data["source_url"]}"', common)
-        self.assertIn(data['source_sha256'], common)
-        self.assertEqual(data['game_exe'], 'TmForever.exe')
-        self.assertEqual(data['prefix_marker'], 'tmnf:1')
+    def test_shell_and_python_read_the_same_release_pins(self):
+        """config/pins.json is the only home: shell and Python must agree on it."""
+        import sys
+        sys.path.insert(0, str(ROOT / 'src/python'))
+        from tmnf.hub import registry, state
+        pins = registry.pins()
+        self.assertEqual(pins, {key: value for key, value in json.loads(
+            (ROOT / 'config/pins.json').read_text()).items()})
+        names = ' '.join(f'"${key.upper()}"' for key in pins)
+        result = subprocess.run(
+            ['/bin/bash', '-euc', f'. src/shell/lib/common.sh; printf "%s\\n" {names}'],
+            cwd=ROOT, text=True, capture_output=True, timeout=15,
+            env={'PATH': '/usr/bin:/bin', 'HOME': '/tmp'})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), list(pins.values()))
+        for literal in pins.values():
+            for source in ('src/shell/lib/common.sh', 'src/python/tmnf/hub/state.py',
+                           'src/python/tmnf/hub/paths.py'):
+                self.assertNotIn(literal, (ROOT / source).read_text(), (source, literal))
+        self.assertTrue(hasattr(state, 'probe'))
 
-    def test_python_state_pins_match_common_sh(self):
-        state = load_states_module()
-        common = (ROOT / 'src/shell/lib/common.sh').read_text()
-        for constant in ('_DIRECTX_SHA256', '_TMLOADER_EXE_SHA256', '_TMLOADER_GAME_SHA256',
-                         '_TMCOMP_DLL_SHA256', '_COREMOD_DLL_SHA256'):
-            value = getattr(state, constant)
-            self.assertIn(value, common, constant)
+    def test_tmnf_installer_cache_path_is_historical(self):
+        result = subprocess.run(
+            ['/bin/bash', '-euc', '. src/shell/lib/common.sh; . src/shell/lib/install/game.sh; '
+             '_cache_installer_path tmnf'],
+            cwd=ROOT, text=True, capture_output=True, timeout=15,
+            env={'PATH': '/usr/bin:/bin', 'HOME': '/tmp', 'TMNF_CACHE': '/tmp/c'})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), '/tmp/c/tmnationsforever_setup.exe')
 
-    def test_directx_version_pin_matches_common_sh(self):
-        paths = load_paths_module()
-        common = (ROOT / 'src/shell/lib/common.sh').read_text()
-        version, sha = paths.directxpins()
-        self.assertIn(f'DIRECTX_VERSION="{version}"', common)
-        self.assertIn(sha, common)
+    def test_staged_payload_contains_pins(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(
+                ['/bin/bash', '-euc', '. src/shell/lib/common.sh; '
+                 '. src/shell/lib/apps/payload.sh; '
+                 f'stage_launcher_payload "$PWD" "{directory}/p"'],
+                cwd=ROOT, text=True, capture_output=True, timeout=60,
+                env={'PATH': '/usr/bin:/bin', 'HOME': '/tmp'})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((Path(directory) / 'p/config/pins.json').read_text(),
+                             (ROOT / 'config/pins.json').read_text())
 
     def test_installer_kinds_match_hub_registry(self):
         sys_path_added = ROOT / 'src/python'
@@ -165,6 +184,89 @@ class TitleRegistryTests(unittest.TestCase):
             cwd=ROOT, text=True, capture_output=True, timeout=15,
             env={'PATH': '/usr/bin:/bin', 'HOME': '/tmp', 'TMNF_TITLE': 'nope'})
         self.assertNotEqual(result.returncode, 0)
+
+
+
+class RegistryValidationTests(unittest.TestCase):
+    def setUp(self):
+        import sys
+        sys.path.insert(0, str(ROOT / 'src/python'))
+        from tmnf.hub import registry
+        self.registry = registry
+        self.data = json.loads((TITLES / 'tmu.json').read_text())
+
+    def validate(self, **changes):
+        data = dict(self.data, **changes)
+        return self.registry._validate(data, Path('/x/tmu.json'))
+
+    def test_shipped_entry_is_valid(self):
+        self.validate()
+
+    def test_unsafe_names_are_rejected(self):
+        bad = ['.', '..', '~root', 'a\\b', 'a\nb', 'a\x00b', 'a\x7fb', 'a/b']
+        for field in ('short_name', 'game_exe', 'launcher_exe', 'game_dir_name'):
+            for value in bad:
+                with self.subTest(field=field, value=value), \
+                        self.assertRaises(self.registry.RegistryError):
+                    self.validate(**{field: value})
+        for field, value in (('app_name', '~x.app'), ('settings_app_name', '..'),
+                             ('app_name', 'a\\b.app')):
+            with self.subTest(field=field, value=value), \
+                    self.assertRaises(self.registry.RegistryError):
+                self.validate(**{field: value})
+        for value in ('.', '..', '~x', 'a\\b', 'a\tb'):
+            with self.subTest(save_dir=value), self.assertRaises(self.registry.RegistryError):
+                self.validate(save_dirs=[value])
+        for value in ('TMNF/..', '/abs', 'a//b', '~/x', 'a/./b', 'a\\b', 'TMNF/a\nb'):
+            with self.subTest(prefix_subdir=value), \
+                    self.assertRaises(self.registry.RegistryError):
+                self.validate(prefix_subdir=value)
+
+    def test_bundle_ids_and_urls(self):
+        for value in ('a b', 'a;b', 'a$b', 'a/b', 'a_b'):
+            with self.subTest(bundle=value), self.assertRaises(self.registry.RegistryError):
+                self.validate(bundle_id_game=value)
+        for value in ('ftp://x/y', 'file:///etc/passwd', 'https://x/a b', "https://x/'"):
+            with self.subTest(url=value), self.assertRaises(self.registry.RegistryError):
+                self.validate(source_url=value)
+        self.validate(source_url='https://example.test/x.exe')
+        with self.assertRaises(self.registry.RegistryError):
+            self.validate(source_url='http://example.test/x.exe', source_sha256=None)
+
+    def test_export_round_trips_hostile_but_valid_values(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            hostile = dict(self.data, id='evil', name="$(touch pwned) `id` ' \" ; &",
+                           notes='line1\nline2 $HOME \\ *', short_name='a b$c',
+                           prefix_marker='evil:1')
+            titles = Path(directory) / 'titles'
+            titles.mkdir()
+            (titles / 'evil.json').write_text(json.dumps(hostile))
+            result = subprocess.run(
+                ['/bin/bash', '-euc', '. src/shell/lib/common.sh; '
+                 'printf "%s\\0" "$TMNF_TITLE_NAME" "$TMNF_TITLE_NOTES" "$TMNF_TITLE_SHORT_NAME"'],
+                cwd=ROOT, capture_output=True, timeout=15,
+                env={'PATH': '/usr/bin:/bin', 'HOME': directory, 'TMNF_TITLE': 'evil',
+                     'TMNF_TITLES_DIR': str(titles)})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            name, notes, short = result.stdout.decode().split('\0')[:3]
+            self.assertEqual((name, notes, short), (hostile['name'], hostile['notes'],
+                                                    hostile['short_name']))
+            self.assertFalse((ROOT / 'pwned').exists())
+            self.assertFalse((Path(directory) / 'pwned').exists())
+
+    def test_shell_honors_titles_dir_like_python(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            titles = Path(directory) / 'titles'
+            titles.mkdir()
+            (titles / 'tmu.json').write_text(json.dumps(dict(self.data, name='Custom')))
+            result = subprocess.run(
+                ['/bin/bash', '-euc', '. src/shell/lib/common.sh; printf "%s" "$TMNF_TITLE_NAME"'],
+                cwd=ROOT, text=True, capture_output=True, timeout=15,
+                env={'PATH': '/usr/bin:/bin', 'HOME': directory, 'TMNF_TITLE': 'tmu',
+                     'TMNF_TITLES_DIR': str(titles)})
+            self.assertEqual(result.stdout, 'Custom', result.stderr)
 
 
 if __name__ == '__main__':

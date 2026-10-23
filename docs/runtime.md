@@ -107,7 +107,7 @@ byte equality with the bundled reference, and a retained parent in the same
 job. Only its completed zero-status lifecycle is exempt from unknown-child
 handling; a namesake or modified image is not trusted as infrastructure.
 
-`src/python/tmnf/session/session.py` preserves the reported unsigned Windows exit status before
+`src/python/tmnf/session/supervisor.py` preserves the reported unsigned Windows exit status before
 cleanup. A validated completed session permits bounded, prefix-specific
 wineserver shutdown; `stop` is the explicit user-authorized version of that
 operation. Timeout or interruption before completion terminates only the host
@@ -150,7 +150,7 @@ launch is the default. Fullscreen uses the primary display; on multiple monitors
 set the game's resolution to the primary's.
 
 The two apps carry TMNF's own icon, extracted at install time from the
-installed `TmForever.exe` by `src/python/tmnf/app/app_icon.py` using Python's standard library,
+installed `TmForever.exe` by `src/python/tmnf/app/icon.py` using Python's standard library,
 sips and iconutil. Malformed or unsupported icons fall back to generic app artwork
 without blocking installation. Nothing of Nadeo's is stored in this repository.
 
@@ -169,7 +169,7 @@ game may accept. Offline tests check chunk structure and unchanged default bytes
 Start with `make doctor`. The app logs are in
 `~/Library/Logs/TMNF/play.log` and `configure.log`.
 
-`src/python/tmnf/app/app_launch.py` serializes app log writers and rotates completed logs at
+`src/python/tmnf/app/launch.py` serializes app log writers and rotates completed logs at
 launch, keeping three backups. Active or surviving writers retain direct file
 descriptors and can exceed the 2 MiB rotation threshold.
 

@@ -12,7 +12,7 @@ class ImportFlowTests(unittest.TestCase):
     def run_import(self, title, source, home, wine_script):
         script = f"""
         . {str(ROOT / 'src/shell/lib/common.sh')!r}
-        . {str(ROOT / 'src/shell/lib/app/import.sh')!r}
+        . {str(ROOT / 'src/shell/lib/commands/import.sh')!r}
         validate_launch_options() {{ :; }}
         require_owned_prefix() {{ return 0; }}
         validate_managed_layout() {{ return 0; }}
@@ -60,6 +60,43 @@ class ImportFlowTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("expected game executable", result.stderr)
             self.assertIn("TrackMania.exe", result.stderr)
+
+    def steam_fixture(self, home):
+        source = home / "Steam Game"
+        source.mkdir()
+        (source / "TrackmaniaTurbo.exe").write_text("exe")
+        prefix = home / "Games With Spaces/tm-turbo/prefix"
+        (prefix / "drive_c").mkdir(parents=True)
+        return source, prefix
+
+    def test_steam_copy_is_staged_and_moved_into_place(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            source, prefix = self.steam_fixture(home)
+            result = self.run_import("tm-turbo", source, home, "")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            game = prefix / "drive_c/Program Files (x86)/TrackMania Turbo"
+            self.assertEqual((game / "TrackmaniaTurbo.exe").read_text(), "exe")
+            self.assertEqual(list(prefix.glob(".import-staging.*")), [])
+
+    def test_steam_copy_refuses_symlink_in_source_or_destination_chain(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            source, prefix = self.steam_fixture(home)
+            (source / "link").symlink_to("/etc/hosts")
+            result = self.run_import("tm-turbo", source, home, "")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("symlinks", result.stderr)
+            (source / "link").unlink()
+
+            outside = home / "outside"
+            outside.mkdir()
+            (prefix / "drive_c/Program Files (x86)").symlink_to(outside)
+            result = self.run_import("tm-turbo", source, home, "")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("symlink", result.stderr)
+            self.assertEqual(list(outside.iterdir()), [])
+            self.assertEqual(list(prefix.glob(".import-staging.*")), [])
 
 
 if __name__ == "__main__":

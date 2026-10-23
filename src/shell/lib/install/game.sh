@@ -14,18 +14,17 @@
 
 # _cache_installer_path TITLE — resolved path of the pinned installer download.
 _cache_installer_path() {
-  local title="$1" url
+  local title="$1" url="$TMNF_TITLE_SOURCE_URL"
+  test "$title" = "$TMNF_TITLE" || die "Installer cache requested for $title, not $TMNF_TITLE."
+  if test -z "$url"; then
+    die "Title $title has no pinned installer URL in config/titles."
+  fi
   if test "$title" = tmnf; then
     # Keep the historical single-title cache location so existing downloads
     # stay valid.
-    # shellcheck disable=SC2153
-    printf '%s\n' "$INSTALLER_PATH"
+    printf '%s/%s\n' "$TMNF_CACHE" "${url##*/}"
   else
-    url="$(tmnf_title_field "$title" source_url)"
-    if test -z "$url"; then
-      die "Title $title has no pinned installer URL in config/titles."
-    fi
-    printf '%s/games/%s/%s\n' "$TMNF_CACHE" "$title" "$(basename "$url")"
+    printf '%s/games/%s/%s\n' "$TMNF_CACHE" "$title" "${url##*/}"
   fi
 }
 
@@ -113,12 +112,11 @@ $entries"
 }
 
 download_pinned_installer() {
-  local title="$1" url expected
-  url="$(tmnf_title_field "$title" source_url)"
-  expected="$(tmnf_title_field "$title" source_sha256)"
-  test -n "$url" && test -n "$expected" \
+  local title="$1"
+  test -n "$TMNF_TITLE_SOURCE_URL" && test -n "$TMNF_TITLE_SOURCE_SHA256" \
     || die "Title $title has no pinned installer URL and checksum in config/titles."
-  download_verified "$url" "$(_cache_installer_path "$title")" "$expected"
+  download_verified "$TMNF_TITLE_SOURCE_URL" "$(_cache_installer_path "$title")" \
+    "$TMNF_TITLE_SOURCE_SHA256"
 }
 
 verify_installed_game() {
@@ -131,8 +129,7 @@ verify_installed_game() {
 
 install_game() {
   local title_id="$TMNF_TITLE" installer_path installer_log
-  local kind
-  kind="$(tmnf_title_field "$title_id" installer)"
+  local kind="$TMNF_TITLE_INSTALLER"
 
   case "$kind" in
     online) ;;
@@ -154,7 +151,7 @@ install_game() {
     return
   fi
 
-  download_verified "$TMNF_GAME_URL" "$installer_path" "$TMNF_GAME_SHA256"
+  download_pinned_installer "$title_id"
   rm -f "$installer_log"
   run_released_installer "$installer_path" "TrackMania Nations Forever"
   wait_inno_setup "$TMNF_INSTALLER_PID" "$installer_log" "TrackMania Nations Forever"
@@ -166,7 +163,7 @@ install_pinned_inno_game() {
   local kind="$1" title_id="$TMNF_TITLE"
   local title_name installer_path installer_log inner
 
-  title_name="$(tmnf_title_field "$title_id" name)"
+  title_name="$TMNF_TITLE_NAME"
   installer_log="${TMNF_PREFIX}/drive_c/tmnf-install.log"
 
   if test -f "$GAME_EXE" && test "${TMNF_REINSTALL:-0}" != "1" \
@@ -179,7 +176,7 @@ install_pinned_inno_game() {
   installer_path="$(_cache_installer_path "$title_id")"
   inner="$(unpack_inner_inno "$installer_path")"
   rm -f "$installer_log"
-  TMNF_INNO_DIR="C:\Program Files (x86)\${_title_game_dir}" \
+  TMNF_INNO_DIR="C:\Program Files (x86)\${TMNF_TITLE_GAME_DIR_NAME}" \
     run_released_installer "$inner" "$title_name"
   wait_inno_setup "$TMNF_INSTALLER_PID" "$installer_log" "$title_name"
   verify_installed_game "$GAME_EXE" "" "$title_name"

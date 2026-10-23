@@ -64,7 +64,7 @@ play_target() {
     WINEDLLOVERRIDES="$overrides" \
     "${renderer_vars[@]}" \
     PYTHONPATH="$TMNF_PYTHONPATH" \
-    "$TMNF_PYTHON" -m tmnf.session.session run \
+    "$TMNF_PYTHON" -m tmnf.session.supervisor run \
     --prefix "$TMNF_PREFIX" --wine "$wine_bin" --helper "$helper" \
     "${session_args[@]}" -- "$executable" "$@"
 }

@@ -14,10 +14,18 @@ inside the download.
 
 - `patches/` and `config/sources.json` are the source-build contract. Keep both
   in every source release.
+- `config/titles/*.json` is the title registry; `config/pins.json` pins
+  upstream downloads.
+- `assets/titles/*.svg` is hand-authored title artwork, rasterized to PNG only
+  inside the app bundle at package time; `assets/branding/` holds the hub icon.
 - `src/c/` holds the Windows session helper source.
-- `src/python/tmnf/build/` holds runtime-build tooling; `src/python/tmnf/probes/`
-  holds maintainer probe tooling.
-- `src/shell/` holds the CLI, installer modules and package scripts.
+- `src/python/tmnf/` holds the Python packages: `app` (icon extraction, app
+  launcher), `build` (runtime build), `guard`, `hub` (snapshot and run
+  backend), `install`, `probes` and `session`.
+- `src/shell/cli/` holds the `tmnf` entry point and installer;
+  `src/shell/lib/commands/` implements its verbs, `src/shell/lib/apps/` builds
+  app wrappers, icons and the launcher payload, and `src/shell/lib/install/`
+  holds installer steps. `src/shell/tools/` holds build and package scripts.
 - `src/swift/` holds the native hub UI. It calls `tmnf hub snapshot` and
   `tmnf hub run`; it does not duplicate install rules.
 
@@ -56,7 +64,7 @@ tmnf-<version>-source.tar.xz.sha256
 The source archive expands into a single `tmnf/` directory containing the
 repository inputs and the corresponding patched upstream source snapshots.
 
-Run `make check` again before publishing. The thin hub expects the matching
+Run `make check` again before publishing. The hub expects the matching
 runtime archive and checksum to exist in the same GitHub Release tag.
 
 ## Build the native hub
@@ -75,9 +83,19 @@ already installed compatible uv-managed Python root for an offline package
 build. `make zip` rebuilds that app, signs it and writes the zip and SHA-256
 checksum under `.build/dist/`.
 
-For Developer ID distribution, set `TMNF_SIGN_IDENTITY` and optionally enable
-notarization with `TMNF_NOTARIZE=1`, `APPLE_ID`, `TMNF_TEAM_ID` and
-`TMNF_APP_PASSWORD`.
+The executable at `Contents/MacOS/TrackMania Mac` is a signed arm64 Mach-O
+binary, not a shell wrapper; launcher resources sit below
+`Contents/Resources/launcher`. The packager signs only after the binary and
+resources are final, verifies the bundle, then uses `ditto -c -k --keepParent`
+to preserve the signature. The UI needs no JIT, DYLD or unsigned-executable-memory
+entitlement.
+
+For Developer ID distribution, set `TMNF_SIGN_IDENTITY="Developer ID Application:
+Name (TEAMID)"`. Notarization is opt-in: set `TMNF_NOTARIZE=1` and
+`TMNF_NOTARY_PROFILE` to a keychain profile created with
+`xcrun notarytool store-credentials`; no password is passed on a command line.
+The release workflow (`.github/workflows/release-hub.yml`) creates that profile
+from the `APPLE_ID`, `TMNF_TEAM_ID` and `TMNF_APP_PASSWORD` secrets.
 
 ## Release order
 

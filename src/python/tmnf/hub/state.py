@@ -17,19 +17,6 @@ from . import registry
 
 __all__ = ['probe']
 
-# Release-frozen pins, shared with src/shell/lib/common.sh by the registry
-# pin-sync tests; each language keeps one literal source of truth.
-_DIRECTX_SHA256 = '053f76dcbb28802e23341b6a787e3b0791c0fa5c8d4d011b1044172dbf89c73b'
-_TMLOADER_EXE_SHA256 = '0cf4c92ad1cb2dc7b92f95b2ec63d9058fd930c200632aaa2aab3a5a3a65e2c3'
-_TMLOADER_GAME_SHA256 = '0a885e194131063be9f78d9e5cf81e0f3017dfc4331d176812109b6aefc633bf'
-_TMCOMP_DLL_SHA256 = 'eef7200a2f6d5a8b31ae43534752e807c3c146248bd941fdf54b21b61225a135'
-_COREMOD_DLL_SHA256 = 'f3ffdcaf2b15c040823d60bcc559e7f287f767b483c1b42588212cdf714d08cf'
-
-_TMLOADER_GAME_VERSION = '2.12.0-compat'
-_TMCOMP_VERSION = '1.5.3'
-_COREMOD_VERSION = '1.0.9'
-_TMLOADER_BUNDLE_VERSION = '1.0.3'
-
 
 class Probe(typing.NamedTuple):
     ready: bool
@@ -106,7 +93,7 @@ def _prefix_ready(title: registry.Title, prefix: pathlib.Path) -> Probe:
 def _directx_ready(prefix: pathlib.Path) -> Probe:
     marker = prefix / '.tmnf-directx-jun2010'
     try:
-        ok = marker.is_file() and marker.read_text().strip() == _DIRECTX_SHA256
+        ok = marker.is_file() and marker.read_text().strip() == registry.pins()['directx_sha256']
     except (OSError, UnicodeDecodeError):
         ok = False
     if ok:
@@ -128,16 +115,17 @@ def _renderer_ready(prefix: pathlib.Path, wine: typing.Optional[pathlib.Path]) -
 
 def _competition_patch_ready(prefix: pathlib.Path) -> Probe:
     loader = _loader_dir(prefix)
+    pin = registry.pins()
     patches = (
-        (loader / 'TMLoader.exe', _TMLOADER_EXE_SHA256, 'ModLoader executable'),
+        (loader / 'TMLoader.exe', pin['tmloader_exe_sha256'], 'ModLoader executable'),
         (loader / 'database' / 'TmForever' / 'products' / 'Competition Patch'
-         / _TMCOMP_VERSION / 'TMCompPatch.dll', _TMCOMP_DLL_SHA256,
-         f'Competition Patch {_TMCOMP_VERSION}'),
+         / pin['tmcomp_version'] / 'TMCompPatch.dll', pin['tmcomp_dll_sha256'],
+         f"Competition Patch {pin['tmcomp_version']}"),
         (loader / 'database' / 'TmForever' / 'products' / 'TmForever'
-         / _TMLOADER_GAME_VERSION / 'TmForever.exe', _TMLOADER_GAME_SHA256,
+         / pin['tmloader_game_version'] / 'TmForever.exe', pin['tmloader_game_sha256'],
          'ModLoader game runtime'),
         (loader / 'database' / 'TmForever' / 'products' / 'CoreMod'
-         / _COREMOD_VERSION / 'CoreMod.dll', _COREMOD_DLL_SHA256, 'CoreMod'),
+         / pin['tmloader_coremod_version'] / 'CoreMod.dll', pin['tmloader_coremod_sha256'], 'CoreMod'),
     )
     for path, expected, label in patches:
         if not _pin_ok(path, expected):
@@ -147,7 +135,8 @@ def _competition_patch_ready(prefix: pathlib.Path) -> Probe:
     if not (settings.is_file() and settings.stat().st_size
             and profile.is_file() and profile.stat().st_size):
         return Probe(False, 'Competition Patch configuration files are missing')
-    return Probe(True, f'Competition Patch {_TMCOMP_VERSION} with ModLoader {_TMLOADER_BUNDLE_VERSION}')
+    return Probe(True, (f"Competition Patch {pin['tmcomp_version']} "
+                       f"with ModLoader {pin['tmloader_bundle_version']}"))
 
 
 def _game_ready(title: registry.Title, paths: hub_paths.TitlePaths,

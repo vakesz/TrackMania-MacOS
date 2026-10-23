@@ -1,8 +1,8 @@
 # Contributing
 
-Thanks for helping improve TrackMania-MacOS. This is a runtime for one game on Apple
-Silicon, so a change is judged by whether TMNF still installs, builds and plays
-correctly.
+Thanks for helping improve TrackMania-MacOS. This is a runtime for the TrackMania
+Forever family on Apple Silicon, so a change is judged by whether the supported
+title (Nations Forever) still installs, builds and plays correctly.
 
 ## Before you start
 
@@ -27,7 +27,7 @@ make install
 ## Before you open a pull request
 
 ```sh
-make check     # script syntax, shellcheck, offline tests
+make check     # shell syntax, shellcheck, ruff, Python and Swift tests
 ```
 
 `make install` installs the runtime and game via the bundled installer.

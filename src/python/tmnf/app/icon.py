@@ -1,6 +1,10 @@
 """Build a macOS .icns from the icon group embedded in a Windows executable.
 
-Usage: app_icon.py <program.exe> <output.icns>
+Usage: icon.py <program.exe> <output.icns>
+       icon.py --from-png <artwork.png> <output.icns>
+
+The second form turns the project's own bundled artwork into an .icns, used
+only until the installed game provides its icon.
 
 Nadeo's icon stays inside the installed game; nothing is redistributed. The
 PE resource tree is walked directly so no third-party tools are needed. Each
@@ -152,7 +156,22 @@ def main(exe, output):
         run('iconutil', '-c', 'icns', iconset, '-o', output)
 
 
+def from_png(png, output):
+    with tempfile.TemporaryDirectory() as work:
+        iconset = os.path.join(work, 'App.iconset')
+        os.mkdir(iconset)
+        for name, side in ICONSET:
+            run('sips', '-z', str(side), str(side), png, '--out', os.path.join(iconset, name))
+        run('iconutil', '-c', 'icns', iconset, '-o', output)
+
+
 if __name__ == '__main__':
+    if len(sys.argv) == 4 and sys.argv[1] == '--from-png':
+        try:
+            from_png(sys.argv[2], sys.argv[3])
+        except (OSError, subprocess.CalledProcessError) as error:
+            raise SystemExit(f'{sys.argv[2]}: could not build icon: {error}') from None
+        raise SystemExit(0)
     if len(sys.argv) != 3:
         raise SystemExit(__doc__)
     try:

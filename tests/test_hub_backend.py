@@ -7,6 +7,7 @@ import unittest
 from unittest import mock
 
 from tmnf.hub import run as hub_run
+from tmnf.hub import paths as hub_paths
 from tmnf.hub import registry, snapshot, state
 
 
@@ -48,6 +49,81 @@ class HubBackendTests(unittest.TestCase):
                              ["install-platform"])
             # TMU's retail installer keeps the serial-key note surfaced.
             self.assertEqual(titles["tmu"]["requiresSerial"], True)
+
+    def test_snapshot_icon_prefers_game_icon_then_bundled_artwork(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            support = home / "Library/Application Support/TMNF"
+
+            def titles():
+                result = self.run_hub("snapshot", home=home)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                return {t["id"]: t for t in json.loads(result.stdout)["titles"]}
+
+            for title in titles().values():
+                self.assertEqual(title["iconSource"], "bundled")
+                self.assertEqual(Path(title["icon"]).parent, ROOT / "assets/titles")
+                self.assertIn(Path(title["icon"]).suffix, (".png", ".svg"))
+            (support / "icons").mkdir(parents=True)
+            (support / "icons/tmu.icns").write_bytes(b"icns")
+            found = titles()
+            self.assertEqual(found["tmu"]["iconSource"], "game")
+            self.assertEqual(found["tmu"]["icon"], str(support / "icons/tmu.icns"))
+            self.assertEqual(found["tmnf"]["iconSource"], "bundled")
+
+    def test_broken_registry_snapshot_keeps_swift_strings_non_null(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory) / "home"
+            titles = Path(directory) / "titles"
+            titles.mkdir(parents=True)
+            for path in (ROOT / "config/titles").glob("*.json"):
+                (titles / path.name).write_text(path.read_text())
+            (titles / "tmnf.json").write_text('{"id": "tmnf"}')
+            result = self.run_hub("snapshot", home=home, titles_dir=titles)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            document = json.loads(result.stdout)
+            self.assertTrue(any(t["error"] for t in document["titles"]))
+            for title in document["titles"]:
+                for key in ("id", "name", "shortName", "status", "notes"):
+                    self.assertIsInstance(title[key], str, (title["id"], key))
+
+    def test_run_validates_only_the_target_title(self):
+        with tempfile.TemporaryDirectory() as directory:
+            titles = Path(directory) / "titles"
+            titles.mkdir()
+            for path in (ROOT / "config/titles").glob("*.json"):
+                (titles / path.name).write_text(path.read_text())
+            (titles / "tm-turbo.json").write_text("{}")
+            with mock.patch.dict(os.environ, {"TMNF_TITLES_DIR": str(titles),
+                                              "HOME": directory}):
+                actions = hub_run.available_action_ids(registry.get("tmu"))
+            self.assertEqual(actions, {"install"})
+
+    def test_state_ignores_the_environment_that_run_scrubs(self):
+        scrubbed = {name: "/private/tmp/elsewhere" for name in hub_paths.TITLE_ENV}
+        with mock.patch.dict(os.environ, scrubbed):
+            paths = hub_paths.compute(registry.get("tmu"))
+            env = hub_run._scrubbed_env("tmu")
+        self.assertNotIn("elsewhere", str(paths))
+        self.assertFalse(set(hub_paths.TITLE_ENV) & set(env))
+
+    def test_titles_dir_is_not_scrubbed(self):
+        with mock.patch.dict(os.environ, {"TMNF_TITLES_DIR": "/private/tmp/t"}):
+            self.assertEqual(hub_run._scrubbed_env("tmu")["TMNF_TITLES_DIR"], "/private/tmp/t")
+
+    def test_error_placeholders_report_no_icon_source(self):
+        placeholder = snapshot._error_placeholder("broken", "bad")
+        self.assertIsNone(placeholder["icon"])
+        self.assertIsNone(placeholder["iconSource"])
+
+    def test_launchers_are_per_title(self):
+        with mock.patch.dict(os.environ, {"TMNF_SUPPORT": "/private/tmp/x/support"}, clear=False):
+            for name in ("TMNF_LAUNCHER", "TMNF_TITLE"):
+                os.environ.pop(name, None)
+            launchers = {title_id: hub_paths.compute(registry.get(title_id)).launcher
+                         for title_id in ("tmnf", "tmu")}
+        self.assertEqual(launchers["tmnf"], Path("/private/tmp/x/support/launchers/tmnf"))
+        self.assertEqual(launchers["tmu"], Path("/private/tmp/x/support/launchers/tmu"))
 
     def test_actions_matrix_per_installer_kind(self):
         with tempfile.TemporaryDirectory() as directory:

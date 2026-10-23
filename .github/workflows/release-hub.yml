@@ -37,7 +37,8 @@ jobs:
             || { echo 'Apple notarization credentials are required for a tag release.' >&2; exit 1; }
           staging="$(mktemp -d)"
           trap 'rm -rf "$staging"' EXIT
-          # The hub installs the runtime from the first asset and builds it from the second.
+          # The runtime archive is what the hub installs. The source archive is the
+          # corresponding source for it; the hub does not build from it.
           for kind in runtime source; do
             asset="trackmania-mac-${version}-${kind}.tar.xz"
             gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$staging" \

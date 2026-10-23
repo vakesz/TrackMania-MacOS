@@ -26,72 +26,107 @@ runtime_download_hint() {
   fi
 }
 
-# Fetch, verify and safely unpack the release source archive into the cache.
-# Runs inside install_wine_runtime's subshell: it uses its staging directory and
-# cleanup trap, and sets the caller's tree.
-extract_source_archive() {
-  local name="$SOURCE_ARCHIVE_NAME"
-  local archive="${TMNF_CACHE}/${name}"
-  local destination="${TMNF_CACHE}/source/${RUNTIME_VERSION}"
-  local expected stage marker
+find_git() {
+  if test -x /usr/bin/git; then
+    printf '%s' /usr/bin/git
+  else
+    command -v git || true
+  fi
+}
 
-  case "$destination" in
+# Run git without the user's global and system configuration, credential
+# helpers, prompts, fsmonitor and hooks (the workspace's own and the configured
+# hooks path), and without inherited repository-location variables. Proxy
+# variables such as HTTPS_PROXY still apply.
+git_isolated() {
+  env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY \
+    -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT \
+    -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES \
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 GIT_ASKPASS='' \
+    "$git_bin" -c credential.helper= -c core.fsmonitor=false -c core.hooksPath=/dev/null "$@"
+}
+
+# Fetch exactly the commit this hub was built from (recorded in
+# config/build-revision) into a workspace under the cache. Runs inside
+# install_wine_runtime's subshell: it uses its cleanup trap, and sets the
+# caller's tree (deliberately not local) and workspace. The workspace stays after a failure so a rerun
+# resumes, and install_wine_runtime removes it after a successful install.
+clone_source_revision() {
+  local file="${TMNF_PROJECT_DIR}/config/build-revision"
+  local revision state extra head clone git_bin
+
+  test -f "$file" && test ! -L "$file" \
+    || die "This hub has no build revision; build the runtime from a checkout with make install RUNTIME=build"
+  revision="$(sed -n 1p "$file")"
+  state="$(sed -n 2p "$file")"
+  extra="$(sed -n '3,$p' "$file")"
+  [[ "$revision" =~ ^[0-9a-f]{40}$ ]] \
+    || die "This hub's build revision is malformed; build the runtime from a checkout with make install RUNTIME=build"
+  case "$state" in
+    clean|dirty) ;;
+    *) die "This hub's build revision is malformed; build the runtime from a checkout with make install RUNTIME=build" ;;
+  esac
+  test -z "$extra" \
+    || die "This hub's build revision is malformed; build the runtime from a checkout with make install RUNTIME=build"
+  test "$state" = clean \
+    || die "This hub was built from uncommitted changes; build the runtime from a checkout with make install RUNTIME=build"
+  tree="${TMNF_CACHE}/build/${revision}"
+  case "$tree" in
     *[[:space:]]*) die "Build from a cache folder without spaces; Wine makefiles require this. Set TMNF_CACHE to another path (now: $TMNF_CACHE)." ;;
   esac
-  curl --fail --location --retry 3 --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
-    --output "${staging}/source.sha256" "${RUNTIME_RELEASE_URL}/${name}.sha256" \
-    || die "Cannot download the source archive checksum for release $RUNTIME_VERSION."
-  expected="$(awk 'NR==1 {print $1}' "${staging}/source.sha256")"
-  [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || die "Invalid source archive checksum."
-  expected="$(printf '%s' "$expected" | tr 'A-F' 'a-f')"
-  tree="$destination"
-  # Reuse trusts a marker file, not a re-hash of the tree, so that an interrupted
-  # multi-hour build resumes. Forging it takes write access to this user's cache.
-  # Upstream trees hold links the build materialises, so a missing tail is allowed
-  # but escapes are not. The tree's links are re-checked, and a symlinked or non-regular marker is refused.
-  if test -d "$destination" && test ! -L "$destination"; then
-    marker="${destination}/.tmnf-source-sha256"
-    test -f "$marker" && test ! -L "$marker" && test "$(cat "$marker")" = "$expected" \
-      || die "The extracted source differs from release $RUNTIME_VERSION. Remove it to rebuild: $destination"
-    tmnf_python -m tmnf.install.runtime_manifest links "$destination" --skip .build --allow-dangling \
-      || die "The extracted source has unsafe links. Remove it to rebuild: $destination"
-    say "Using extracted source $destination"
-    return
+  git_bin="$(find_git)"
+  test -n "$git_bin" || die "git is required to build the runtime; install full Xcode."
+
+  if test -e "$tree" || test -L "$tree"; then
+    # Never delete or reuse something unexpected.
+    test -d "$tree" && test ! -L "$tree" && test -d "${tree}/.git" && test ! -L "${tree}/.git" \
+      || die "Unexpected build workspace; remove it to rebuild: $tree"
+    head="$(git_isolated -C "$tree" rev-parse HEAD 2>/dev/null)" || head=
+    test "$head" = "$revision" \
+      || die "The build workspace is not at commit $revision; remove it to rebuild: $tree"
+    # The builder writes only to .build/ and upstream/, both gitignored, so any
+    # other change means the workspace was edited.
+    test -z "$(git_isolated -C "$tree" status --porcelain)" \
+      || die "The build workspace was modified. Remove it to rebuild: $tree"
+    say "Resuming the build in $tree"
+  else
+    mkdir -p "${TMNF_CACHE}/build" || die "Cannot create the build cache."
+    # Leftovers of an interrupted clone; a symlink is not ours to remove.
+    for clone in "${TMNF_CACHE}/build/".clone.*; do
+      if test -d "$clone" && test ! -L "$clone"; then rm -rf -- "$clone"; fi
+    done
+    clone="$(mktemp -d "${TMNF_CACHE}/build/.clone.XXXXXX")" || die "Cannot create build staging directory."
+    printf -v cleanup '%s; rm -rf -- %q' "$cleanup" "$clone"
+    # shellcheck disable=SC2064
+    trap "$cleanup" EXIT
+    say "Fetching commit $revision"
+    git_isolated -C "$clone" init -q --template= || die "Cannot initialise the build workspace."
+    git_isolated -C "$clone" remote add origin "$RUNTIME_REPOSITORY_URL" || die "Cannot configure the build workspace."
+    git_isolated -C "$clone" fetch -q --depth 1 origin "$revision" \
+      || die "Cannot fetch commit $revision from $RUNTIME_REPOSITORY_URL. Was it pushed?"
+    git_isolated -C "$clone" checkout -q --detach "$revision" || die "Cannot check out commit $revision."
+    head="$(git_isolated -C "$clone" rev-parse HEAD)" || head=
+    test "$head" = "$revision" || die "Fetched commit does not match $revision."
+    # BSD mv would nest into an existing directory, so refuse one first.
+    test ! -e "$tree" && test ! -L "$tree" || die "Unexpected build workspace; remove it: $tree"
+    mv "$clone" "$tree" || die "Cannot publish the build workspace."
   fi
-  test ! -e "$destination" && test ! -L "$destination" \
-    || die "Unexpected source path, remove it first: $destination"
-  download_verified "${RUNTIME_RELEASE_URL}/${name}" "$archive" "$expected" \
-    || die "Cannot download the source archive."
-  mkdir -p "${TMNF_CACHE}/source" || die "Cannot create the source cache."
-  stage="$(mktemp -d "${TMNF_CACHE}/source/.extract.XXXXXX")" || die "Cannot create source staging directory."
-  printf -v cleanup '%s; rm -rf -- %q' "$cleanup" "$stage"
-  # shellcheck disable=SC2064
-  trap "$cleanup" EXIT
-  tmnf_python -m tmnf.install.runtime_manifest extract "$archive" "$stage" "$expected" --root "$RELEASE_NAME" \
-    || die "Cannot extract the source archive safely."
-  tmnf_python -m tmnf.install.runtime_manifest links "${stage}/${RELEASE_NAME}" --allow-dangling \
-    || die "The source archive has broken or escaping links."
-  test -f "${stage}/${RELEASE_NAME}/src/shell/tools/build-runtime.sh" || die "The source archive has no runtime builder."
-  marker="${stage}/${RELEASE_NAME}/.tmnf-source-sha256"
-  rm -f -- "$marker"
-  printf '%s\n' "$expected" >"$marker"
-  # BSD mv would nest into an existing directory, so refuse one first.
-  test ! -e "$destination" && test ! -L "$destination" || die "Unexpected source path, remove it first: $destination"
-  mv "${stage}/${RELEASE_NAME}" "$destination" || die "Cannot publish the extracted source."
+  workspace="$tree"
+  say "Build workspace: $tree (kept if the install fails so a rerun resumes; removed after success)"
 }
 
 homebrew_bin_dirs() {
   printf '%s\n' /usr/local/bin /opt/homebrew/bin
 }
 
-# Compile the runtime, from this checkout or the release source archive, and
-# set the caller's built to the result. Also runs inside the install subshell.
+# Compile the runtime, in this checkout or in a clone of the hub's own commit,
+# and set the caller's built to the result. Also runs inside the install subshell.
 build_runtime_locally() {
   local script="${TMNF_PROJECT_DIR}/src/shell/tools/build-runtime.sh"
   local tree="$TMNF_PROJECT_DIR" dir build_path="$PATH"
 
   if test ! -f "$script"; then
-    extract_source_archive
+    clone_source_revision
     script="${tree}/src/shell/tools/build-runtime.sh"
   fi
   # A GUI-launched hub has a minimal PATH that hides Homebrew. Each hit is
@@ -103,7 +138,7 @@ build_runtime_locally() {
   fi
   say "Building the Wine runtime from source (this takes a long time)"
   without_operation_lock env PATH="$build_path" /bin/bash "$script" \
-    || die "The runtime build failed. It resumes when you run the installer again."
+    || die "The runtime build failed. It resumes when you run the installer again${workspace:+ (workspace: $workspace)}."
   built="${tree}/.build/release/runtime"
   test -e "$built" || die "The runtime build produced no runtime at $built"
 }
@@ -113,6 +148,7 @@ install_wine_runtime() {
   local archive="${TMNF_RUNTIME_ARCHIVE:-}"
   local expected="${TMNF_RUNTIME_SHA256:-}"
   local mode="${TMNF_RUNTIME_SOURCE-auto}"
+  local workspace=""
   local staging source cleanup status
 
   validate_runtime_source
@@ -175,6 +211,8 @@ install_wine_runtime() {
     fi
     tmnf_python -m tmnf.install.runtime_manifest publish "$source" "$TMNF_RUNTIME" "$RUNTIME_VERSION" \
       || die "Cannot publish runtime. Existing destinations are never replaced."
+    # Only a workspace this installer cloned is removed; a checkout keeps its .build.
+    if test -n "$workspace"; then rm -rf -- "$workspace"; fi
   )
   status=$?
   test "$status" -eq 0 || return "$status"

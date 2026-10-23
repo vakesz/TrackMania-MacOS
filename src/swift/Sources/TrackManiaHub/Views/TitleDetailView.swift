@@ -169,8 +169,9 @@ struct TitleDetailView: View {
             Button("Cancel", role: .cancel) {}
         } message: { _ in
             Text("Downloading fetches the verified runtime for this release and takes a few minutes. "
-                + "Building from source compiles the runtime from this release's source archive "
-                + "and needs Xcode, Rosetta 2 and Homebrew; it can take hours.")
+                + "Building from source clones this hub's exact source and the pinned upstream projects, "
+                + "then compiles them; it needs Xcode, Rosetta 2 and Homebrew, can take hours, "
+                + "and removes its build files when it succeeds.")
         }
     }
 

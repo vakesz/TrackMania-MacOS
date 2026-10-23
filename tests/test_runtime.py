@@ -426,7 +426,7 @@ class RuntimeInstall(unittest.TestCase):
         self.assertEqual(list(self.destination.parent.glob('.runtime-install.*')), [other])
         self.assertEqual((other / 'keep').read_text(), 'another install')
 
-    BUILD_STUB = ('#!/bin/bash\nproject="$(cd "$(dirname "$0")/../../.." && pwd)"\n'
+    BUILD_STUB = ('#!/bin/bash\ntest -z "${BUILD_FAIL:-}" || exit 3\nproject="$(cd "$(dirname "$0")/../../.." && pwd)"\n'
                   'echo "build $project path=$(command -v brew || echo nobrew)" >>"$STUB_LOG"\n'
                   'rm -rf "$project/.build/release/runtime"; mkdir -p "$project/.build/release"\n'
                   'cp -pRP "$FIXTURE_BUNDLE" "$project/.build/release/runtime"\n')
@@ -444,32 +444,13 @@ class RuntimeInstall(unittest.TestCase):
                         'cp "$SERVE_DIR/$(basename "$url")" "$out" || exit 22\n')
         curl.chmod(0o755)
         env = dict(TMNF_RUNTIME_SOURCE=mode, STUB_LOG=str(self.stub_log), SERVE_DIR=str(self.serve),
-                   FIXTURE_BUNDLE=str(self.bundle))
+                   FIXTURE_BUNDLE=str(self.bundle), STUB_GIT=str(self.root / 'git-stub'),
+                   STUB_BUILD_SCRIPT=str(self.root / 'build-stub.sh'))
         env.update(extra)
         return env
 
     def stub_lines(self):
         return self.stub_log.read_text().splitlines() if self.stub_log.exists() else []
-
-    def serve_source(self, extras=(), checksum=None, script=True):
-        archive = self.serve / 'trackmania-mac-{}-source.tar.xz'.format(self.version)
-        with tarfile.open(archive, 'w:xz') as tar:
-            root = tarfile.TarInfo('trackmania-mac')
-            root.type, root.mode = tarfile.DIRTYPE, 0o755
-            tar.addfile(root)
-            if script:
-                for directory in ('trackmania-mac/src', 'trackmania-mac/src/shell', 'trackmania-mac/src/shell/tools'):
-                    info = tarfile.TarInfo(directory)
-                    info.type, info.mode = tarfile.DIRTYPE, 0o755
-                    tar.addfile(info)
-                data = self.BUILD_STUB.encode()
-                info = tarfile.TarInfo('trackmania-mac/src/shell/tools/build-runtime.sh')
-                info.size, info.mode = len(data), 0o755
-                tar.addfile(info, io.BytesIO(data))
-            for member in extras:
-                tar.addfile(member, io.BytesIO(b'x' * member.size) if member.isreg() else None)
-        checksum = checksum or hashlib.sha256(archive.read_bytes()).hexdigest()
-        (self.serve / (archive.name + '.sha256')).write_text(checksum + '  ' + archive.name + '\n')
 
     def serve_runtime(self):
         self.package()
@@ -543,72 +524,165 @@ class RuntimeInstall(unittest.TestCase):
         self.assertIn('runtime build failed', result.stderr)
         self.assertEqual(self.stub_lines(), [])
 
-    def test_build_from_the_payload_downloads_verifies_and_reuses_the_source(self):
-        env = self.source_env('build')
-        self.serve_source()
-        result = self.install(extra_env=env, explicit=False)
+    GIT_STUB = r"""#!/bin/bash
+dir=.
+ALL="$*"
+while test "$#" -gt 0; do
+  case "$1" in
+    -c) shift 2 ;;
+    -C) dir="$2"; shift 2 ;;
+    *) break ;;
+  esac
+done
+echo "git $* env=$GIT_TERMINAL_PROMPT,$GIT_CONFIG_GLOBAL,$GIT_CONFIG_NOSYSTEM" >>"$STUB_LOG"
+echo "argv=$ALL gitdir=${GIT_DIR-unset} params=${GIT_CONFIG_PARAMETERS-unset}" >>"$STUB_LOG.argv"
+case "$1" in
+  init) mkdir -p "$dir/.git" ;;
+  remote) ;;
+  fetch) test -z "${FETCH_FAIL:-}" || exit 1 ;;
+  checkout)
+    mkdir -p "$dir/src/shell/tools"
+    cp "$STUB_BUILD_SCRIPT" "$dir/src/shell/tools/build-runtime.sh"
+    if test -n "${WRONG_HEAD:-}"; then printf '%s' ffffffffffffffffffffffffffffffffffffffff >"$dir/.git/SHA"
+    else printf '%s' "${!#}" >"$dir/.git/SHA"; fi ;;
+  rev-parse) cat "$dir/.git/SHA" 2>/dev/null || exit 1 ;;
+  status) printf '%s' "${STATUS_OUT:-}" ;;
+esac
+"""
+    REVISION = 'a' * 40
+    USE_STUB_GIT = 'find_git() { printf %s "$STUB_GIT"; }; '
+
+    def clone_install(self, revision=None, after_source=None, **extra):
+        """Build mode in a hub payload: no builder in the project, a stub git and builder."""
+        if revision is not None:
+            (self.project / 'config').mkdir(exist_ok=True)
+            (self.project / 'config/build-revision').write_text(revision)
+        env = self.source_env('build', **extra)
+        git = self.root / 'git-stub'
+        git.write_text(self.GIT_STUB)
+        git.chmod(0o755)
+        (self.root / 'build-stub.sh').write_text(self.BUILD_STUB)
+        return self.install(extra_env=env, explicit=False,
+                            after_source=self.USE_STUB_GIT if after_source is None else after_source)
+
+    def workspace(self):
+        return self.home / 'cache/build' / self.REVISION
+
+    def test_hub_build_clones_the_recorded_commit_builds_installs_and_cleans_up(self):
+        result = self.clone_install(self.REVISION + '\nclean\n')
         self.assertEqual(result.returncode, 0, result.stderr)
-        tree = self.home / 'cache/source' / self.version
-        self.assertEqual([line.split()[0] for line in self.stub_lines()], ['curl', 'curl', 'build'])
-        self.assertIn('build ' + str(tree), self.stub_lines()[2])
-        self.assertTrue((tree / '.tmnf-source-sha256').is_file())
-        self.assertEqual(list((self.home / 'cache/source').glob('.extract.*')), [])
+        lines = self.stub_lines()
+        self.assertIn('git fetch -q --depth 1 origin ' + self.REVISION + ' env=0,/dev/null,1', lines)
+        self.assertTrue(any(line.startswith('build ' + str(self.workspace())) for line in lines))
+        self.assertTrue((self.destination / 'bin/wine-link').is_symlink())
+        self.assertFalse(self.workspace().exists())
+        self.assertEqual(list((self.home / 'cache/build').iterdir()), [])
+        self.assertFalse((self.project / '.build').exists())
         self.assert_clean()
-        shutil.rmtree(self.destination)
-        result = self.install(extra_env=env, explicit=False)
+
+    def test_failed_hub_build_keeps_the_workspace_and_a_rerun_resumes(self):
+        result = self.clone_install(self.REVISION + '\nclean\n', BUILD_FAIL='1')
+        self.assert_rejected(result)
+        self.assertIn(str(self.workspace()), result.stderr)
+        self.assertTrue(self.workspace().is_dir())
+        result = self.clone_install()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('Using extracted source', result.stdout)
-        self.assertEqual(sum(line.endswith('-source.tar.xz') for line in self.stub_lines()), 1)
+        self.assertIn('Resuming the build', result.stdout)
+        self.assertEqual(sum(line.startswith('git fetch') for line in self.stub_lines()), 1)
+        self.assertFalse(self.workspace().exists())
 
-    def test_source_checksum_mismatch_is_rejected_without_building(self):
-        self.serve_source(checksum='0' * 64)
-        self.assert_rejected(self.install(extra_env=self.source_env('build'), explicit=False))
-        self.assertFalse((self.home / 'cache/source').exists())
-        self.assertFalse(any(line.startswith('build') for line in self.stub_lines()))
-
-    def test_source_checksum_file_must_be_hex(self):
-        self.serve_source(checksum='not-a-checksum')
-        self.assert_rejected(self.install(extra_env=self.source_env('build'), explicit=False))
-        self.assertFalse(any(line.startswith('build') for line in self.stub_lines()))
-
-    def test_unsafe_source_members_are_rejected_without_building(self):
-        def member(name, kind=tarfile.REGTYPE, link=''):
-            info = tarfile.TarInfo(name)
-            info.type, info.linkname, info.mode = kind, link, 0o644
-            return info
-        for label, extras in (('absolute', [member('/tmp/tmnf-escape')]),
-                              ('parent', [member('trackmania-mac/../escape')]),
-                              ('other root', [member('other/file')]),
-                              ('link escape', [member('trackmania-mac/link', tarfile.SYMTYPE, '../../etc')]),
-                              ('absolute link', [member('trackmania-mac/link', tarfile.SYMTYPE, '/etc')]),
-                              ('hard link escape', [member('trackmania-mac/link', tarfile.LNKTYPE, 'other/file')]),
-                              ('fifo', [member('trackmania-mac/fifo', tarfile.FIFOTYPE)]),
-                              ('device', [member('trackmania-mac/dev', tarfile.CHRTYPE)])):
+    def test_unusable_build_revision_is_rejected_before_any_fetch(self):
+        for label, text, message in (('missing', None, 'no build revision'),
+                                     ('short', 'abc123\nclean\n', 'malformed'),
+                                     ('uppercase', 'A' * 40 + '\nclean\n', 'malformed'),
+                                     ('no state', self.REVISION + '\n', 'malformed'),
+                                     ('extra line', self.REVISION + '\nclean\nmore\n', 'malformed'),
+                                     ('dirty', self.REVISION + '\ndirty\n', 'uncommitted changes')):
             with self.subTest(label):
-                shutil.rmtree(self.home / 'cache', ignore_errors=True)
-                self.serve_source(extras)
-                self.assert_rejected(self.install(extra_env=self.source_env('build'), explicit=False))
-                self.assertFalse((self.home / 'cache/source' / self.version).exists())
-                self.assertFalse(any(line.startswith('build') for line in self.stub_lines()))
-                self.assertFalse(Path('/tmp/tmnf-escape').exists())
+                revision = self.project / 'config/build-revision'
+                revision.unlink(missing_ok=True)
+                result = self.clone_install(text)
+                self.assert_rejected(result)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(self.stub_lines(), [])
+                self.assertFalse((self.home / 'cache/build').exists())
 
-    def test_whitespace_in_the_build_path_is_rejected_before_downloading(self):
-        self.serve_source()
-        env = self.source_env('build', TMNF_CACHE=str(self.home / 'cache dir'))
-        result = self.install(extra_env=env, explicit=False)
+    def test_existing_workspace_must_be_a_real_directory_at_the_recorded_commit(self):
+        other = self.root / 'elsewhere'
+        other.mkdir()
+        wrong = self.workspace()
+        wrong.mkdir(parents=True)
+        (wrong / '.git').mkdir()
+        (wrong / '.git/SHA').write_text('b' * 40)
+        result = self.clone_install(self.REVISION + '\nclean\n')
+        self.assert_rejected(result)
+        self.assertIn('not at commit', result.stderr)
+        self.assertTrue((wrong / '.git/SHA').is_file())
+        shutil.rmtree(wrong)
+        wrong.symlink_to(other)
+        result = self.clone_install()
+        self.assert_rejected(result)
+        self.assertIn('Unexpected build workspace', result.stderr)
+        self.assertTrue(wrong.is_symlink())
+        self.assertFalse(any(line.startswith(('git fetch', 'build')) for line in self.stub_lines()))
+
+    def test_resumed_workspace_must_be_unmodified(self):
+        self.workspace().mkdir(parents=True)
+        (self.workspace() / '.git').mkdir()
+        (self.workspace() / '.git/SHA').write_text(self.REVISION)
+        for label, status in (('tracked', ' M src/shell/cli/install.sh'), ('untracked', '?? stray.c')):
+            with self.subTest(label):
+                result = self.clone_install(self.REVISION + '\nclean\n', STATUS_OUT=status)
+                self.assert_rejected(result)
+                self.assertIn('was modified', result.stderr)
+                self.assertTrue(self.workspace().is_dir())
+                self.assertFalse(any(line.startswith('build') for line in self.stub_lines()))
+                self.stub_log.unlink()
+
+    def test_git_runs_isolated_from_inherited_repository_settings(self):
+        env = dict(GIT_DIR='/nonexistent/elsewhere', GIT_CONFIG_PARAMETERS="'core.pager=x'")
+        result = self.clone_install(self.REVISION + '\nclean\n', **env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = Path(str(self.stub_log) + '.argv').read_text().splitlines()
+        self.assertTrue(calls)
+        for call in calls:
+            self.assertIn('-c core.fsmonitor=false -c core.hooksPath=/dev/null', call)
+            self.assertIn('-c credential.helper=', call)
+            self.assertIn('gitdir=unset params=unset', call)
+
+    def test_stale_clone_directories_are_removed_but_symlinks_are_left(self):
+        build = self.home / 'cache/build'
+        (build / '.clone.crash').mkdir(parents=True)
+        (build / '.clone.crash/partial').write_text('x')
+        target = self.root / 'precious'
+        target.mkdir()
+        (target / 'keep').write_text('x')
+        (build / '.clone.link').symlink_to(target)
+        result = self.clone_install(self.REVISION + '\nclean\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((build / '.clone.crash').exists())
+        self.assertTrue((build / '.clone.link').is_symlink())
+        self.assertTrue((target / 'keep').is_file())
+
+    def test_wrong_fetched_head_or_failed_fetch_leaves_no_workspace(self):
+        for label, extra, message in (('head', dict(WRONG_HEAD='1'), 'does not match'),
+                                      ('fetch', dict(FETCH_FAIL='1'), 'Was it pushed')):
+            with self.subTest(label):
+                result = self.clone_install(self.REVISION + '\nclean\n', **extra)
+                self.assert_rejected(result)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(list((self.home / 'cache/build').iterdir()), [])
+                self.assertFalse(any(line.startswith('build') for line in self.stub_lines()))
+                self.stub_log.unlink()
+
+    def test_hub_build_needs_git_and_a_cache_path_without_spaces(self):
+        result = self.clone_install(self.REVISION + '\nclean\n', after_source='find_git() { :; }; ')
+        self.assert_rejected(result)
+        self.assertIn('git is required', result.stderr)
+        result = self.clone_install(TMNF_CACHE=str(self.home / 'cache dir'))
         self.assert_rejected(result)
         self.assertIn('without spaces', result.stderr)
         self.assertEqual(self.stub_lines(), [])
-
-    def test_a_changed_extracted_source_is_never_reused_or_removed(self):
-        env = self.source_env('build')
-        self.serve_source()
-        self.assertEqual(self.install(extra_env=env, explicit=False).returncode, 0)
-        shutil.rmtree(self.destination)
-        tree = self.home / 'cache/source' / self.version
-        (tree / '.tmnf-source-sha256').write_text('1' * 64 + '\n')
-        self.assert_rejected(self.install(extra_env=env, explicit=False))
-        self.assertTrue(tree.is_dir())
 
     def test_build_finds_homebrew_outside_a_minimal_path(self):
         brew = self.root / 'homebrew/bin'
@@ -627,117 +701,6 @@ class RuntimeInstall(unittest.TestCase):
         result = self.install(extra_env=self.source_env(''), explicit=False)
         self.assert_rejected(result)
         self.assertIn('Invalid TMNF_RUNTIME_SOURCE', result.stderr)
-
-    def test_source_with_dangling_or_chained_links_is_rejected(self):
-        def link(name, target):
-            info = tarfile.TarInfo(name)
-            info.type, info.linkname, info.mode = tarfile.SYMTYPE, target, 0o777
-            return info
-        for label, extras in (('dangling', [link('trackmania-mac/a', 'x/..')]),
-                              ('chain', [link('trackmania-mac/a', 'x/..'), link('trackmania-mac/L', 'a/..')])):
-            with self.subTest(label):
-                shutil.rmtree(self.home / 'cache', ignore_errors=True)
-                self.serve_source(extras)
-                self.assert_rejected(self.install(extra_env=self.source_env('build'), explicit=False))
-                self.assertFalse((self.home / 'cache/source' / self.version).exists())
-                self.assertFalse(any(line.startswith('build') for line in self.stub_lines()))
-
-    def test_source_may_hold_dangling_links_that_stay_inside(self):
-        def entry(name, kind, link=''):
-            info = tarfile.TarInfo(name)
-            info.type, info.linkname, info.mode = kind, link, 0o755 if kind == tarfile.DIRTYPE else 0o777
-            return info
-        self.serve_source([entry('trackmania-mac/upstream', tarfile.DIRTYPE),
-                           entry('trackmania-mac/upstream/Tools', tarfile.SYMTYPE, '../Package/Latest/Tools')])
-        result = self.install(extra_env=self.source_env('build'), explicit=False)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        tree = self.home / 'cache/source' / self.version
-        self.assertTrue((tree / 'upstream/Tools').is_symlink())
-        self.assertFalse((tree / 'upstream/Tools').exists())
-
-    def test_tree_link_check_modes(self):
-        tree = self.root / 'linktree'
-        (tree / 'sub').mkdir(parents=True)
-        (tree / 'real').mkdir()
-        (self.root / 'outside').mkdir()
-        cases = (('sub/ok', '../Package/Latest/Tools', True),
-                 ('sub/existing', '../real', True),
-                 ('sub/missing-then-parent', 'x/..', False),
-                 ('sub/escape', '../../outside', False),
-                 ('sub/escape-missing', '../../outside/none', False),
-                 ('sub/absolute', '/etc', False),
-                 ('sub/file-parent', 'file/..', False))
-        (tree / 'sub/file').write_text('x')
-        for name, target, allowed in cases:
-            link = tree / name
-            link.symlink_to(target)
-            with self.subTest(name=name):
-                # Strict mode (runtimes) rejects every dangling link.
-                if not link.exists():
-                    with self.assertRaises(ValueError):
-                        runtime_manifest.check_tree_links(tree)
-                if allowed:
-                    runtime_manifest.check_tree_links(tree, allow_dangling=True)
-                else:
-                    with self.assertRaises(ValueError):
-                        runtime_manifest.check_tree_links(tree, allow_dangling=True)
-            link.unlink()
-
-    def test_reused_source_is_rechecked_for_links_and_marker_type(self):
-        env = self.source_env('build')
-        self.serve_source()
-        self.assertEqual(self.install(extra_env=env, explicit=False).returncode, 0)
-        tree = self.home / 'cache/source' / self.version
-        shutil.rmtree(self.destination)
-        (tree / 'escape').symlink_to('/etc')
-        result = self.install(extra_env=env, explicit=False)
-        self.assert_rejected(result)
-        self.assertIn('unsafe links', result.stderr)
-        (tree / 'escape').unlink()
-        marker = tree / '.tmnf-source-sha256'
-        saved = marker.read_text()
-        marker.unlink()
-        (tree / 'real-marker').write_text(saved)
-        marker.symlink_to('real-marker')
-        self.assert_rejected(self.install(extra_env=env, explicit=False))
-        marker.unlink()
-        marker.write_text(saved)
-        # Links inside the build output are not source inputs.
-        (tree / '.build').mkdir(exist_ok=True)
-        (tree / '.build/outside').symlink_to('/etc')
-        self.assertEqual(self.install(extra_env=env, explicit=False).returncode, 0)
-
-    def test_archive_root_name_must_be_a_plain_component(self):
-        archive = self.root / 'any.tar.xz'
-        with tarfile.open(archive, 'w:xz') as tar:
-            tar.add(self.bundle, arcname='runtime')
-        checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
-        for name in ('', '.', '..', 'a/b', '/abs', 'with space', 'new\nline'):
-            with self.subTest(name=name):
-                staging = self.root / 'unpacked-root'
-                staging.mkdir()
-                with self.assertRaises(ValueError):
-                    runtime_manifest.extract_archive(archive, staging, checksum, name)
-                self.assertEqual(list(staging.iterdir()), [])
-                shutil.rmtree(staging)
-                result = subprocess.run([sys.executable, '-I', str(ROOT / 'src/python/tmnf/install/runtime_manifest.py'),
-                                         'extract', str(archive), str(self.root), checksum, '--root=' + name],
-                                        capture_output=True, text=True, check=False)
-                self.assertNotEqual(result.returncode, 0)
-
-    def test_extract_root_is_configurable_and_default_is_runtime(self):
-        archive = self.root / 'tmnf.tar.xz'
-        with tarfile.open(archive, 'w:xz') as tar:
-            tar.add(self.bundle, arcname='trackmania-mac')
-        checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
-        staging = self.root / 'unpacked'
-        staging.mkdir()
-        runtime_manifest.extract_archive(archive, staging, checksum, 'trackmania-mac')
-        self.assertTrue((staging / 'trackmania-mac/bin/wine-link').is_symlink())
-        other = self.root / 'default'
-        other.mkdir()
-        with self.assertRaises(ValueError):
-            runtime_manifest.extract_archive(archive, other, checksum)
 
     def test_concurrent_identical_installs_do_not_nest_or_replace(self):
         self.package()

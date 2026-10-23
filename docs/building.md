@@ -62,7 +62,8 @@ trackmania-mac-<version>-source.tar.xz.sha256
 ```
 
 The source archive expands into a single `trackmania-mac/` directory containing the
-repository inputs and the corresponding patched upstream source snapshots.
+repository inputs and the corresponding patched upstream source snapshots. It is
+the corresponding source for the runtime archive; the hub does not build from it.
 
 Run `make check` again before publishing. The hub expects the matching
 runtime archive and checksum to exist in the same GitHub Release tag.
@@ -77,10 +78,14 @@ hub) takes the runtime from `TMNF_RUNTIME_SOURCE`, or `--runtime=<mode>` on
   download the release runtime.
 - `download`: always download the release runtime, even if a local build exists.
 - `build`: compile the runtime, then install it. In a checkout this runs
-  `src/shell/tools/build-runtime.sh`. A packaged hub has no build script, so it
-  downloads and verifies `trackmania-mac-<version>-source.tar.xz`, unpacks it under
-  `~/Library/Caches/TMNF/source/<version>` (the path must not contain spaces)
-  and builds there. Interrupted builds resume on the next run.
+  `src/shell/tools/build-runtime.sh` in place and keeps `.build`. A packaged hub
+  has no build script, so it clones the exact commit the hub was built from
+  (recorded in `config/build-revision` by `make appbundle`) with git, builds under
+  `~/Library/Caches/TMNF/build/<commit>` (the path must not contain spaces) and
+  removes that folder after a successful install. After a failure the folder is
+  kept and the next run resumes in it. It needs git (full Xcode), network access
+  and a commit that has been pushed to GitHub. A hub built from uncommitted
+  changes records `dirty` and cannot build; use a checkout instead.
 
 An installed runtime is never replaced; remove it while the game is closed to
 install again with another mode. `build` needs the prerequisites above and
@@ -123,9 +128,9 @@ from the `APPLE_ID`, `TMNF_TEAM_ID` and `TMNF_APP_PASSWORD` secrets.
 3. Build, sign and notarize the native hub zip for that exact version.
 4. Upload the hub zip and its checksum.
 
-Do not publish a hub whose versioned runtime or source archive is unavailable:
-first-run installation downloads the runtime, and hub builds depend on the
-source archive. The source archive is required. The tag workflow enforces the
-matching `VERSION`, both assets and their checksums, and Developer ID
-notarization before it attaches a hub zip; use a new version and coherent runtime build for
-any archive-format change.
+Do not publish a hub whose versioned runtime archive is unavailable: first-run
+installation downloads it. The source archive is published as the runtime's
+corresponding source. The tag workflow enforces the matching `VERSION`, both
+assets and their checksums, and Developer ID notarization before it attaches a
+hub zip; use a new version and coherent runtime build for any archive-format
+change. Build the hub from a clean, pushed commit so its build mode works.

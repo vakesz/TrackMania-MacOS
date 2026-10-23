@@ -126,10 +126,11 @@ applies the repository patches, then compiles Wine, D9VK, x87sidecar and the
 session helper. It writes the complete runtime to `.build/release/runtime`.
 Afterwards `make install` detects and installs that local runtime instead of
 downloading one. `make install RUNTIME=build` does both steps, and in a hub
-install it fetches the release's verified source archive when there is no
-checkout. You need Apple Silicon, Rosetta 2, full Xcode and Homebrew (missing
-formulae are installed with `brew install`). Allow several gigabytes of disk space and a substantial first
-build. Builds use every CPU core by default; use `TMNF_JOBS=4 make build` to
+install it clones the commit that hub was built from (git comes with Xcode) into
+`~/Library/Caches/TMNF/build`, builds there and deletes that folder after a
+successful install. You need Apple Silicon, Rosetta 2, full Xcode and Homebrew
+(missing formulae are installed with `brew install`). Allow several gigabytes
+of disk space and a substantial first build. Builds use every CPU core by default; use `TMNF_JOBS=4 make build` to
 leave some free.
 
 The deployment target is macOS 14. x87sidecar also depends on the installed

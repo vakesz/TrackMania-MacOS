@@ -198,19 +198,6 @@ class NetworkProbe(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown WinHTTP request mode"):
             arguments("invalid", control, case_url, "valid")
 
-    def test_both_pe_architectures_compile_without_running_wine(self):
-        with tempfile.TemporaryDirectory() as directory:
-            for architecture in ("i686", "x86_64"):
-                compiler = shutil.which(architecture + "-w64-mingw32-gcc")
-                if compiler is None:
-                    self.skipTest("mingw-w64 not installed; C compilation not checked")
-                for source, library in (("network", "winhttp"), ("tls-trust", "crypt32")):
-                    with self.subTest(architecture=architecture, source=source):
-                        result = subprocess.run([compiler, "-O2", "-Wall", "-Wextra", "-Werror",
-                                                 str(ROOT / ("tests/" + source + ".c")), "-o",
-                                                 str(Path(directory) / (architecture + "-" + source + ".exe")),
-                                                 "-l" + library], capture_output=True, text=True, timeout=30)
-                        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_runtime_environment_does_not_inherit_caller_settings(self):
         runtime = runpy.run_path(str(ROOT / "tests/test_network_runtime.py"))

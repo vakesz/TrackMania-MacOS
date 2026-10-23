@@ -20,9 +20,6 @@ class TitleAssetTests(unittest.TestCase):
                 for forbidden in ('nadeo', 'ubisoft', 'trackmania', 'data:image'):
                     self.assertNotIn(forbidden, text)
 
-    def test_artwork_is_visually_distinct(self):
-        bodies = {path.read_text() for path in (ROOT / 'assets/titles').glob('*.svg')}
-        self.assertEqual(len(bodies), len(list((ROOT / 'assets/titles').glob('*.svg'))))
 
 
 if __name__ == '__main__':

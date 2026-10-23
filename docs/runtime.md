@@ -14,8 +14,8 @@ order to the exact revisions in `config/sources.json`.
 | Wine 0009 | Disable audio capture on macOS, so the game never opens a microphone | Audio probes |
 | Wine 0010 | Preserve certificate rejection errors and report WinHTTP secure-failure callbacks | Sync/async local TLS controls and rejection cases in isolated DLL overlays, both architectures |
 | Wine 0011 | Preserve unignored certificate errors and prevent reuse under a different validation policy | Combined-error, pool-policy and fault-injected lifetime checks, both modes/architectures |
-| D9VK 0003 | Correct promoted volume-texture destination slice stride | GPU volume red/green and packed-format readback probes |
-| D9VK 0004 | Preserve the eye vector in `texm3x3vspec` | GPU volume/cube reflection regressions |
+| D9VK 0003 | Correct promoted volume-texture destination slice stride | Manual GPU volume red/green and packed-format readback probe; no automated test |
+| D9VK 0004 | Preserve the eye vector in `texm3x3vspec` | Manual GPU volume/cube reflection check; no automated test |
 | MoltenVK 0001 | Reuse the dependency sources supplied in a source release | Source archive preparation |
 | x87sidecar 0001 | Scoped PC24/PC53 arithmetic and float-store rounding within a binary64-backed implementation | Bit-exact numeric, allocator, host-state and interruption probes |
 

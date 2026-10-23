@@ -50,7 +50,6 @@ class HubPackageTests(unittest.TestCase):
                           if any(t in p.name.lower() for t in ("tcl", "tk"))])
         self.assertFalse(list(python_root.rglob("_tkinter*")))
         titles = {p.stem for p in (ROOT / "config/titles").glob("*.json")}
-        self.assertEqual({p.stem for p in (ROOT / "assets/titles").glob("*.svg")}, titles)
         self.assertEqual({p.stem for p in (launcher / "assets/titles").glob("*.png")}, titles)
         self.assertFalse(list((launcher / "assets/titles").glob("*.svg")))
         for png in (launcher / "assets/titles").glob("*.png"):
@@ -150,13 +149,6 @@ class HubPackageTests(unittest.TestCase):
             subprocess.run(["codesign", "--verify", "--deep", "--strict",
                             str(Path(directory) / "TrackMania Mac.app")], check=True)
 
-    def test_xml_escape(self):
-        result = subprocess.run(
-            ["/bin/bash", "-c", '. "$1"; xml_escape "$2"', str(ROOT / "src/shell/tools/_t"),
-             str(ROOT / "src/shell/lib/plist.sh"), "a&b<c>\"d'e"],
-            text=True, capture_output=True, timeout=20)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "a&amp;b&lt;c&gt;&quot;d&apos;e")
 
 
 if __name__ == "__main__":

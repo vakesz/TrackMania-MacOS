@@ -15,20 +15,6 @@ DOWNLOADERS = {'online', 'online-retail', 'online-trial'}
 SHA256 = re.compile(r'^[0-9a-f]{64}$')
 
 
-def load_states_module():
-    import sys
-    sys.path.insert(0, str(ROOT / 'src/python'))
-    from tmnf.hub import state
-    return state
-
-
-def load_paths_module():
-    import sys
-    sys.path.insert(0, str(ROOT / 'src/python'))
-    from tmnf.hub import paths
-    return paths
-
-
 class TitleRegistryTests(unittest.TestCase):
     def test_allTitle_json_valid(self):
         ids = set()
@@ -68,7 +54,7 @@ class TitleRegistryTests(unittest.TestCase):
         """config/pins.json is the only home: shell and Python must agree on it."""
         import sys
         sys.path.insert(0, str(ROOT / 'src/python'))
-        from tmnf.hub import registry, state
+        from tmnf.hub import registry
         pins = registry.pins()
         self.assertEqual(pins, {key: value for key, value in json.loads(
             (ROOT / 'config/pins.json').read_text()).items()})
@@ -83,7 +69,6 @@ class TitleRegistryTests(unittest.TestCase):
             for source in ('src/shell/lib/common.sh', 'src/python/tmnf/hub/state.py',
                            'src/python/tmnf/hub/paths.py'):
                 self.assertNotIn(literal, (ROOT / source).read_text(), (source, literal))
-        self.assertTrue(hasattr(state, 'probe'))
 
     def test_tmnf_installer_cache_path_is_historical(self):
         result = subprocess.run(

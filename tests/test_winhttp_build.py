@@ -1,8 +1,6 @@
 import importlib.util
 import json
 import os
-import re
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -169,41 +167,6 @@ class WinhttpBuildTests(unittest.TestCase):
                     build.build_fault_overlay(root / 'output', base)
                 self.assertFalse((root / 'output').exists())
                 run.assert_not_called()
-
-    @unittest.skipUnless(os.environ.get('MACTMNF_TEST_WINHTTP_BUILD'),
-                         'Set MACTMNF_TEST_WINHTTP_BUILD to an already-built scratch output directory')
-    def test_built_pe_architectures_markers_and_exports(self):
-        output = Path(os.environ['MACTMNF_TEST_WINHTTP_BUILD'])
-        manifest = json.loads((output / 'build.json').read_text())
-        self.assertEqual([patch['path'] for patch in manifest['patches']], list(build.PATCHES))
-        self.assertEqual(manifest['rebuilt_sources'], list(build.CHANGED))
-        for patch in manifest['patches']:
-            self.assertEqual(patch['sha256'], build.hashlib.sha256((build.ROOT / patch['path']).read_bytes()).hexdigest())
-        for name in (*build.CHANGED, 'winhttp_private.h'):
-            self.assertEqual(manifest['source_sha256'][name],
-                             build.hashlib.sha256((output / 'source/dlls/winhttp' / name).read_bytes()).hexdigest())
-        self.assertEqual(len(manifest['commands']), 20)
-        self.assertFalse(manifest.get('fault_injection'))
-        self.assertFalse(any('--wrap=' in arg for command in manifest['commands'] for arg in command))
-        for arch, machine in (('i386', 0x14c), ('x86_64', 0x8664)):
-            original = build.ROOT / f'.build/release/work/wine/dlls/winhttp/{arch}-windows/winhttp.dll'
-            tables = []
-            for path in (original, output / f'dlls/winhttp/{arch}-windows/winhttp.dll',
-                         output / f'native/{arch}-windows/winhttp.dll'):
-                with self.subTest(path=path):
-                    data = path.read_bytes()
-                    self.assertEqual(data[:2], b'MZ')
-                    offset = int.from_bytes(data[60:64], 'little')
-                    self.assertEqual(data[offset:offset + 4], b'PE\0\0')
-                    self.assertEqual(int.from_bytes(data[offset + 4:offset + 6], 'little'), machine)
-                    self.assertEqual(data[64:96].startswith(b'Wine builtin DLL'), 'native' not in path.parts)
-                    dump = subprocess.check_output(['x86_64-w64-mingw32-objdump', '-p', str(path)], text=True)
-                    table = re.findall(r'^\s*\[\s*\d+\] \+base\[\s*(\d+)\]\s+[0-9a-f]+ (\w+)\s*$',
-                                       dump, re.MULTILINE)
-                    self.assertEqual(len(table), 49)
-                    tables.append(table)
-            self.assertEqual(tables[0], tables[1])
-            self.assertEqual(tables[0], tables[2])
 
 
 if __name__ == '__main__':

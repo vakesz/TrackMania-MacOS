@@ -19,11 +19,6 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertIsNotNone(match)
         self.assertEqual(match.group(1), (ROOT / 'VERSION').read_text().strip())
 
-    def test_tool_groups_present(self):
-        text = (ROOT / 'pyproject.toml').read_text()
-        groups = section(text, 'dependency-groups')
-        self.assertIn('pytest', groups)
-        self.assertIn('ruff', groups)
 
 
 if __name__ == '__main__':

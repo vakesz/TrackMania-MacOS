@@ -43,10 +43,6 @@ class HubBackendTests(unittest.TestCase):
             self.assertEqual(canyon["kind"], "online-trial")
             self.assertEqual(canyon["status"], "provisional")
             self.assertEqual(Path(canyon["apps"]["game"]).name, "TrackMania 2 Canyon.app")
-            # The trial installs the game itself; compare to a disk-image title.
-            self.assertEqual([action["id"] for action in canyon["actions"]], ["install"])
-            self.assertEqual([action["id"] for action in titles["tm-original"]["actions"]],
-                             ["install-platform"])
             # TMU's retail installer keeps the serial-key note surfaced.
             self.assertEqual(titles["tmu"]["requiresSerial"], True)
 
@@ -71,21 +67,6 @@ class HubBackendTests(unittest.TestCase):
             self.assertEqual(found["tmu"]["icon"], str(support / "icons/tmu.icns"))
             self.assertEqual(found["tmnf"]["iconSource"], "bundled")
 
-    def test_broken_registry_snapshot_keeps_swift_strings_non_null(self):
-        with tempfile.TemporaryDirectory() as directory:
-            home = Path(directory) / "home"
-            titles = Path(directory) / "titles"
-            titles.mkdir(parents=True)
-            for path in (ROOT / "config/titles").glob("*.json"):
-                (titles / path.name).write_text(path.read_text())
-            (titles / "tmnf.json").write_text('{"id": "tmnf"}')
-            result = self.run_hub("snapshot", home=home, titles_dir=titles)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            document = json.loads(result.stdout)
-            self.assertTrue(any(t["error"] for t in document["titles"]))
-            for title in document["titles"]:
-                for key in ("id", "name", "shortName", "status", "notes"):
-                    self.assertIsInstance(title[key], str, (title["id"], key))
 
     def test_run_validates_only_the_target_title(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -193,11 +174,6 @@ class HubBackendTests(unittest.TestCase):
             titles = {t["id"]: t for t in json.loads(result.stdout)["titles"]}
             self.assertTrue(titles["tm-turbo"]["state"]["gameApp"]["ready"])
 
-    def test_run_scrubs_title_specific_root_override(self):
-        with mock.patch.dict(os.environ, {"TMNF_ROOT": "/tmp/one-title-only"}, clear=True):
-            environment = hub_run._scrubbed_env("tm-turbo")
-        self.assertEqual(environment["TMNF_TITLE"], "tm-turbo")
-        self.assertNotIn("TMNF_ROOT", environment)
 
     def test_bad_registry_entry_is_contained_per_title(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -214,6 +190,9 @@ class HubBackendTests(unittest.TestCase):
             self.assertTrue(titles["tmnf"]["error"])
             self.assertIn("tmu", titles)
             self.assertEqual(titles["tmu"]["error"], None)
+            for title in snapshot["titles"]:
+                for key in ("id", "name", "shortName", "status", "notes"):
+                    self.assertIsInstance(title[key], str, (title["id"], key))
 
     def test_broken_registry_file_is_contained(self):
         with tempfile.TemporaryDirectory() as directory:

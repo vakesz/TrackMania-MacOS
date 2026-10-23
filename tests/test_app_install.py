@@ -220,10 +220,19 @@ class AppInstallTests(unittest.TestCase):
                 self.assertEqual(self.run_app().returncode, 0)
 
     def test_wrapper_fails_closed_without_launcher_python(self):
-        wrapper = (self.app / 'Contents/MacOS/TMNF').read_text()
-        self.assertNotIn('python_bin=python3', wrapper)
-        self.assertRegex(wrapper, r'test ! -x "\$python_bin"; then\n\s+alert .*\n\s+exit 1\nfi')
-        self.assertEqual(os.stat(self.app / 'Contents/MacOS/TMNF').st_mode & 0o111, 0o111)
+        entry = self.app / 'Contents/MacOS/TMNF'
+        self.assertEqual(os.stat(entry).st_mode & 0o111, 0o111)
+        self.assertFalse((self.launcher / 'python/bin/python3').exists())
+        alerts = self.home / 'alerts'
+        alert = self.home / 'alert'
+        alert.write_text(f'#!/bin/bash\necho "$@" >> {alerts}\n')
+        alert.chmod(0o755)
+        entry.write_text(entry.read_text().replace('/usr/bin/osascript', str(alert)))
+        # self.env's PATH has a python3; it must not be used as a fallback.
+        result = subprocess.run(['/bin/bash', str(entry)], env=self.env, text=True,
+                                capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('launcher support files are missing', alerts.read_text())
 
     def stub_icon_tool(self):
         (self.project / 'src/python/tmnf/app/icon.py').write_text(

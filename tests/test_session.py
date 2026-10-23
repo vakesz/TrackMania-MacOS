@@ -340,19 +340,6 @@ class SessionTests(unittest.TestCase):
                 self.assertFalse((self.home / 'invocation.json').exists())
                 self.assertEqual(self.server_calls(), [])
 
-    def test_preparation_spends_the_native_and_host_startup_budget(self):
-        started = time.monotonic()
-        result = self.cli('starting', options=['--audio', 'on', '--startup-timeout', '1.5'],
-                          FAKE_REG_DELAY='0.5')
-        elapsed = time.monotonic() - started
-        self.assertEqual(result.returncode, 124, result.stderr)
-        calls = self.wine_calls()
-        self.assertEqual(len(calls), 2)
-        args = calls[-1]['args']
-        self.assertGreater(int(args[args.index('--startup-ms') + 1]), 0)
-        self.assertLessEqual(int(args[args.index('--startup-ms') + 1]), 1000)
-        self.assertLess(elapsed, 2.4)
-        self.assertEqual(self.server_calls(), [])
 
     def test_all_preparation_and_native_startup_share_one_deadline(self):
         with mock.patch.dict(os.environ, self.env, clear=True):

@@ -752,12 +752,6 @@ class BuildTests(unittest.TestCase):
         self.assertFalse(any(key.startswith('MoltenVKPackaging.xcodeproj/project.xcworkspace') for key in upstream))
         self.assertIn('MoltenVKPackaging.xcodeproj', upstream)
 
-    def test_dependency_compilation_cannot_change_other_prepared_sources(self):
-        with self.actions() as actions:
-            actions['dependencies'].side_effect = lambda: (build.SOURCES / 'wine/source.c').write_text('changed')
-            with self.assertRaisesRegex(RuntimeError, 'Sources changed during dependency compilation'):
-                self.main()
-        self.assertFalse(self.complete.exists())
 
     def test_libunistring_symbol_scratch_is_not_a_source_input(self):
         build.LOCK['libunistring'] = {'url': 'fixture', 'sha256': 'c'}

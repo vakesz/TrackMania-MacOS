@@ -149,15 +149,6 @@ class RuntimeInstall(unittest.TestCase):
         self.package()
         self.assert_rejected(self.install())
 
-    def test_wineboot_loader_symlink_does_not_replace_required_pe_program(self):
-        (self.bundle / 'lib/wine/x86_64-windows/wineboot.exe').unlink()
-        self.write_manifest()
-        self.assertEqual(os.readlink(self.bundle / 'bin/wineboot'), 'wine')
-        self.assertTrue(os.access(self.bundle / 'bin/wineboot', os.X_OK))
-        self.package()
-        result = self.install()
-        self.assert_rejected(result)
-        self.assertIn('Missing required runtime file: lib/wine/x86_64-windows/wineboot.exe', result.stderr)
 
     def test_unlisted_extra_file_is_rejected(self):
         (self.bundle / 'extra').write_text('not in manifest')
@@ -174,7 +165,10 @@ class RuntimeInstall(unittest.TestCase):
                 try:
                     self.write_manifest()
                     self.package()
-                    self.assert_rejected(self.install())
+                    result = self.install()
+                    self.assert_rejected(result)
+                    if name == 'lib/wine/x86_64-windows/wineboot.exe':
+                        self.assertIn('Missing required runtime file: ' + name, result.stderr)
                 finally:
                     if target is not None:
                         path.symlink_to(target)

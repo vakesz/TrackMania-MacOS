@@ -36,6 +36,12 @@ final class HubModelsTests: XCTestCase {
         XCTAssertNil(snapshot.error)
     }
 
+    func testCompactNameShortensTrackManiaPrefixOnly() {
+        XCTAssertEqual(HubTitle(id: "tmnf", name: "TrackMania Nations Forever").compactName, "TM Nations Forever")
+        XCTAssertEqual(HubTitle(id: "x", name: "TrackMania").compactName, "TrackMania")
+        XCTAssertEqual(HubTitle(id: "y", name: "ShootMania Storm").compactName, "ShootMania Storm")
+    }
+
     func testDecodesEmptySnapshotError() throws {
         let snapshot = try JSONDecoder().decode(
             HubSnapshot.self,

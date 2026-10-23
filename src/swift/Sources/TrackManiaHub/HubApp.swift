@@ -34,6 +34,7 @@ private struct HubRootView: View {
                         }
                         .listStyle(.sidebar)
                         .navigationTitle("TrackMania")
+                        .navigationSplitViewColumnWidth(min: 220, ideal: 300, max: 380)
                     } detail: {
                         if let title = selectedTitle(in: snapshot) {
                             TitleDetailView(title: title, model: model)

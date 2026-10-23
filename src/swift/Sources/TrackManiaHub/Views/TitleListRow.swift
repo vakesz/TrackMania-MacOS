@@ -11,9 +11,12 @@ struct TitleListRow: View {
         HStack(spacing: 11) {
             GameIconView(title: title, size: 38)
             VStack(alignment: .leading, spacing: 3) {
-                Text(title.name)
-                    .font(.system(.body, weight: .medium))
-                    .lineLimit(1)
+                ViewThatFits(in: .horizontal) {
+                    Text(title.name)
+                    Text(title.compactName)
+                }
+                .font(.system(.body, weight: .medium))
+                .lineLimit(1)
                 Text(title.shortName ?? title.status.rawValue.capitalized)
                     .font(.caption)
                     .foregroundStyle(.secondary)

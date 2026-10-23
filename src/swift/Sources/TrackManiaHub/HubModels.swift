@@ -257,6 +257,13 @@ extension HubTitle {
         ]
     }
 
+    /// Sidebar fallback when the full name does not fit: "TrackMania X" becomes "TM X".
+    var compactName: String {
+        let prefix = "TrackMania "
+        guard name.hasPrefix(prefix), name.count > prefix.count else { return name }
+        return "TM " + name.dropFirst(prefix.count)
+    }
+
     var isSupported: Bool { status == .supported }
     var supportLabel: String { isSupported ? "Supported" : "Provisional" }
 

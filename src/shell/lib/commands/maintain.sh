@@ -24,9 +24,9 @@ update_game() {
   fi
   if verify_file "$GAME_EXE" "$TMNF_GAME_EXE_SHA256" \
     && { test "$needs_patch" = false || competition_patch_is_ready; } \
-    && directx_is_current; then
+    && directx_is_current && openal_is_current; then
     if test "$needs_patch" = true; then
-      say "$label $TMNF_GAME_VERSION, DirectX $DIRECTX_VERSION, and Competition Patch $TMCOMP_VERSION are current."
+      say "$label $TMNF_GAME_VERSION, DirectX $DIRECTX_VERSION, Competition Patch $TMCOMP_VERSION and OpenAL are current."
     else
       say "$label $TMNF_GAME_VERSION and DirectX $DIRECTX_VERSION are current."
     fi
@@ -69,6 +69,15 @@ doctor() {
   say "Title: $TMNF_TITLE ($title_name)"
   say "macOS: $(sw_vers -productVersion 2>/dev/null || echo unknown) ($(uname -m))"
   say "Audio on next launch: $TMNF_AUDIO (TMNF_AUDIO=off disables sound)"
+  if openal_applies && test -f "$GAME_EXE"; then
+    case "$(game_openal)" in
+      soft) say "OpenAL: OpenAL Soft $OPENAL_SOFT_VERSION" ;;
+      creative) say "OpenAL: the game's Creative OpenAL" ;;
+      other) say "OpenAL: a replaced OpenAL32.dll ($(sha256_file "$GAME_OPENAL" | cut -c1-12))" ;;
+      missing) warn "OpenAL32.dll is missing from the game directory; run update" ;;
+    esac
+    openal_is_current || warn "TMNF_OPENAL=$TMNF_OPENAL is not applied yet; run make install"
+  fi
   say "Patched x87 translation: $TMNF_X87"
   if test "$TMNF_X87" = on; then
     if test -x "$sidecar" && "$sidecar" --probe >/dev/null 2>&1; then

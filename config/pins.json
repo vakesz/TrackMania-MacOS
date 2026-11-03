@@ -11,5 +11,9 @@
   "tmloader_coremod_version": "1.0.9",
   "tmloader_coremod_sha256": "f3ffdcaf2b15c040823d60bcc559e7f287f767b483c1b42588212cdf714d08cf",
   "tmcomp_version": "1.5.3",
-  "tmcomp_dll_sha256": "eef7200a2f6d5a8b31ae43534752e807c3c146248bd941fdf54b21b61225a135"
+  "tmcomp_dll_sha256": "eef7200a2f6d5a8b31ae43534752e807c3c146248bd941fdf54b21b61225a135",
+  "openal_soft_version": "1.25.2",
+  "openal_soft_url": "https://openal-soft.org/openal-binaries/openal-soft-1.25.2-bin.zip",
+  "openal_soft_sha256": "67a0c4b800bd860c93c04f38caf8cbe4875f9c84700ac430efc451f70e265434",
+  "openal_soft_dll_sha256": "606cf8b4c22c7ae00813585279ac045115907bc66d1483eb26355907021ea4b0"
 }

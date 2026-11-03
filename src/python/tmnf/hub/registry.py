@@ -42,10 +42,11 @@ _BUNDLE_ID = re.compile(r'^[A-Za-z0-9.-]+$')
 _URL = re.compile(r'^https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%\[\]-]+$')
 _PIN_TEXT = re.compile(r'^[A-Za-z0-9._ ()-]+$')
 _PIN_SHA_KEYS = ('directx_sha256', 'tmloader_sha256', 'tmloader_exe_sha256',
-                 'tmloader_game_sha256', 'tmloader_coremod_sha256', 'tmcomp_dll_sha256')
+                 'tmloader_game_sha256', 'tmloader_coremod_sha256', 'tmcomp_dll_sha256',
+                 'openal_soft_sha256', 'openal_soft_dll_sha256')
 _PIN_TEXT_KEYS = ('directx_version', 'tmloader_bundle_version', 'tmloader_game_version',
-                  'tmloader_coremod_version', 'tmcomp_version')
-_PIN_URL_KEYS = ('directx_url', 'tmloader_url')
+                  'tmloader_coremod_version', 'tmcomp_version', 'openal_soft_version')
+_PIN_URL_KEYS = ('directx_url', 'tmloader_url', 'openal_soft_url')
 
 
 class RegistryError(Exception):
@@ -220,7 +221,7 @@ def pins_path() -> pathlib.Path:
 
 
 def pins() -> typing.Dict[str, str]:
-    """Release-frozen DirectX and TMLoader pins from config/pins.json."""
+    """Release-frozen DirectX, TMLoader and OpenAL Soft pins from config/pins.json."""
     path = pins_path()
     try:
         data = json.loads(path.read_text())

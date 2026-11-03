@@ -10,7 +10,7 @@ $(error RUNTIME must be one of: auto download build)
 endif
 endif
 
-.PHONY: help build package appbundle zip install play configure doctor stop app setup check smoke
+.PHONY: help build package appbundle zip install play diag report configure doctor stop app setup check smoke
 
 help:
 	@echo 'make build       Build the pinned Wine runtime from source'
@@ -19,6 +19,8 @@ help:
 	@echo 'make zip         Create the distributable native hub .app.zip'
 	@echo 'make install     Install the runtime, game and Applications launchers (RUNTIME=auto|download|build)'
 	@echo 'make play        Play with Competition Patch and all runtime fixes'
+	@echo 'make diag        Play with session diagnostics, then report frame rate by game state'
+	@echo 'make report      Report the last diagnostic session again'
 	@echo 'make configure   Open the original graphics/settings launcher'
 	@echo 'make doctor      Check the installed game and runtime'
 	@echo 'make stop        Stop Wine processes in the selected prefix'
@@ -47,6 +49,14 @@ setup:
 
 play configure doctor stop app:
 	./src/shell/cli/tmnf $@
+
+# The session log is the apps' play log, written directly to the file.
+diag:
+	@TMNF_DIAG=on PYTHONPATH=src/python python3 -m tmnf.app.launch "$(CURDIR)/src/shell/cli/tmnf" play "$(HOME)/Library/Logs/TMNF/play.log"; \
+	status=$$?; PYTHONPATH=src/python python3 -m tmnf.session.report; exit $$status
+
+report:
+	@PYTHONPATH=src/python python3 -m tmnf.session.report
 
 check:
 	bash -n $(SHELL_SOURCES) tests/test-cli.sh

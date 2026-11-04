@@ -78,6 +78,7 @@ case "${1:-}" in
     TMLOADER_GAME_VERSION="" TMLOADER_GAME_SHA256=""
     TMLOADER_COREMOD_VERSION="" TMLOADER_COREMOD_SHA256=""
     TMCOMP_VERSION="" TMCOMP_DLL_SHA256=""
+    OPENAL_SOFT_VERSION="" OPENAL_SOFT_URL="" OPENAL_SOFT_SHA256="" OPENAL_SOFT_DLL_SHA256=""
     ;;
   *)
     tmnf_title_is_known "$TMNF_TITLE" \
@@ -91,6 +92,10 @@ esac
 TMNF_VERSION="$(cat "${TMNF_PROJECT_DIR}/VERSION")"
 TMNF_GAME_VERSION="2.11.26"
 TMNF_GAME_EXE_SHA256="3847cf9f20bfc63914450060ed528c12104f743d96ad23d6e76abd178de8c84f"
+# OpenAL32.dll as installed by the pinned TMNF release: Creative's OpenAL router.
+# OpenAL Soft's official Windows binaries (config/pins.json) replace it; its
+# software mixer costs much more CPU under Wine on macOS 27.
+CREATIVE_OPENAL_SHA256="26ba695d73fdf78ff133ab9c0e12300c26076441627a25ffba80c8b8aedb10ec"
 RUNTIME_VERSION="$TMNF_VERSION"
 RUNTIME_RELEASE_URL="https://github.com/vakesz/TrackMania-MacOS/releases/download/v${RUNTIME_VERSION}"
 RUNTIME_REPOSITORY_URL="https://github.com/vakesz/TrackMania-MacOS.git"
@@ -120,6 +125,13 @@ fi
 # and title-aware commands set their own per-title default above.
 : "${TMNF_ROOT:=${HOME}/Games/TMNF}"
 : "${TMNF_PREFIX:=${TMNF_ROOT}/prefix}"
+# Game's OpenAL implementation, applied by make install: soft or creative. The
+# last applied choice stays until TMNF_OPENAL selects another one.
+readonly OPENAL_MARKER="${TMNF_PREFIX}/.tmnf-openal"
+if test -z "${TMNF_OPENAL:-}" && test -f "$OPENAL_MARKER"; then
+  TMNF_OPENAL="$(tr -d '\r\n' <"$OPENAL_MARKER")"
+fi
+: "${TMNF_OPENAL:=soft}"
 : "${TMNF_USERDATA:=${TMNF_ROOT}/UserData}"
 # Direct3D 9 renderer: d9vk (DXVK on MoltenVK/Metal), wined3d-vulkan, wined3d-gl
 : "${TMNF_RENDERER:=d9vk}"
@@ -144,6 +156,10 @@ readonly TMLOADER_GAME_EXE="${TMLOADER_DIR}/database/TmForever/products/TmForeve
 readonly PREFIX_D9VK_DLL="${TMNF_PREFIX}/drive_c/windows/syswow64/d3d9.dll"
 readonly DXVK_CONF="${TMNF_PROJECT_DIR}/config/dxvk.conf"
 readonly TMLOADER_COREMOD_DLL="${TMLOADER_DIR}/database/TmForever/products/CoreMod/${TMLOADER_COREMOD_VERSION}/CoreMod.dll"
+readonly OPENAL_SOFT_ARCHIVE="${TMNF_CACHE}/openal-soft-${OPENAL_SOFT_VERSION}-bin.zip"
+readonly GAME_OPENAL="${GAME_DIR}/OpenAL32.dll"
+readonly GAME_OPENAL_CREATIVE="${GAME_DIR}/OpenAL32.creative.dll"
+readonly GAME_OPENAL_COPYING="${GAME_DIR}/OpenAL32.COPYING.txt"
 
 sha256_file() {
   shasum -a 256 "$1" | awk '{print $1}'
@@ -177,6 +193,38 @@ d9vk_is_installed() {
   cmp -s "$TMNF_D9VK_DLL" "$PREFIX_D9VK_DLL"
 }
 
+# Only TMNF's own OpenAL32.dll is known (CREATIVE_OPENAL_SHA256); other titles
+# keep the library they ship.
+openal_applies() {
+  test "$TMNF_TITLE" = tmnf
+}
+
+openal_soft_is_installed() {
+  verify_file "$GAME_OPENAL" "$OPENAL_SOFT_DLL_SHA256"
+}
+
+# soft, creative, other or missing: the OpenAL32.dll the game loads from its directory.
+game_openal() {
+  if test ! -f "$GAME_OPENAL"; then
+    printf 'missing\n'
+  elif openal_soft_is_installed; then
+    printf 'soft\n'
+  elif verify_file "$GAME_OPENAL" "$CREATIVE_OPENAL_SHA256"; then
+    printf 'creative\n'
+  else
+    printf 'other\n'
+  fi
+}
+
+# make install applied TMNF_OPENAL. It leaves a missing or unrecognised DLL alone.
+openal_is_current() {
+  openal_applies || return 0
+  case "$(game_openal)" in
+    "$TMNF_OPENAL"|other|missing) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 competition_patch_is_ready() {
   competition_patch_is_current \
     && test -s "${TMLOADER_DIR}/database/TmForever/products/TmForever/settings.yaml" \
@@ -188,6 +236,7 @@ validate_launch_options() {
     || die "Unknown TMNF_TITLE: $TMNF_TITLE (see ${TMNF_TITLES_DIR}/*.json)"
   case "$TMNF_AUDIO" in on|off) ;; *) die "Unknown TMNF_AUDIO: $TMNF_AUDIO (use on or off)" ;; esac
   case "$TMNF_X87" in on|off) ;; *) die "Unknown TMNF_X87: $TMNF_X87 (use on or off)" ;; esac
+  case "$TMNF_OPENAL" in soft|creative) ;; *) die "Unknown TMNF_OPENAL: $TMNF_OPENAL (use soft or creative)" ;; esac
   case "$TMNF_RENDERER" in
     d9vk|wined3d-vulkan|wined3d-gl) ;;
     *) die "Unknown TMNF_RENDERER: $TMNF_RENDERER (use d9vk, wined3d-vulkan or wined3d-gl)" ;;

@@ -27,6 +27,8 @@ install_rosetta() {
 . "${TMNF_PROJECT_DIR}/src/shell/lib/install/game.sh"
 # shellcheck source=src/shell/lib/install/patch.sh
 . "${TMNF_PROJECT_DIR}/src/shell/lib/install/patch.sh"
+# shellcheck source=src/shell/lib/install/openal.sh
+. "${TMNF_PROJECT_DIR}/src/shell/lib/install/openal.sh"
 # shellcheck source=src/shell/lib/apps/icons.sh
 . "${TMNF_PROJECT_DIR}/src/shell/lib/apps/icons.sh"
 
@@ -86,6 +88,9 @@ main() {
         install_directx_runtime
         if test "$TMNF_TITLE_NEEDS_TMLOADER" = true; then
           install_competition_patch
+        fi
+        if openal_applies; then
+          install_openal
         fi
         ;;
       steam-copy|disk-image)

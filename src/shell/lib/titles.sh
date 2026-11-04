@@ -11,7 +11,7 @@ tmnf_title_is_known() {
 }
 
 # tmnf_load_title [TITLE] — one Python start defines every TMNF_TITLE_* field
-# of TITLE plus the release pins (DIRECTX_*, TMLOADER_*, TMCOMP_*). Without a
+# of TITLE plus the release pins (DIRECTX_*, TMLOADER_*, TMCOMP_*, OPENAL_SOFT_*). Without a
 # title only the pins are defined. The registry validates every value and
 # shell-quotes it, so evaluating the output is safe.
 tmnf_load_title() {

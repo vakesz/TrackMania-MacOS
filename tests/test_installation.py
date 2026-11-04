@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
+import zipfile
 
 from tmnf.guard.managed_paths import check_layout, check_prefix, check_uninstall, record_profile_baseline, safe_path, setup_documents
 from tmnf.install.runtime_manifest import EXECUTABLES, REQUIRED_FILES, digest, verify_runtime
@@ -250,12 +251,100 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
                  ('0x720', '1280x0', '1280x720junk', ' 1280x720', '-1x720', '1280xx720',
                   '65536x720', '720x65536', '999999999999999999999x720')]
         cases += [('TMNF_AUDIO', 'invalid'), ('TMNF_X87', 'invalid'),
-                  ('TMNF_RENDERER', 'invalid')]
+                  ('TMNF_RENDERER', 'invalid'), ('TMNF_OPENAL', 'invalid')]
         for key, value in cases:
             with self.subTest(key=key, value=value):
                 result = self.shell('./src/shell/cli/tmnf configure', **{key: value})
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(self.log.exists())
+
+    def openal_fixture(self, archive_dll=b'fake OpenAL Soft library'):
+        """A project copy pinned to fake Creative and OpenAL Soft payloads, archive cached."""
+        project = self.home / 'openal project'
+        project.mkdir()
+        for name in ('src', 'config'):
+            shutil.copytree(ROOT / name, project / name)
+        shutil.copy2(ROOT / 'VERSION', project / 'VERSION')
+        result = self.shell('. ./src/shell/lib/common.sh; printf "%s\\n" "$GAME_OPENAL" "$OPENAL_SOFT_ARCHIVE" '
+                            '"$OPENAL_SOFT_VERSION"', cwd=project)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        game_openal, archive, version = result.stdout.splitlines()
+        game_openal, archive = Path(game_openal), Path(archive)
+        game_openal.parent.mkdir(parents=True)
+        game_openal.write_bytes(b'fake Creative OpenAL router')
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(archive, 'w') as zf:
+            zf.writestr(f'openal-soft-{version}-bin/bin/Win32/soft_oal.dll', archive_dll)
+            zf.writestr(f'openal-soft-{version}-bin/COPYING', 'fake LGPL text')
+            zf.writestr(f'openal-soft-{version}-bin/alsoft-config/alsoft-config.exe', 'not installed')
+        # Only this copy accepts the fake payloads.
+        dll = self.home / 'payload-soft_oal.dll'
+        dll.write_bytes(b'fake OpenAL Soft library')
+        pins_file = project / 'config/pins.json'
+        pins = json.loads(pins_file.read_text())
+        pins.update(openal_soft_sha256=digest(archive), openal_soft_dll_sha256=digest(dll))
+        pins_file.write_text(json.dumps(pins))
+        common = project / 'src/shell/lib/common.sh'
+        source, count = re.subn(r'^CREATIVE_OPENAL_SHA256="[0-9a-f]{64}"$',
+                                'CREATIVE_OPENAL_SHA256="{}"'.format(digest(game_openal)),
+                                common.read_text(), flags=re.MULTILINE)
+        self.assertEqual(count, 1)
+        common.write_text(source)
+        return project, game_openal
+
+    def test_openal_soft_replaces_and_restores_creative(self):
+        project, game_openal = self.openal_fixture()
+        result = self.shell('. ./src/shell/cli/install.sh; install_openal; game_openal', cwd=project)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines()[-1], 'soft')
+        self.assertEqual(game_openal.read_bytes(), b'fake OpenAL Soft library')
+        self.assertEqual((game_openal.parent / 'OpenAL32.creative.dll').read_bytes(), b'fake Creative OpenAL router')
+        self.assertEqual((game_openal.parent / 'OpenAL32.COPYING.txt').read_text(), 'fake LGPL text')
+        self.assertFalse((game_openal.parent / 'alsoft-config.exe').exists())
+
+        result = self.shell('. ./src/shell/cli/install.sh; install_openal', cwd=project)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('already installed', result.stdout)
+
+        result = self.shell('. ./src/shell/cli/install.sh; install_openal; game_openal', cwd=project,
+                            TMNF_OPENAL='creative')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines()[-1], 'creative')
+        self.assertEqual(game_openal.read_bytes(), b'fake Creative OpenAL router')
+        self.assertFalse((game_openal.parent / 'OpenAL32.COPYING.txt').exists())
+
+        # The choice is remembered: a later install or update keeps Creative OpenAL.
+        result = self.shell('. ./src/shell/cli/install.sh; install_openal; game_openal; openal_is_current', cwd=project)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Using the game', result.stdout)
+        self.assertEqual(result.stdout.splitlines()[-1], 'creative')
+        result = self.shell('. ./src/shell/cli/install.sh; install_openal; game_openal', cwd=project,
+                            TMNF_OPENAL='soft')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines()[-1], 'soft')
+        self.assertFalse(self.log.exists())  # no Wine process is needed
+
+    def test_openal_is_tmnf_only(self):
+        # Other titles ship their own OpenAL32.dll, whose checksum is not pinned.
+        result = self.shell('. ./src/shell/lib/common.sh; openal_is_current; ! openal_applies',
+                            TMNF_TITLE='tmu', TMNF_OPENAL='creative')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_openal_leaves_an_unknown_library_alone(self):
+        project, game_openal = self.openal_fixture()
+        game_openal.write_bytes(b'a library the user installed')
+        result = self.shell('. ./src/shell/cli/install.sh; install_openal', cwd=project)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Leaving', result.stderr)
+        self.assertEqual(game_openal.read_bytes(), b'a library the user installed')
+
+    def test_openal_rejects_an_unverified_library(self):
+        project, game_openal = self.openal_fixture(archive_dll=b'a tampered library')
+        result = self.shell('. ./src/shell/cli/install.sh; install_openal', cwd=project)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('verification failed', result.stderr)
+        self.assertEqual(game_openal.read_bytes(), b'fake Creative OpenAL router')
+        self.assertFalse((game_openal.parent / 'OpenAL32.creative.dll').exists())
 
     def test_reused_directx_repairs_all_compilers_without_wine(self):
         self.prefix.mkdir(parents=True)

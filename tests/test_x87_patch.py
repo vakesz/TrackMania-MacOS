@@ -19,8 +19,8 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-REVISION = '4e9c7386d9253e838692c05015de9ae61bd6a11f'
-PATCH = ROOT / 'patches/x87sidecar/0001-honor-pc24-arithmetic.patch'
+REVISION = '0b7c5e54dad37f6ed8374b91443e2d2083652452'
+PATCHES = sorted((ROOT / 'patches/x87sidecar').glob('*.patch'))
 
 HARNESS = r'''
 #include <algorithm>
@@ -235,9 +235,10 @@ class X87PatchTests(unittest.TestCase):
                 ['git', '-C', str(source), 'archive', REVISION],
                 check=True, capture_output=True).stdout
             subprocess.run(['tar', '-x', '-C', str(work)], input=archive, check=True)
-            subprocess.run(['git', 'apply', '--check', '--whitespace=error-all', str(PATCH)],
-                           cwd=work, check=True)
-            subprocess.run(['git', 'apply', str(PATCH)], cwd=work, check=True)
+            for patch in PATCHES:  # in order, as tmnf.build.runtime_builder applies them
+                subprocess.run(['git', 'apply', '--check', '--whitespace=error-all', str(patch)],
+                               cwd=work, check=True)
+                subprocess.run(['git', 'apply', str(patch)], cwd=work, check=True)
             harness = work / 'pressure_test.cpp'
             harness.write_text(HARNESS)
             include = work / 'rosetta_core/include'
@@ -250,7 +251,7 @@ class X87PatchTests(unittest.TestCase):
                          'AssemblerBuffer', 'TranslatorHelpers', 'TranslatorX87Helpers',
                          'TranslatorX87Transcendental', 'TranscendentalHelper',
                           'TranslatorX87', 'TranslatorX87Single', 'X87Cache', 'CoreConfig',
-                          'IRInstr', 'OpcodeCompatibility'):
+                          'IRInstr', 'OpcodeCompatibility', 'TranslatorX87F80'):
                 obj = work / f'{name}.o'
                 extra = ['-Dalloc_free_fpr=x87_test_alloc_free_fpr'] if name == 'TranslatorHelpers' else []
                 subprocess.run([*flags, *extra, '-c', str(sources / f'{name}.cpp'),
@@ -265,7 +266,7 @@ class X87PatchTests(unittest.TestCase):
                 subprocess.run(['cmake', '-S', str(work), '-B', str(build),
                                 '-DCMAKE_OSX_ARCHITECTURES=arm64'], check=True)
                 subprocess.run(['cmake', '--build', str(build), '-j', '8'], check=True)
-                env = dict(os.environ, MACTMNF_X87_SRC=str(build), MACTMNF_X87_SOURCE_ONLY='1')
+                env = dict(os.environ, TMNF_X87_SRC=str(build), TMNF_X87_SOURCE_ONLY='1')
                 subprocess.run(['bash', str(ROOT / 'src/shell/tools/probes/smoke-x87sidecar.sh')],
                                env=env, check=True, timeout=300)
 

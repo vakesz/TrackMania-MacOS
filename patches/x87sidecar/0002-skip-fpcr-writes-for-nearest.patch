@@ -1,0 +1,52 @@
+Subject: x87: Skip FPCR writes for nearest rounding when the host already matches.
+
+Requires 0001. Each scoped operation of 0001 saves FPCR, installs the guest
+rounding mode, emits the operation and restores FPCR. MSR FPCR serialises the
+floating-point pipeline, and in TMNF's x87-heavy code these writes dominated
+the cost of every PC24 operation.
+
+When the guest rounds to nearest, the scoped FPCR is all zero. If the host
+FPCR already gives the same results (RMode, FZ and DN clear, and FIZ clear),
+the operation is emitted without touching FPCR. AH and NEP do not change these
+results. Every other case takes the existing scoped path unchanged. Results,
+FPSR sticky flags and NZCV are the same on both paths.
+
+diff --git a/rosetta_core/src/X87Precision.cpp b/rosetta_core/src/X87Precision.cpp
+index c9c09bb..acfa86a 100644
+--- a/rosetta_core/src/X87Precision.cpp
++++ b/rosetta_core/src/X87Precision.cpp
+@@ -69,12 +69,25 @@ void arithmetic(AssemblerBuffer& b, X87Arithmetic op, int dst, int lhs, int rhs)
+ // RC is independent of PC. No flag-setting instructions: guest NZCV survives.
+ // Keep FPSR untouched, so old flags and the operation's new sticky flags survive.
+ // This is the upstream exception contract, not x87 SW exception/trap emulation.
++//
++// Fast path: for guest RC=nearest the slow path installs FPCR=0. When the host
++// FPCR already is 0, the operation runs as is: same result, same FPSR, and no
++// MSR FPCR, which serialises the FP pipeline (~30 ns each in x87-heavy code).
+ template<class Emit>
+ void rounded(AssemblerBuffer& b, int base, int saved, int rc, Emit emit) {
+-    Label nearest, down, up, ready;
++    Label nearest, down, up, ready, slow, done;
+     b.emit(0xd53b4400 | saved);
+     emit_ldr_str_imm(b, 1, 0, 1, 0, base, rc);
+     extract(b, rc, rc, 10, 2);
++    slow.zero(b, rc, true);         // guest RC is not nearest
++    mask(b, rc, saved, 0x03c00000);  // RMode, FZ and DN must be clear
++    slow.zero(b, rc, true);
++    slow.bit(b, saved, 0, true);     // and FIZ; AH and NEP do not change these results
++    emit();
++    done.branch(b);
++    slow.bind(b);
++    emit_ldr_str_imm(b, 1, 0, 1, 0, base, rc);
++    extract(b, rc, rc, 10, 2);
+     nearest.zero(b, rc);
+     down.bit(b, rc, 1);
+     up.bit(b, rc, 0);
+@@ -94,6 +107,7 @@ void rounded(AssemblerBuffer& b, int base, int saved, int rc, Emit emit) {
+     b.emit(0xd51b4400 | rc);
+     emit();
+     b.emit(0xd51b4400 | saved);
++    done.bind(b);
+ }
+ }  // namespace
+ 

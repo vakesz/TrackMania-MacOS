@@ -1,0 +1,516 @@
+Subject: x87: Run single-precision PC24 runs natively, with an exact fallback.
+
+Requires 0001. An IR run whose nodes are all f32-exact operations (f32/f64/
+integer loads, f32/f64 stores, + - * / sqrt, negation, absolute value and
+bridged integer instructions) is emitted twice: a fast body that computes in
+single precision, and the existing exact body.
+
+For + - * / sqrt on f32 inputs, one rounding to f32 equals x87 PC24 rounding
+as long as the result stays in the f32 range (53 >= 2*24+2). The fast body
+therefore checks every arithmetic result, and every value it narrows from
+double. On overflow, underflow, NaN, infinity or an input that is not an f32,
+it converts its live registers back to double and continues in the exact body
+at the same node. The entry checks that the guest uses PC24 with nearest
+rounding and that the host FPCR has RMode, FZ, DN and FIZ clear. When the two
+bodies would leave different register state at any node, translation emits
+only the exact body.
+
+All branches in the fast body and its fallback stubs go forward: Rosetta's
+signal state recovery aborts on translated code that branches backward
+("unsupported CFG structure"). X87_PC24_RUNS=0 disables the fast bodies.
+
+diff --git a/rosetta_core/src/X87IRLower.cpp b/rosetta_core/src/X87IRLower.cpp
+index a111063..5b6fd74 100644
+--- a/rosetta_core/src/X87IRLower.cpp
++++ b/rosetta_core/src/X87IRLower.cpp
+@@ -2,7 +2,10 @@
+ #include <algorithm>
+ #include <cstdint>
+ #include <cstdio>
++#include <cstdlib>
+ #include <cstring>
++#include <deque>
++#include <vector>
+ #include <iterator>
+ #include <utility>
+ 
+@@ -603,6 +606,159 @@ static void lower_fma_reduce(AssemblerBuffer& buf, TranslationResult* result, FP
+     fprs.node_fpr[chain[N - 1]] = static_cast<int8_t>(D_result);
+ }
+ 
++// ── PC24 single-precision runs ──────────────────────────────────────────────
++//
++// A run whose values come from loads and constants that are f32 values, and
++// whose arithmetic is + - * / sqrt, can run in single precision when, at run
++// entry, the guest is at PC24 with RC=nearest and the host FPCR rounds to
++// nearest with FZ, DN and FIZ clear. For f32 operands an f32 operation then
++// gives exactly the x87 PC24 result whenever that result is a normal f32; for
++// + and - any result is exact (tiny sums of f32 values are representable).
++// Values live in the S view of their node's register, which removes the
++// per-operation f64 -> f32 -> f64 conversions of emit_x87_arithmetic.
++//
++// lower() emits that fast body first, then the exact body unchanged, with the
++// same register assignment. At every node boundary the fast pass records the
++// translator state (x87_cache, free masks, node registers) and the exact pass
++// compares it; any difference disables the fast body by patching its entry
++// into a branch to the exact body. Where a fast operation cannot be exact (a
++// result outside the normal f32 range, a value that is not an f32, an f32
++// NaN or infinity), the fast body converts every live value to f64 in place
++// (exactly) and jumps into the exact body at the start of that node; every
++// value and store before that point was bit-identical to the exact body's.
++// X87_PC24_RUNS=0 disables the fast body.
++
++namespace {
++
++// A branch target in the instruction buffer. Only forward branches (uses before
++// bind()) are emitted: Rosetta's signal state recovery asserts on translated code
++// that branches backward ("unsupported CFG structure").
++struct FLabel {
++    int64_t pos = -1;
++    struct Use {
++        uint64_t at;
++        int kind;  // 0: B imm26, 1: CBZ/CBNZ imm19, 2: TBZ/TBNZ imm14
++    };
++    std::vector<Use> uses;
++
++    static void patch(AssemblerBuffer& b, const Use& u, int64_t target) {
++        const uint32_t words = static_cast<uint32_t>((target - static_cast<int64_t>(u.at)) / 4);
++        uint32_t& w = b.data[u.at / 4];
++        if (u.kind == 0) {
++            w = (w & ~0x03ffffffu) | (words & 0x03ffffffu);
++        } else if (u.kind == 1) {
++            w = (w & ~(0x7ffffu << 5)) | ((words & 0x7ffffu) << 5);
++        } else {
++            w = (w & ~(0x3fffu << 5)) | ((words & 0x3fffu) << 5);
++        }
++    }
++    void use(AssemblerBuffer& b, uint32_t word, int kind) {
++        const Use u{b.end, kind};
++        b.emit(word);
++        if (pos >= 0) {
++            patch(b, u, pos);
++        } else {
++            uses.push_back(u);
++        }
++    }
++    void branch(AssemblerBuffer& b) { use(b, 0x14000000u, 0); }
++    void cbz(AssemblerBuffer& b, bool is_64bit, bool nonzero, int reg) {
++        use(b, 0x34000000u | (uint32_t(is_64bit) << 31) | (uint32_t(nonzero) << 24) | uint32_t(reg), 1);
++    }
++    void tbz(AssemblerBuffer& b, int reg, unsigned bit, bool nonzero) {
++        use(b, 0x36000000u | ((bit & 32u) << 26) | ((bit & 31u) << 19) | (uint32_t(nonzero) << 24) | uint32_t(reg),
++            2);
++    }
++    void bind(AssemblerBuffer& b) {
++        pos = static_cast<int64_t>(b.end);
++        for (const auto& u : uses) {
++            patch(b, u, pos);
++        }
++        uses.clear();
++    }
++};
++
++void emit_and_mask(AssemblerBuffer& b, bool is_64bit, int dst, int src, uint64_t value) {
++    LogicalImmEncoding e;
++    const bool ok = is_bitmask_immediate(is_64bit, value, e);
++    (void)ok;
++    emit_and_imm(b, is_64bit ? 1 : 0, dst, e.N, e.immr, e.imms, src);
++}
++
++bool pc24_runs_enabled() {
++    static const bool enabled = [] {
++        const char* v = getenv("X87_PC24_RUNS");
++        return v == nullptr || strcmp(v, "0") != 0;
++    }();
++    return enabled;
++}
++
++bool f64_is_f32(uint64_t bits) {
++    double d;
++    memcpy(&d, &bits, sizeof(d));
++    const float f = static_cast<float>(d);
++    const double back = static_cast<double>(f);
++    uint64_t back_bits;
++    memcpy(&back_bits, &back, sizeof(back_bits));
++    return back_bits == bits && (bits & 0x7ff0000000000000ull) != 0x7ff0000000000000ull;
++}
++
++// Every node the fast body supports; at least two arithmetic nodes to pay for
++// the entry check.
++bool pc24_run_eligible(const Context& ctx) {
++    int arithmetic = 0;
++    for (int i = 0; i < ctx.num_nodes; i++) {
++        const Node& n = ctx.nodes[i];
++        if (n.flags & kDead) {
++            continue;
++        }
++        if (n.flags & (kFmaReduceHead | kFmaReduceMember)) {
++            return false;
++        }
++        switch (n.op) {
++            case Op::ReadSt:
++            case Op::LoadF64:
++            case Op::LoadF32:
++            case Op::LoadI16:
++            case Op::LoadI32:
++            case Op::ConstZero:
++            case Op::ConstOne:
++            case Op::FNeg:
++            case Op::FAbs:
++            case Op::StoreF64:
++            case Op::StoreF32:
++            case Op::BridgeMovRR:
++            case Op::BridgeMovRI:
++            case Op::BridgeLea:
++            case Op::BridgeLoadG:
++            case Op::BridgeStoreG:
++            case Op::BridgeExt:
++            case Op::BridgeAluRR:
++            case Op::BridgeAluRI:
++            case Op::BridgeAluRM:
++            case Op::BridgeAluMR:
++                break;
++            case Op::ConstF64:
++                if (!f64_is_f32(n.imm_bits)) {
++                    return false;
++                }
++                break;
++            case Op::FAdd:
++            case Op::FSub:
++            case Op::FMul:
++            case Op::FDiv:
++            case Op::FSqrt:
++                arithmetic++;
++                break;
++            default:
++                return false;
++        }
++    }
++    return arithmetic >= 2;
++}
++
++}  // namespace
++
+ // ── Main lowering ───────────────────────────────────────────────────────────
+ 
+ void lower(Context& ctx, TranslationResult* result) {
+@@ -667,7 +823,213 @@ void lower(Context& ctx, TranslationResult* result) {
+         }
+     }
+ 
++    // ── PC24 single-precision fast body: setup (see the comment above) ──────
++    const bool try_fast = pc24_runs_enabled() && pc24_run_eligible(ctx);
++    const bool rc_cache_valid_initial = rc_cache_valid;
++    bool fast_ok = true;
++    struct Snap {
++        bool set = false;
++        unsigned char cache[sizeof(result->x87_cache)];
++        uint32_t gmask = 0, fmask = 0;
++        int8_t fpr[kMaxNodes];
++    };
++    std::vector<Snap> snaps(try_fast ? static_cast<size_t>(ctx.num_nodes) + 1 : 0);
++    auto take = [&](Snap& snap) {
++        memcpy(snap.cache, &result->x87_cache, sizeof(snap.cache));
++        snap.gmask = result->free_gpr_mask;
++        snap.fmask = result->free_fpr_mask;
++        memcpy(snap.fpr, fprs.node_fpr, sizeof(snap.fpr));
++        snap.set = true;
++    };
++    auto same = [&](const Snap& snap) {
++        return memcmp(snap.cache, &result->x87_cache, sizeof(snap.cache)) == 0 &&
++               snap.gmask == result->free_gpr_mask && snap.fmask == result->free_fpr_mask &&
++               memcmp(snap.fpr, fprs.node_fpr, sizeof(snap.fpr)) == 0;
++    };
++    std::vector<FLabel> exact_at(try_fast ? static_cast<size_t>(ctx.num_nodes) : 0);
++    FLabel exact_start, epilogue_at;
++    struct Deopt {
++        FLabel stub;
++        int node;
++    };
++    std::deque<Deopt> deopts;
++    auto deopt_at = [&](int node) -> FLabel& {
++        if (deopts.empty() || deopts.back().node != node) {
++            deopts.push_back(Deopt{FLabel{}, node});
++        }
++        return deopts.back().stub;
++    };
++
++    // Value nodes the fast pass lets the exact code emit as f64: check that the
++    // value is an f32 (zero, or a normal f32 with a 24-bit significand), else
++    // leave for the exact body; then narrow it in place (exactly).
++    auto fast_narrow = [&](int i) {
++        const int Dd = fprs.node_fpr[i];
++        if (Dd < 0) {
++            return;
++        }
++        // The value is an f32 (including subnormals and infinities, which the
++        // arithmetic checks below handle) exactly when f64 -> f32 -> f64 gives it
++        // back; FCMEQ is false for NaN. No flags are written.
++        const int Dt = alloc_free_fpr(*result);
++        const int Xt = alloc_free_gpr(*result);
++        emit_fcvt_d_to_s(buf, Dt, Dd);
++        emit_fcvt_s_to_d(buf, Dt, Dt);
++        buf.emit(0x5e60e400u | (uint32_t(Dd) << 16) | (uint32_t(Dt) << 5) | uint32_t(Dt));  // FCMEQ D, D, D
++        emit_fmov_d_to_x(buf, Xt, Dt);
++        deopt_at(i).cbz(buf, true, false, Xt);
++        emit_fcvt_d_to_s(buf, Dd, Dd);
++        free_gpr(*result, Xt);
++        free_fpr(*result, Dt);
++    };
++
++    // A LoadF32 needs no NaN/infinity check when every use is + - * / sqrt:
++    // such an input always yields a result that the arithmetic check rejects
++    // (NaN or infinity, or a zero from x / inf, which the zero check rejects).
++    auto only_arithmetic_uses = [&](int i) {
++        for (short val : ctx.slot_val) {
++            if (val == i) {
++                return false;
++            }
++        }
++        for (int k = i + 1; k < ctx.num_nodes; k++) {
++            const Node& user = ctx.nodes[k];
++            if (user.flags & kDead) {
++                continue;
++            }
++            bool uses = false;
++            for (short in : user.inputs) {
++                uses = uses || in == i;
++            }
++            if (uses && user.op != Op::FAdd && user.op != Op::FSub && user.op != Op::FMul &&
++                user.op != Op::FDiv && user.op != Op::FSqrt) {
++                return false;
++            }
++        }
++        return true;
++    };
++
++    // Fast-pass emission of the nodes that differ from the exact body.
++    // Returns false to let the exact code emit the node (bridges, and the
++    // value nodes fast_narrow narrows afterwards).
++    auto emit_fast_node = [&](int i) -> bool {
++        auto& n = ctx.nodes[i];
++        switch (n.op) {
++            case Op::LoadF32: {
++                const int Sd = alloc_free_fpr(*result);
++                fprs.node_fpr[i] = static_cast<int8_t>(Sd);
++                const int addr = compute_operand_address(*result, true, n.mem_operand, GPR::XZR);
++                emit_fldr_imm(buf, 2, Sd, addr, 0);
++                free_gpr(*result, addr);
++                // An f32 NaN or infinity goes to the exact body: x87 quiets a
++                // signaling NaN on load, and a plain copy here would not.
++                if (only_arithmetic_uses(i)) {
++                    return true;
++                }
++                const int Wt = alloc_free_gpr(*result);
++                buf.emit(0x1e260000u | (uint32_t(Sd) << 5) | uint32_t(Wt));  // FMOV W, S
++                emit_bitfield(buf, 0, 2, 0, 23, 30, Wt, Wt);
++                emit_add_imm(buf, 0, 1, 0, 0, 255, Wt, Wt);
++                deopt_at(i).cbz(buf, false, false, Wt);
++                free_gpr(*result, Wt);
++                return true;
++            }
++            case Op::FNeg:
++            case Op::FAbs: {
++                const int Sn = fprs.get(n.inputs[0]);
++                int Sd = fprs.try_reuse_input(ctx, i);
++                if (Sd < 0) {
++                    Sd = alloc_free_fpr(*result);
++                }
++                fprs.node_fpr[i] = static_cast<int8_t>(Sd);
++                emit_fp_dp1(buf, 0, n.op == Op::FNeg ? 2 : 1, Sd, Sn);
++                return true;
++            }
++            case Op::FAdd:
++            case Op::FSub:
++            case Op::FMul:
++            case Op::FDiv:
++            case Op::FSqrt: {
++                const bool unary = n.op == Op::FSqrt;
++                const int Sn = fprs.get(n.inputs[0]);
++                const int Sm = unary ? -1 : fprs.get(n.inputs[1]);
++                int Sd = fprs.try_reuse_input(ctx, i);
++                if (Sd < 0) {
++                    Sd = alloc_free_fpr(*result);
++                }
++                fprs.node_fpr[i] = static_cast<int8_t>(Sd);
++                // Keep the inputs intact until the result is accepted: a jump to
++                // the exact body re-executes this node from them.
++                const bool clobbers = Sd == Sn || Sd == Sm;
++                const int Sr = clobbers ? alloc_free_fpr(*result) : Sd;
++                switch (n.op) {
++                    case Op::FMul: emit_fp_dp2(buf, 0, 0, Sr, Sn, Sm); break;
++                    case Op::FDiv: emit_fp_dp2(buf, 0, 1, Sr, Sn, Sm); break;
++                    case Op::FAdd: emit_fp_dp2(buf, 0, 2, Sr, Sn, Sm); break;
++                    case Op::FSub: emit_fp_dp2(buf, 0, 3, Sr, Sn, Sm); break;
++                    default: emit_fp_dp1(buf, 0, 3, Sr, Sn); break;
++                }
++                // Accept a normal f32 result; for + - also zero and subnormal
++                // (exact); for * / a zero only when an operand forces it.
++                const int Wt = alloc_free_gpr(*result);
++                buf.emit(0x1e260000u | (uint32_t(Sr) << 5) | uint32_t(Wt));  // FMOV W, S
++                emit_bitfield(buf, 0, 2, 0, 23, 30, Wt, Wt);                // exponent
++                if (n.op != Op::FMul && n.op != Op::FDiv) {
++                    emit_add_imm(buf, 0, 1, 0, 0, 255, Wt, Wt);
++                    deopt_at(i).cbz(buf, false, false, Wt);
++                } else {
++                    // Exponent 1..254 is the common case: (e + 1) & 0xfe is zero only
++                    // for 0 and 255. The rare path stays inline: Rosetta's signal
++                    // state recovery rejects translated code that branches backward.
++                    FLabel ok;
++                    FLabel& exit = deopt_at(i);
++                    emit_add_imm(buf, 0, 0, 0, 0, 1, Wt, Wt);
++                    emit_and_mask(buf, false, Wt, Wt, 0xfe);
++                    ok.cbz(buf, false, true, Wt);
++                    buf.emit(0x1e260000u | (uint32_t(Sr) << 5) | uint32_t(Wt));  // FMOV W, S
++                    emit_bitfield(buf, 0, 2, 0, 31, 30, Wt, Wt);                // LSL #1
++                    exit.cbz(buf, false, true, Wt);  // subnormal (underflow), infinity, NaN
++                    buf.emit(0x1e260000u | (uint32_t(Sn) << 5) | uint32_t(Wt));
++                    emit_bitfield(buf, 0, 2, 0, 31, 30, Wt, Wt);
++                    ok.cbz(buf, false, false, Wt);  // 0 * x, 0 / x: an exact zero
++                    if (n.op == Op::FMul) {
++                        buf.emit(0x1e260000u | (uint32_t(Sm) << 5) | uint32_t(Wt));
++                        emit_bitfield(buf, 0, 2, 0, 31, 30, Wt, Wt);
++                        ok.cbz(buf, false, false, Wt);
++                    }
++                    exit.branch(buf);  // underflow to zero
++                    ok.bind(buf);
++                }
++                free_gpr(*result, Wt);
++                if (clobbers) {
++                    emit_fp_dp1(buf, 0, 0, Sd, Sr);  // FMOV S, S
++                    free_fpr(*result, Sr);
++                }
++                return true;
++            }
++            case Op::StoreF32: {
++                // The value is an f32 already; the store is exact under RC=nearest.
++                const int addr = compute_operand_address(*result, true, n.mem_operand, GPR::XZR);
++                emit_fstr_imm(buf, 2, fprs.get(n.inputs[0]), addr, 0);
++                free_gpr(*result, addr);
++                return true;
++            }
++            case Op::StoreF64: {
++                const int Dt = alloc_free_fpr(*result);
++                emit_fcvt_s_to_d(buf, Dt, fprs.get(n.inputs[0]));
++                const int addr = compute_operand_address(*result, true, n.mem_operand, GPR::XZR);
++                emit_fstr_imm(buf, 3, Dt, addr, 0);
++                free_gpr(*result, addr);
++                free_fpr(*result, Dt);
++                return true;
++            }
++            default:
++                return false;
++        }
++    };
++
+     // ── Emit each IR node ───────────────────────────────────────────────────
++    auto emit_nodes = [&](bool fast_pass) {
+     for (int i = 0; i < ctx.num_nodes; i++) {
+         auto& n = ctx.nodes[i];
+         if (n.flags & kDead) {
+@@ -679,6 +1041,20 @@ void lower(Context& ctx, TranslationResult* result) {
+         if ((n.flags & kFmaReduceMember) && !(n.flags & kFmaReduceHead)) {
+             continue;
+         }
++        if (try_fast) {
++            if (fast_pass) {
++                take(snaps[static_cast<size_t>(i)]);
++            } else {
++                if (snaps[static_cast<size_t>(i)].set && !same(snaps[static_cast<size_t>(i)])) {
++                    fast_ok = false;
++                }
++                exact_at[static_cast<size_t>(i)].bind(buf);
++            }
++        }
++        if (fast_pass && emit_fast_node(i)) {
++            fprs.free_dead_inputs(*result, n, i);
++            continue;
++        }
+ 
+         switch (n.op) {
+             // ── Value nodes ─────────────────────────────────────────────────
+@@ -1517,10 +1893,84 @@ void lower(Context& ctx, TranslationResult* result) {
+             }
+ 
+         }  // switch
++        if (fast_pass) {
++            fast_narrow(i);
++        }
+ 
+         // Free FPRs whose last use was this node.
+         fprs.free_dead_inputs(*result, n, i);
+     }
++    };  // emit_nodes
++
++    // ── PC24 fast body, then the exact body ─────────────────────────────────
++    uint64_t fast_entry = 0;
++    if (try_fast) {
++        const unsigned char* cache0 = reinterpret_cast<const unsigned char*>(&result->x87_cache);
++        std::vector<unsigned char> saved_cache(cache0, cache0 + sizeof(result->x87_cache));
++        const uint32_t saved_gmask = result->free_gpr_mask;
++        const uint32_t saved_fmask = result->free_fpr_mask;
++        const char* saved_failure = result->alloc_failure;
++
++        // Entry: PC=24 and RC=nearest; host FPCR RMode, FZ, DN and FIZ clear.
++        fast_entry = buf.end;
++        emit_ldr_str_imm(buf, 1, 0, 1, 0, Xbase, Wd_tmp);   // LDRH control_word
++        emit_bitfield(buf, 0, 2, 0, 8, 11, Wd_tmp, Wd_tmp);  // PC and RC fields
++        exact_start.cbz(buf, false, true, Wd_tmp);
++        emit_mrs_fpcr(buf, Wd_tmp);
++        exact_start.tbz(buf, Wd_tmp, 0, true);  // FIZ
++        emit_and_mask(buf, true, Wd_tmp, Wd_tmp, 0x03c00000);
++        exact_start.cbz(buf, true, true, Wd_tmp);
++
++        emit_nodes(true);
++        take(snaps[static_cast<size_t>(ctx.num_nodes)]);
++        for (int j = 0; j < ctx.num_nodes; j++) {
++            if (fprs.node_fpr[j] >= 0) {
++                emit_fcvt_s_to_d(buf, fprs.node_fpr[j], fprs.node_fpr[j]);
++            }
++        }
++        epilogue_at.branch(buf);
++        for (auto& d : deopts) {
++            d.stub.bind(buf);
++            const Snap& at = snaps[static_cast<size_t>(d.node)];
++            for (int j = 0; j < ctx.num_nodes; j++) {
++                if (at.fpr[j] >= 0) {
++                    emit_fcvt_s_to_d(buf, at.fpr[j], at.fpr[j]);
++                }
++            }
++            exact_at[static_cast<size_t>(d.node)].branch(buf);
++        }
++        if (result->alloc_failure != saved_failure) {
++            fast_ok = false;
++        }
++        memcpy(&result->x87_cache, saved_cache.data(), saved_cache.size());
++        result->free_gpr_mask = saved_gmask;
++        result->free_fpr_mask = saved_fmask;
++        result->alloc_failure = saved_failure;
++        rc_cache_valid = rc_cache_valid_initial;
++        fprs.compute_last_uses(ctx);
++        exact_start.bind(buf);
++    }
++    emit_nodes(false);
++    if (try_fast) {
++        epilogue_at.bind(buf);
++        if (!same(snaps[static_cast<size_t>(ctx.num_nodes)])) {
++            fast_ok = false;
++        }
++        for (const auto& label : exact_at) {
++            if (!label.uses.empty()) {
++                fast_ok = false;
++            }
++        }
++        if (!fast_ok) {
++            // Never run the fast body: its entry becomes a branch to the exact one.
++            const uint32_t words = static_cast<uint32_t>((exact_start.pos - static_cast<int64_t>(fast_entry)) / 4);
++            buf.data[fast_entry / 4] = 0x14000000u | (words & 0x03ffffffu);
++        }
++        if (g_rosetta_config != nullptr && g_rosetta_config->log_ir_split) {
++            fprintf(stderr, "[x87pc24] run nodes=%d fast=%s deopt_points=%zu\n", ctx.num_nodes,
++                    fast_ok ? "yes" : "no (state mismatch)", deopts.size());
++        }
++    }
+ 
+     // ── Epilogue: update x87 state ──────────────────────────────────────────
+ 

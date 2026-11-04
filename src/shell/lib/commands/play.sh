@@ -55,12 +55,22 @@ play_target() {
   if test "$TMNF_WINDOW_SIZE" != fullscreen; then
     session_args+=(--desktop "$TMNF_WINDOW_SIZE")
   fi
+  local debug="${WINEDEBUG:--all}"
+  if test "$TMNF_DIAG" = on; then
+    # Wine's frame rate and timestamps, read with tmnf.session.monitor's lines by
+    # tmnf.session.report. The monitor follows this process ID, which the
+    # session supervisor keeps after exec.
+    debug="${WINEDEBUG:--all,+fps,+timestamp}"
+    say "tmnf-run: version=$TMNF_VERSION title=$TMNF_TITLE macos=$(sw_vers -productVersion 2>/dev/null) model=$(sysctl -n hw.model 2>/dev/null) x87=$TMNF_X87 audio=$TMNF_AUDIO renderer=$TMNF_RENDERER target=${watch##*/}"
+    without_operation_lock tmnf_python -m tmnf.session.monitor --parent "$$" --prefix "$TMNF_PREFIX" \
+      --wine "$wine_bin" --cache "$TMNF_CACHE" &
+  fi
   cd "$GAME_DIR" || die "Cannot enter game directory: $GAME_DIR"
   # Keep the operation descriptor in the host supervisor. Its child processes
   # close inherited descriptors, so neither Wine nor a detached server owns it.
   exec /usr/bin/env \
     WINEPREFIX="$TMNF_PREFIX" \
-    WINEDEBUG="${WINEDEBUG:--all}" \
+    WINEDEBUG="$debug" \
     WINEDLLOVERRIDES="$overrides" \
     "${renderer_vars[@]}" \
     PYTHONPATH="$TMNF_PYTHONPATH" \

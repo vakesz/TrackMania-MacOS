@@ -120,6 +120,8 @@ fi
 # wanted.
 : "${TMNF_WINDOW_SIZE:=fullscreen}"
 : "${TMNF_AUDIO:=on}"
+# Session diagnostics for make diag: game state, frame rate and CPU in the play log
+: "${TMNF_DIAG:=off}"
 : "${TMNF_X87:=on}"
 # Title-agnostic fallback: the hub commands never consume TMNF_ROOT themselves,
 # and title-aware commands set their own per-title default above.
@@ -237,6 +239,7 @@ validate_launch_options() {
   case "$TMNF_AUDIO" in on|off) ;; *) die "Unknown TMNF_AUDIO: $TMNF_AUDIO (use on or off)" ;; esac
   case "$TMNF_X87" in on|off) ;; *) die "Unknown TMNF_X87: $TMNF_X87 (use on or off)" ;; esac
   case "$TMNF_OPENAL" in soft|creative) ;; *) die "Unknown TMNF_OPENAL: $TMNF_OPENAL (use soft or creative)" ;; esac
+  case "$TMNF_DIAG" in on|off) ;; *) die "Unknown TMNF_DIAG: $TMNF_DIAG (use on or off)" ;; esac
   case "$TMNF_RENDERER" in
     d9vk|wined3d-vulkan|wined3d-gl) ;;
     *) die "Unknown TMNF_RENDERER: $TMNF_RENDERER (use d9vk, wined3d-vulkan or wined3d-gl)" ;;

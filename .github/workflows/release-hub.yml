@@ -80,9 +80,9 @@ jobs:
           path: .build/dist/TrackMania-Mac-*.app.zip*
       - name: Attach app archive to GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2, pinned
-        with:
-          files: .build/dist/TrackMania-Mac-*.app.zip*
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" .build/dist/TrackMania-Mac-*.app.zip* --clobber
       - name: Remove signing keychain
         if: always()
         run: security delete-keychain actions.keychain || true

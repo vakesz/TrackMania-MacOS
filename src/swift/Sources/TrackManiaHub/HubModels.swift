@@ -56,8 +56,8 @@ enum InstallerKind: TolerantStringEnum {
 }
 
 enum ActionKind: TolerantStringEnum {
-    case install, `import`, apps, verify, build, unknown(String)
-    static let known: [ActionKind] = [.install, .import, .apps, .verify, .build]
+    case install, `import`, apps, verify, build, maintenance, destructive, unknown(String)
+    static let known: [ActionKind] = [.install, .import, .apps, .verify, .build, .maintenance, .destructive]
     init(unknown raw: String) { self = .unknown(raw) }
     var rawValue: String {
         switch self {
@@ -66,6 +66,8 @@ enum ActionKind: TolerantStringEnum {
         case .apps: "apps"
         case .verify: "verify"
         case .build: "build"
+        case .maintenance: "maintenance"
+        case .destructive: "destructive"
         case let .unknown(raw): raw
         }
     }
@@ -116,22 +118,26 @@ struct HubSnapshot: Decodable, Equatable {
     let schema: Int
     let titles: [HubTitle]
     let error: String?
+    /// The project VERSION reported by the backend; absent from older backends.
+    let hubVersion: String?
     /// Descriptions of title entries that could not be decoded and were skipped.
     let skippedTitles: [String]
 
-    init(schema: Int, titles: [HubTitle], error: String?, skippedTitles: [String] = []) {
+    init(schema: Int, titles: [HubTitle], error: String?, hubVersion: String? = nil, skippedTitles: [String] = []) {
+        self.hubVersion = hubVersion
         self.schema = schema
         self.titles = titles
         self.error = error
         self.skippedTitles = skippedTitles
     }
 
-    private enum CodingKeys: String, CodingKey { case schema, titles, error }
+    private enum CodingKeys: String, CodingKey { case schema, titles, error, hubVersion }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         schema = try container.decode(Int.self, forKey: .schema)
         error = try? container.decodeIfPresent(String.self, forKey: .error)
+        hubVersion = try? container.decodeIfPresent(String.self, forKey: .hubVersion)
         let entries = (try? container.decodeIfPresent([Lossy<HubTitle>].self, forKey: .titles)) ?? nil
         titles = (entries ?? []).compactMap(\.value)
         skippedTitles = (entries ?? []).enumerated().compactMap { index, entry in
@@ -152,13 +158,16 @@ struct HubTitle: Decodable, Equatable, Identifiable {
     let iconSource: IconSource?
     let error: String?
     let requiresSerial: Bool?
+    let sourceSize: Int64?
+    let locations: HubLocations?
+    let sessionActive: Bool
     let state: HubInstallationState
     let apps: HubApps
     let actions: [HubAction]
 
     private enum CodingKeys: String, CodingKey {
         case id, name, shortName, status, notes, engine, kind, icon, iconSource, error
-        case requiresSerial, state, apps, actions
+        case requiresSerial, sourceSize, locations, sessionActive, state, apps, actions
     }
 
     init(from decoder: Decoder) throws {
@@ -174,6 +183,9 @@ struct HubTitle: Decodable, Equatable, Identifiable {
         iconSource = try? c.decodeIfPresent(IconSource.self, forKey: .iconSource)
         error = try? c.decodeIfPresent(String.self, forKey: .error)
         requiresSerial = try? c.decodeIfPresent(Bool.self, forKey: .requiresSerial)
+        sourceSize = try? c.decodeIfPresent(Int64.self, forKey: .sourceSize)
+        locations = try? c.decodeIfPresent(HubLocations.self, forKey: .locations)
+        sessionActive = (try? c.decodeIfPresent(Bool.self, forKey: .sessionActive)) ?? false
         state = (try? c.decodeIfPresent(HubInstallationState.self, forKey: .state)) ?? .empty
         apps = (try? c.decodeIfPresent(HubApps.self, forKey: .apps)) ?? HubApps(game: "", settings: "")
         actions = c.lossyArray(HubAction.self, forKey: .actions)
@@ -182,12 +194,39 @@ struct HubTitle: Decodable, Equatable, Identifiable {
     init(id: String, name: String, shortName: String? = nil, status: TitleStatus = .supported,
          notes: String = "", engine: String? = nil, kind: InstallerKind? = nil, icon: String? = nil,
          iconSource: IconSource? = nil, error: String? = nil, requiresSerial: Bool? = nil,
+         sourceSize: Int64? = nil, locations: HubLocations? = nil, sessionActive: Bool = false,
          state: HubInstallationState = .empty, apps: HubApps = HubApps(game: "", settings: ""),
          actions: [HubAction] = []) {
         self.id = id; self.name = name; self.shortName = shortName; self.status = status
         self.notes = notes; self.engine = engine; self.kind = kind; self.icon = icon
         self.iconSource = iconSource; self.error = error; self.requiresSerial = requiresSerial
+        self.sourceSize = sourceSize; self.locations = locations; self.sessionActive = sessionActive
         self.state = state; self.apps = apps; self.actions = actions
+    }
+}
+
+struct HubLocations: Decodable, Equatable {
+    let root: String?
+    let prefix: String?
+    let gameDir: String?
+    let userdata: String?
+    let logs: String?
+
+    init(root: String? = nil, prefix: String? = nil, gameDir: String? = nil,
+         userdata: String? = nil, logs: String? = nil) {
+        self.root = root; self.prefix = prefix; self.gameDir = gameDir
+        self.userdata = userdata; self.logs = logs
+    }
+
+    private enum CodingKeys: String, CodingKey { case root, prefix, gameDir, userdata, logs }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        root = try? c.decodeIfPresent(String.self, forKey: .root)
+        prefix = try? c.decodeIfPresent(String.self, forKey: .prefix)
+        gameDir = try? c.decodeIfPresent(String.self, forKey: .gameDir)
+        userdata = try? c.decodeIfPresent(String.self, forKey: .userdata)
+        logs = try? c.decodeIfPresent(String.self, forKey: .logs)
     }
 }
 
@@ -241,6 +280,8 @@ struct HubInstallationState: Decodable, Equatable {
 struct InstallationItem: Equatable, Identifiable {
     let label: String
     let ready: Bool
+    var symbol = "circle"
+    var note: String?
     var id: String { label }
 }
 
@@ -257,14 +298,19 @@ extension HubTitle {
 
     var summary: [InstallationItem] {
         [
-            InstallationItem(label: "Runtime", ready: state.runtime?.ready == true),
-            InstallationItem(label: "Wine prefix", ready: state.prefix?.ready == true),
-            InstallationItem(label: "DirectX", ready: state.directx?.ready == true),
-            InstallationItem(label: "Renderer", ready: state.renderer?.ready == true),
-            InstallationItem(label: "Game files", ready: state.game?.ready == true),
-            InstallationItem(label: "Game app", ready: state.gameApp?.ready == true),
-            InstallationItem(label: "Settings app", ready: state.settingsApp?.ready == true),
+            item("Runtime", "shippingbox", state.runtime),
+            item("Wine prefix", "folder", state.prefix),
+            item("DirectX", "cube", state.directx),
+            item("Renderer", "display", state.renderer),
+            item("Game files", "gamecontroller", state.game),
+            item("Game app", "play.rectangle", state.gameApp),
+            item("Settings app", "gearshape", state.settingsApp),
         ]
+    }
+
+    private func item(_ label: String, _ symbol: String, _ probe: HubProbe?) -> InstallationItem {
+        let note = probe?.note.flatMap { $0.isEmpty ? nil : $0 }
+        return InstallationItem(label: label, ready: probe?.ready == true, symbol: symbol, note: note)
     }
 
     /// Sidebar fallback when the full name does not fit: "TrackMania X" becomes "TM X".
@@ -325,5 +371,64 @@ struct HubAction: Decodable, Equatable, Identifiable {
         label = (try? c.decodeIfPresent(String.self, forKey: .label)) ?? id
         primary = (try? c.decodeIfPresent(Bool.self, forKey: .primary)) ?? false
         kind = (try? c.decodeIfPresent(ActionKind.self, forKey: .kind)) ?? .unknown("")
+    }
+}
+
+enum PrimaryControl: Equatable {
+    case play
+    case action(HubAction)
+}
+
+struct ActionGroups: Equatable {
+    var setup: [HubAction] = []
+    var maintenance: [HubAction] = []
+    var destructive: [HubAction] = []
+}
+
+extension HubTitle {
+    /// Installed titles are those whose game files are in place.
+    var isInstalled: Bool { state.game?.ready == true }
+
+    /// Play when the game app is ready; otherwise the backend's primary (or first) action.
+    var primaryControl: PrimaryControl? {
+        if state.gameApp?.ready == true { return .play }
+        return (actions.first(where: \.primary) ?? actions.first).map(PrimaryControl.action)
+    }
+
+    /// Everything that is not the prominent button, grouped for the More menu.
+    var moreActionGroups: ActionGroups {
+        var groups = ActionGroups()
+        for action in actions {
+            if case let .action(primary)? = primaryControl, primary.id == action.id { continue }
+            switch action.kind {
+            case .install, .import, .apps, .build, .unknown: groups.setup.append(action)
+            case .verify, .maintenance: groups.maintenance.append(action)
+            case .destructive: groups.destructive.append(action)
+            }
+        }
+        return groups
+    }
+
+    var installerLabel: String? {
+        switch kind {
+        case .online: String(localized: "Online download")
+        case .onlineRetail: String(localized: "Retail installer")
+        case .onlineTrial: String(localized: "Trial")
+        case .steamCopy: String(localized: "Steam copy")
+        case .diskImage: String(localized: "Retail disk")
+        case .unknown, nil: nil
+        }
+    }
+
+    /// Where the title lives on disk, for display; the first location the backend reported.
+    var installLocationPath: String? {
+        locations?.gameDir ?? locations?.prefix ?? locations?.root
+    }
+}
+
+extension Array where Element == HubTitle {
+    /// Sidebar sections: installed titles first, then the rest.
+    var sidebarSections: (installed: [HubTitle], available: [HubTitle]) {
+        (filter(\.isInstalled), filter { !$0.isInstalled })
     }
 }

@@ -25,7 +25,7 @@ HUB_ICON_SOURCE="${PROJECT_DIR}/assets/branding/trackmania-mac-icon.svg"
 CLEANUP_DIRS=()
 cleanup() {
   local dir
-  for dir in "${CLEANUP_DIRS[@]}"; do rm -rf "$dir"; done
+  for dir in ${CLEANUP_DIRS[@]+"${CLEANUP_DIRS[@]}"}; do rm -rf "$dir"; done
 }
 trap cleanup EXIT
 
@@ -166,6 +166,27 @@ stage_title_art() {
   done
 }
 
+# Write config/runtime-pin ("<version> <sha256>") into the staged launcher so
+# the codesigned hub pins the runtime archive it will install. The hash comes
+# from TMNF_RUNTIME_PIN_SHA256 (the digest CI verified for the release asset).
+# Without it no pin is written; a release build must then fail (see
+# TMNF_REQUIRE_RUNTIME_PIN).
+write_runtime_pin() {
+  local launcher="$1" hash="${TMNF_RUNTIME_PIN_SHA256:-}"
+  if test -z "$hash"; then
+    if test "${TMNF_REQUIRE_RUNTIME_PIN:-0}" = 1; then
+      die "TMNF_RUNTIME_PIN_SHA256 is required for this build."
+    fi
+    say "Note: TMNF_RUNTIME_PIN_SHA256 is not set; this hub carries no runtime checksum pin."
+    return 0
+  fi
+  [[ "$hash" =~ ^[0-9a-fA-F]{64}$ ]] \
+    || die "TMNF_RUNTIME_PIN_SHA256 must be 64 hexadecimal characters."
+  hash="$(printf '%s' "$hash" | tr 'A-F' 'a-f')"
+  printf '%s %s\n' "$VERSION" "$hash" >"${launcher}/config/runtime-pin"
+  say "Pinned runtime ${VERSION} to sha256:${hash}"
+}
+
 build_appbundle() {
   local contents launcher binary bundle_id name version
   contents="${APP_DIR}/Contents"
@@ -174,6 +195,7 @@ build_appbundle() {
   mkdir -p "${contents}/MacOS" "${contents}/Resources"
   launcher="${contents}/Resources/launcher"
   stage_launcher_payload "$PROJECT_DIR" "$launcher"
+  write_runtime_pin "$launcher"
   stage_bundled_python "$launcher"
   stage_title_art "$launcher"
   stage_hub_icon "$contents"

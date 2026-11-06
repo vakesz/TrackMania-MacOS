@@ -480,6 +480,58 @@ class RuntimeInstall(unittest.TestCase):
         self.assertTrue(all('-runtime.tar.xz' in line for line in self.stub_lines()))
         self.assert_clean()
 
+    def write_pin(self, version=None, digest=None, text=None):
+        digest = digest or hashlib.sha256(self.archive.read_bytes()).hexdigest()
+        (self.project / 'config').mkdir(exist_ok=True)
+        (self.project / 'config/runtime-pin').write_text(
+            text if text is not None else '{} {}\n'.format(version or self.version, digest))
+
+    def test_matching_pin_supplies_the_expected_checksum_without_warning(self):
+        self.serve_runtime()
+        self.write_pin(digest=hashlib.sha256(self.archive.read_bytes()).hexdigest().upper())
+        result = self.install(extra_env=self.source_env('download'), explicit=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('unpinned', result.stderr)
+        self.assertNotIn('pin', result.stderr)
+        self.assert_clean()
+
+    def test_pin_that_differs_from_the_release_checksum_is_fatal(self):
+        self.serve_runtime()
+        self.write_pin(digest='0' * 64)
+        result = self.install(extra_env=self.source_env('download'), explicit=False)
+        self.assert_rejected(result)
+        self.assertIn('differs from the checksum pinned', result.stderr)
+        # Only the checksum was fetched; the archive was never downloaded.
+        self.assertEqual(len(self.stub_lines()), 1)
+        self.assertTrue(self.stub_lines()[0].endswith('.sha256'))
+
+    def test_missing_pin_warns_that_the_checksum_is_unpinned(self):
+        self.serve_runtime()
+        result = self.install(extra_env=self.source_env('download'), explicit=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('warning: The runtime checksum is unpinned and came from the release', result.stderr)
+
+    def test_pin_for_another_version_is_ignored_with_a_warning(self):
+        self.serve_runtime()
+        self.write_pin(version='0.0.0-other', digest='0' * 64)
+        result = self.install(extra_env=self.source_env('download'), explicit=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Ignoring runtime pin for version 0.0.0-other', result.stderr)
+        self.assertIn('unpinned', result.stderr)
+
+    def test_malformed_pin_is_ignored_with_a_warning(self):
+        self.serve_runtime()
+        self.write_pin(text='{} not-a-digest\n'.format(self.version))
+        result = self.install(extra_env=self.source_env('download'), explicit=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Ignoring malformed runtime pin', result.stderr)
+
+    def test_explicit_archive_path_ignores_the_pin(self):
+        self.package()
+        self.write_pin(digest='0' * 64)
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_auto_mode_prefers_a_local_build_without_downloading(self):
         shutil.copytree(self.bundle, self.project / '.build/release/runtime', symlinks=True)
         env = self.source_env('auto')

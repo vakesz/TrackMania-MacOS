@@ -1,4 +1,5 @@
 import json
+import os
 import plistlib
 from pathlib import Path
 import subprocess
@@ -27,8 +28,10 @@ ICON_SIZES = {
 
 class HubPackageTests(unittest.TestCase):
     def test_native_hub_bundle_and_zip(self):
+        pin = "ABCDEF0123456789" * 4
         result = subprocess.run(["/bin/bash", "src/shell/tools/package-app.sh", "all"], cwd=ROOT,
-                                text=True, capture_output=True, timeout=180)
+                                text=True, capture_output=True, timeout=180,
+                                env={**os.environ, "TMNF_RUNTIME_PIN_SHA256": pin})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
         executable = APP / "Contents/MacOS/TrackMania Mac"
@@ -40,6 +43,9 @@ class HubPackageTests(unittest.TestCase):
         self.assertEqual(icon.read_bytes()[:4], b"icns")
         self.assertTrue((launcher / "src/shell/cli/tmnf").is_file())
         self.assertTrue((launcher / "config/titles/tmnf.json").is_file())
+        # The runtime pin sits inside the codesigned launcher payload.
+        self.assertEqual((launcher / "config/runtime-pin").read_text(),
+                         f"{VERSION} {pin.lower()}\n")
         bundled_python = launcher / "python/bin/python3"
         self.assertTrue(bundled_python.is_file())
         self.assertFalse((launcher / "python/include").exists())
@@ -127,6 +133,8 @@ class HubPackageTests(unittest.TestCase):
                 text=True, capture_output=True, timeout=30,
                 env={"HOME": str(home), "PATH": "/usr/bin:/bin"})
             self.assertEqual(staged.returncode, 0, staged.stdout + staged.stderr)
+            self.assertEqual((installed_support / "config/runtime-pin").read_text(),
+                             (launcher / "config/runtime-pin").read_text())
             installed = subprocess.run([str(installed_support / "src/shell/cli/tmnf"), "hub", "snapshot"],
                                        cwd=installed_support, text=True, capture_output=True, timeout=20,
                                        env={"HOME": str(home), "PATH": str(tools)})
@@ -149,6 +157,42 @@ class HubPackageTests(unittest.TestCase):
             subprocess.run(["codesign", "--verify", "--deep", "--strict",
                             str(Path(directory) / "TrackMania Mac.app")], check=True)
 
+
+class RuntimePinWriter(unittest.TestCase):
+    def write(self, **env):
+        with tempfile.TemporaryDirectory() as directory:
+            launcher = Path(directory)
+            (launcher / "config").mkdir()
+            result = subprocess.run(
+                ["/bin/bash", "-euc", '. "$1"; write_runtime_pin "$2"',
+                 "fixture", str(ROOT / "src/shell/tools/package-app.sh"), str(launcher)],
+                text=True, capture_output=True, timeout=30,
+                env={"PATH": "/usr/bin:/bin", **env})
+            pin = launcher / "config/runtime-pin"
+            return result, pin.read_text() if pin.exists() else None
+
+    def test_valid_hash_is_lowercased_and_paired_with_version(self):
+        result, pin = self.write(TMNF_RUNTIME_PIN_SHA256="AB" * 32)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(pin, f"{VERSION} {'ab' * 32}\n")
+
+    def test_invalid_hash_is_rejected(self):
+        for value in ("abc", "g" * 64, "a" * 63, "a" * 65):
+            with self.subTest(value=value):
+                result, pin = self.write(TMNF_RUNTIME_PIN_SHA256=value)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIsNone(pin)
+
+    def test_without_a_hash_no_pin_is_written_and_a_note_is_printed(self):
+        result, pin = self.write()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNone(pin)
+        self.assertIn("no runtime checksum pin", result.stdout)
+
+    def test_required_pin_fails_the_build_when_missing(self):
+        result, pin = self.write(TMNF_REQUIRE_RUNTIME_PIN="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIsNone(pin)
 
 
 if __name__ == "__main__":

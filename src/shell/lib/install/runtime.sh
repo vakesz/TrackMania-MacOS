@@ -26,6 +26,24 @@ runtime_download_hint() {
   fi
 }
 
+# Print the runtime checksum pinned in config/runtime-pin ("<version> <sha256>"),
+# found like the payload's other config files. Prints nothing when there is no
+# usable pin; a pin for another version is ignored with a warning.
+runtime_pinned_checksum() {
+  local file="${TMNF_PROJECT_DIR}/config/runtime-pin" version hash extra
+  test -f "$file" && test ! -L "$file" || return 0
+  read -r version hash extra <"$file" || true
+  if [[ ! "$hash" =~ ^[0-9a-fA-F]{64}$ ]] || test -n "$extra"; then
+    warn "Ignoring malformed runtime pin: $file"
+    return 0
+  fi
+  if test "$version" != "$RUNTIME_VERSION"; then
+    warn "Ignoring runtime pin for version ${version}; this is runtime ${RUNTIME_VERSION}."
+    return 0
+  fi
+  printf '%s' "$hash" | tr 'A-F' 'a-f'
+}
+
 find_git() {
   if test -x /usr/bin/git; then
     printf '%s' /usr/bin/git
@@ -149,7 +167,7 @@ install_wine_runtime() {
   local expected="${TMNF_RUNTIME_SHA256:-}"
   local mode="${TMNF_RUNTIME_SOURCE-auto}"
   local workspace=""
-  local staging source cleanup status
+  local staging source cleanup status pinned
 
   validate_runtime_source
   is_safe_managed_path "$TMNF_RUNTIME" || die "Unsafe runtime path: $TMNF_RUNTIME"
@@ -193,13 +211,21 @@ install_wine_runtime() {
     else
       if test -z "$archive"; then
         archive="${TMNF_CACHE}/${RUNTIME_ARCHIVE_NAME}"
-        curl --fail --location --retry 3 --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
+        curl -q --fail --location --retry 3 --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
           --output "${staging}/release.sha256" \
           "${RUNTIME_RELEASE_URL}/${RUNTIME_ARCHIVE_NAME}.sha256" \
           || die "Cannot download runtime release $RUNTIME_VERSION. $(runtime_download_hint)"
         expected="$(awk 'NR==1 {print $1}' "${staging}/release.sha256")"
         [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || die "Invalid release checksum."
         expected="$(printf '%s' "$expected" | tr 'A-F' 'a-f')"
+        pinned="$(runtime_pinned_checksum)"
+        if test -z "$pinned"; then
+          warn "The runtime checksum is unpinned and came from the release itself; a compromised release could replace both archive and checksum."
+        elif test "$pinned" != "$expected"; then
+          die "The release checksum for runtime $RUNTIME_VERSION ($expected) differs from the checksum pinned in this hub ($pinned). Refusing to install."
+        else
+          expected="$pinned"
+        fi
         download_verified "${RUNTIME_RELEASE_URL}/${RUNTIME_ARCHIVE_NAME}" "$archive" "$expected" \
           || die "Cannot download the runtime archive."
       else

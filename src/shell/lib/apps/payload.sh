@@ -40,6 +40,12 @@ stage_launcher_payload() {
   cp "${project}/config/titles/"*.json "${destination}/config/titles/"
   cp "${project}/VERSION" "${destination}/"
   record_build_revision "$project" "${destination}/config/build-revision"
+  # The runtime checksum pin (written by package-app.sh) travels with every
+  # staging of the payload, including the app wrappers' installed copies.
+  rm -f -- "${destination}/config/runtime-pin"
+  if test -f "${project}/config/runtime-pin" && test ! -L "${project}/config/runtime-pin"; then
+    cp "${project}/config/runtime-pin" "${destination}/config/runtime-pin"
+  fi
   # Original per-title artwork, rasterized to PNG at package time. A checkout
   # has no PNGs; the hub then falls back to the SVGs in assets/titles.
   if test -d "${project}/assets/titles"; then

@@ -74,6 +74,16 @@ class BuildRevisionRecord(unittest.TestCase):
     def test_a_tree_without_git_records_nothing(self):
         self.assertFalse(self.stage().exists())
 
+    def test_pin_is_copied_with_the_payload_and_restaged_from_it(self):
+        (self.project / 'config/runtime-pin').write_text('1.2.3 ' + 'a' * 64 + '\n')
+        first = self.stage().parent / 'runtime-pin'
+        self.assertEqual(first.read_text(), '1.2.3 ' + 'a' * 64 + '\n')
+        second = self.stage(project=first.parent.parent, name='restaged').parent / 'runtime-pin'
+        self.assertEqual(second.read_text(), first.read_text())
+
+    def test_no_pin_means_none_is_staged(self):
+        self.assertFalse((self.stage().parent / 'runtime-pin').exists())
+
 
 if __name__ == '__main__':
     unittest.main()

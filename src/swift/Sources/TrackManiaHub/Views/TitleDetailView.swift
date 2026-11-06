@@ -62,11 +62,16 @@ struct TitleDetailView: View {
             titleVisibility: .visible,
             presenting: uninstallAction
         ) { action in
-            Button(action.label, role: .destructive) { model.run(action, for: title) }
+            Button(Self.confirmLabel(action.label), role: .destructive) { model.run(action, for: title) }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
             Text(HubUIText.uninstall(title))
         }
+    }
+
+    /// Menu items end in "…" because they open a dialog; the dialog's own button must not.
+    nonisolated static func confirmLabel(_ label: String) -> String {
+        label.hasSuffix("…") ? String(label.dropLast()) : label
     }
 
     private func perform(_ action: HubAction) {

@@ -77,6 +77,21 @@ final class InstallerProgressTests: XCTestCase {
         XCTAssertEqual(progress.stage, "Downloading runtime.tar.xz")
     }
 
+    func testStageSkipsWineAndMoltenVKChatter() {
+        // Shape taken from a real TMU install log.
+        var log = InstallerLog()
+        log.append("Installing TrackMania United Forever\n"
+            + "[mvk-info] Created VkInstance for Vulkan version 1.0.357, with 3 extensions:\n"
+            + "\tVK_KHR_external_fence_capabilities v1\n"
+            + "0024:fixme:ole:CoInitializeSecurity stub\n")
+        XCTAssertEqual(InstallerProgress.parse(log).stage, "Installing TrackMania United Forever")
+    }
+
+    func testConfirmLabelDropsMenuEllipsis() {
+        XCTAssertEqual(TitleDetailView.confirmLabel("Uninstall…"), "Uninstall")
+        XCTAssertEqual(TitleDetailView.confirmLabel("Stop game"), "Stop game")
+    }
+
     func testStageIsLatestPlainLine() {
         let progress = parse("Downloading a\n100.0%\nInstalling TrackMania United Forever\n")
         XCTAssertEqual(progress.stage, "Installing TrackMania United Forever")

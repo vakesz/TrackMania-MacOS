@@ -84,7 +84,7 @@ struct InstallerProgress: Equatable, Sendable {
             if result.error == nil, trimmed.hasPrefix("error: ") {
                 result.error = String(trimmed.dropFirst("error: ".count))
             }
-            if result.stage == nil, !isNoise(trimmed) {
+            if result.stage == nil, !isNoise(trimmed), !isRuntimeChatter(line) {
                 result.stage = trimmed
             }
             if result.error != nil, result.stage != nil { break }
@@ -99,6 +99,20 @@ struct InstallerProgress: Equatable, Sendable {
         let digits = trimmed.dropLast().reversed().prefix { $0.isNumber || $0 == "." }
         guard !digits.isEmpty, let value = Double(String(digits.reversed())), value.isFinite else { return nil }
         return min(max(value / 100, 0), 1)
+    }
+
+    /// Wine and MoltenVK write diagnostics into the same stream: indented
+    /// continuation lines, `[mvk-info]` blocks and `0024:fixme:ole:...` channels.
+    /// The installer's own steps are unindented sentences.
+    static func isRuntimeChatter(_ line: Substring) -> Bool {
+        if let first = line.first, first == " " || first == "\t" { return true }
+        if line.hasPrefix("[mvk-") { return true }
+        let parts = line.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
+        if parts.count == 3, parts[0].count == 4, parts[0].allSatisfy(\.isHexDigit),
+           ["fixme", "err", "warn", "trace"].contains(parts[1]) {
+            return true
+        }
+        return false
     }
 
     /// Blank lines, the echoed command and curl's bar are not a stage.

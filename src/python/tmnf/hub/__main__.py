@@ -15,6 +15,7 @@ def main(argv=None) -> int:
     subparsers = parser.add_subparsers(dest='command', required=True)
     subparsers.add_parser('snapshot', help='Print the schema 2 hub snapshot JSON')
     subparsers.add_parser('titles', help='List titles as "id: name [status kind]"')
+    subparsers.add_parser('diagnostics', help='Write a diagnostics zip for TMNF_TITLE')
     sub_run = subparsers.add_parser('run', help='Run a title action through the shell flows')
     sub_run.add_argument('title')
     sub_run.add_argument('action')
@@ -30,6 +31,9 @@ def main(argv=None) -> int:
             for title in registry.load_all():
                 print(f'{title.id}: {title.name} [{title.status} {title.installer}]')
             return 0
+        if arguments.command == 'diagnostics':
+            from . import diagnostics
+            return diagnostics.main()
         hub_run.run(arguments.title, arguments.action, arguments.source,
                      arguments.runtime)
     except registry.RegistryError as error:

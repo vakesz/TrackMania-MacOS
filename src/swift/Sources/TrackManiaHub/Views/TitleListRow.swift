@@ -6,30 +6,56 @@ extension HubTitle {
 
 struct TitleListRow: View {
     let title: HubTitle
+    var isRunning = false
+    var fraction: Double?
 
     var body: some View {
         HStack(spacing: 11) {
-            GameIconView(title: title, size: 38)
-            VStack(alignment: .leading, spacing: 3) {
+            GameIconView(title: title, size: 36)
+            VStack(alignment: .leading, spacing: 2) {
                 ViewThatFits(in: .horizontal) {
                     Text(title.name)
                     Text(title.compactName)
                 }
                 .font(.system(.body, weight: .medium))
                 .lineLimit(1)
-                Text(title.shortName ?? title.status.rawValue.capitalized)
+                Text(title.availability)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text(title.supportLabel)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(title.supportColor)
+                    .lineLimit(1)
             }
             Spacer(minLength: 2)
-            Circle()
-                .fill(title.error == nil ? title.supportColor : .orange)
-                .frame(width: 7, height: 7)
+            accessory
         }
         .padding(.vertical, 3)
         .tag(title.id)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    @ViewBuilder private var accessory: some View {
+        if isRunning {
+            if let fraction {
+                ProgressView(value: fraction).progressViewStyle(.circular).controlSize(.small)
+            } else {
+                ProgressView().controlSize(.small)
+            }
+        } else if title.error != nil {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+        } else if !title.isSupported {
+            Text("Provisional")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.orange)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.orange.opacity(0.15), in: Capsule())
+        }
+    }
+
+    private var accessibilityLabel: String {
+        var parts = [title.name, title.availability]
+        if !title.isSupported { parts.append(String(localized: "Provisional")) }
+        if isRunning { parts.append(String(localized: "Working")) }
+        return parts.joined(separator: ", ")
     }
 }

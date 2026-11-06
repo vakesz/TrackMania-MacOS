@@ -1,0 +1,126 @@
+import XCTest
+@testable import TrackManiaHub
+
+@MainActor
+final class HubUITests: XCTestCase {
+    private let playReady = HubInstallationState(gameApp: true)
+    private let install = HubAction(id: "install", label: "Install", primary: true, kind: .install)
+    private let verify = HubAction(id: "verify", label: "Verify", kind: .verify)
+    private let doctor = HubAction(id: "doctor", label: "Run checks", kind: .maintenance)
+    private let uninstall = HubAction(id: "uninstall", label: "Uninstall…", kind: .destructive)
+
+    func testPlayIsPrimaryWhenGameAppReady() {
+        let title = HubTitle(id: "t", name: "T", state: playReady, actions: [install, verify])
+        XCTAssertEqual(title.primaryControl, .play)
+        XCTAssertEqual(title.moreActionGroups.setup, [install])
+        XCTAssertEqual(title.moreActionGroups.maintenance, [verify])
+    }
+
+    func testBackendPrimaryWhenGameAppMissing() {
+        let title = HubTitle(id: "t", name: "T", actions: [verify, install])
+        XCTAssertEqual(title.primaryControl, .action(install))
+        XCTAssertEqual(title.moreActionGroups.setup, [])
+        XCTAssertEqual(title.moreActionGroups.maintenance, [verify])
+    }
+
+    func testFirstActionIsPrimaryFallbackAndEmptyHasNone() {
+        XCTAssertEqual(HubTitle(id: "t", name: "T", actions: [verify]).primaryControl, .action(verify))
+        XCTAssertNil(HubTitle(id: "t", name: "T").primaryControl)
+    }
+
+    func testActionsGroupedByKind() {
+        let title = HubTitle(id: "t", name: "T", state: playReady, actions: [uninstall, doctor, install])
+        let groups = title.moreActionGroups
+        XCTAssertEqual(groups.setup, [install])
+        XCTAssertEqual(groups.maintenance, [doctor])
+        XCTAssertEqual(groups.destructive, [uninstall])
+    }
+
+    func testSidebarSections() {
+        let installed = HubTitle(id: "a", name: "A", state: HubInstallationState(game: true))
+        let fresh = HubTitle(id: "b", name: "B")
+        let sections = [fresh, installed].sidebarSections
+        XCTAssertEqual(sections.installed.map(\.id), ["a"])
+        XCTAssertEqual(sections.available.map(\.id), ["b"])
+        XCTAssertTrue([fresh].sidebarSections.installed.isEmpty)
+        XCTAssertTrue([installed].sidebarSections.available.isEmpty)
+    }
+
+    func testSidebarOrderPutsInstalledThenSupportedFirst() {
+        let canyon = HubTitle(id: "tm-canyon", name: "Canyon", status: .provisional)
+        let tmnf = HubTitle(id: "tmnf", name: "Nations", status: .supported)
+        let tmu = HubTitle(id: "tmu", name: "United", status: .provisional,
+                           state: HubInstallationState(game: true))
+        XCTAssertEqual([canyon, tmnf, tmu].sidebarOrder.map(\.id), ["tmu", "tmnf", "tm-canyon"])
+    }
+
+    func testDecodesNewFields() throws {
+        let json = #"""
+        {"schema":2,"hubVersion":"0.4.1","titles":[{"id":"tmnf","name":"N","sourceSize":1500000000,
+         "sessionActive":true,"locations":{"root":"/r","prefix":"/p","gameDir":"/g","userdata":"/u","logs":"/l"},
+         "actions":[{"id":"doctor","label":"Run checks","kind":"maintenance"},
+                    {"id":"uninstall","label":"Uninstall…","kind":"destructive"}]}]}
+        """#
+        let snapshot = try HubBackend.decodeSnapshot(Data(json.utf8))
+        let title = try XCTUnwrap(snapshot.titles.first)
+        XCTAssertEqual(snapshot.hubVersion, "0.4.1")
+        XCTAssertEqual(title.sourceSize, 1_500_000_000)
+        XCTAssertTrue(title.sessionActive)
+        XCTAssertEqual(title.locations, HubLocations(root: "/r", prefix: "/p", gameDir: "/g", userdata: "/u", logs: "/l"))
+        XCTAssertEqual(title.actions.map(\.kind), [.maintenance, .destructive])
+        XCTAssertEqual(title.installLocationPath, "/g")
+    }
+
+    func testOldBackendLeavesNewFieldsAbsent() throws {
+        let snapshot = try HubBackend.decodeSnapshot(Data(#"{"schema":2,"titles":[{"id":"x","name":"X"}]}"#.utf8))
+        let title = try XCTUnwrap(snapshot.titles.first)
+        XCTAssertNil(snapshot.hubVersion)
+        XCTAssertNil(title.sourceSize)
+        XCTAssertNil(title.locations)
+        XCTAssertFalse(title.sessionActive)
+        XCTAssertNil(title.installLocationPath)
+    }
+
+    func testInstallerLabelsAndChecklistMetadata() {
+        XCTAssertEqual(HubTitle(id: "x", name: "X", kind: .steamCopy).installerLabel, "Steam copy")
+        XCTAssertNil(HubTitle(id: "x", name: "X", kind: .unknown("?")).installerLabel)
+        let items = HubTitle(id: "x", name: "X").summary
+        XCTAssertEqual(items.count, 7)
+        XCTAssertEqual(items.map(\.symbol), ["shippingbox", "folder", "cube", "display", "gamecontroller",
+                                             "play.rectangle", "gearshape"])
+    }
+
+    func testProbeNoteSurfaces() {
+        var state = HubInstallationState()
+        state.runtime = HubProbe(ready: false, note: "missing")
+        XCTAssertEqual(HubTitle(id: "x", name: "X", state: state).summary.first?.note, "missing")
+    }
+
+    func testReportPathAndFailureReason() {
+        let out = "Doing\nDiagnostics report: /Users/me/Library/Logs/TMNF/d.zip\n"
+        XCTAssertEqual(HubViewModel.reportPath(in: out), "/Users/me/Library/Logs/TMNF/d.zip")
+        XCTAssertNil(HubViewModel.reportPath(in: "nothing"))
+        XCTAssertEqual(HubViewModel.failureReason(in: "a\nerror: no disk space\n"), "no disk space")
+    }
+
+    func testNotificationsNeedARealAppBundle() {
+        XCTAssertFalse(Notifier.canUseNotifications(bundleIdentifier: nil, bundleURL: URL(fileURLWithPath: "/x/.build/debug")))
+        XCTAssertFalse(Notifier.canUseNotifications(bundleIdentifier: "a.b", bundleURL: URL(fileURLWithPath: "/x/.build/debug")))
+        XCTAssertTrue(Notifier.canUseNotifications(bundleIdentifier: "a.b", bundleURL: URL(fileURLWithPath: "/Apps/T.app")))
+    }
+
+    func testUninstallMessageNamesPrefixAndFallsBack() {
+        let located = HubTitle(id: "x", name: "X", locations: HubLocations(prefix: "/p", userdata: "/u"))
+        XCTAssertTrue(HubUIText.uninstall(located).contains("/p"))
+        XCTAssertTrue(HubUIText.uninstall(located).contains("/u"))
+        XCTAssertTrue(HubUIText.uninstall(HubTitle(id: "x", name: "X")).contains("Wine prefix"))
+    }
+}
+
+extension HubInstallationState {
+    init(game: Bool = false, gameApp: Bool = false) {
+        self.init()
+        if game { self.game = HubProbe(ready: true) }
+        if gameApp { self.gameApp = HubProbe(ready: true) }
+    }
+}

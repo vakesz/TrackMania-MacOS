@@ -60,13 +60,23 @@ doctor() {
   needs_patch="$TMNF_TITLE_NEEDS_TMLOADER"
 
   if test -f "${TMNF_PREFIX}/system.reg" && require_owned_prefix >/dev/null 2>&1; then
-    if tmnf_python -m tmnf.guard.operation_guard held "$TMNF_PREFIX" >/dev/null 2>&1; then
-      # A diagnostic Windows process must not race prefix repair or deletion,
-      # and an already-busy prefix must degrade instead of dying cryptically.
+    if test "${TMNF_OPERATION_FD+x}" = x; then
+      # Inherited lock: validates it or dies, then runs the deep checks.
       guard_prefix_operation "${TMNF_PROJECT_DIR}/src/shell/cli/tmnf" doctor
     else
-      say "A session owns the prefix right now; deep prefix checks are skipped."
-      TMNF_DOCTOR_SESSION_ACTIVE=1
+      # Direct run: probe by taking and releasing the lock. Only genuine lock
+      # contention degrades; any other failure is reported as itself.
+      validate_managed_layout || die "Unsafe installation layout."
+      local busy_probe
+      if busy_probe="$(tmnf_python -m tmnf.guard.operation_guard run "$TMNF_PREFIX" /usr/bin/true 2>&1)"; then
+        # A diagnostic Windows process must not race prefix repair or deletion.
+        guard_prefix_operation "${TMNF_PROJECT_DIR}/src/shell/cli/tmnf" doctor
+      elif case "$busy_probe" in *"Another operation is using prefix"*|*"Wine is active for prefix"*) true ;; *) false ;; esac; then
+        say "A session owns the prefix right now; deep prefix checks are skipped."
+        TMNF_DOCTOR_SESSION_ACTIVE=1
+      else
+        die "Cannot check the prefix: ${busy_probe#error: }"
+      fi
     fi
   fi
 

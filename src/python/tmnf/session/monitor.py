@@ -28,7 +28,8 @@ import time
 
 ROOT = Path(__file__).resolve().parents[4]
 SOURCE = ROOT / 'src/c/game-state.c'
-PROC_PIDLISTTHREADS, PROC_PIDTHREADINFO = 6, 5
+PROC_PIDLISTTHREADS, PROC_PIDTHREADINFO, PROC_PIDTBSDINFO = 6, 5, 3
+RESCAN_SECONDS = 5.0  # a ps scan costs ~50 ms of CPU; never run it more often than this
 
 
 class ThreadInfo(ctypes.Structure):
@@ -36,6 +37,28 @@ class ThreadInfo(ctypes.Structure):
                 ('policy', ctypes.c_int32), ('run_state', ctypes.c_int32), ('flags', ctypes.c_int32),
                 ('sleep_time', ctypes.c_int32), ('curpri', ctypes.c_int32), ('priority', ctypes.c_int32),
                 ('maxpriority', ctypes.c_int32), ('name', ctypes.c_char * 64)]
+
+
+class BsdInfo(ctypes.Structure):
+    """struct proc_bsdinfo from <sys/proc_info.h>; only the start time is read."""
+    _fields_ = [('flags', ctypes.c_uint32), ('status', ctypes.c_uint32), ('xstatus', ctypes.c_uint32),
+                ('pid', ctypes.c_uint32), ('ppid', ctypes.c_uint32), ('uid', ctypes.c_uint32),
+                ('gid', ctypes.c_uint32), ('ruid', ctypes.c_uint32), ('rgid', ctypes.c_uint32),
+                ('svuid', ctypes.c_uint32), ('svgid', ctypes.c_uint32), ('rfu_1', ctypes.c_uint32),
+                ('comm', ctypes.c_char * 16), ('name', ctypes.c_char * 32), ('nfiles', ctypes.c_uint32),
+                ('pgid', ctypes.c_uint32), ('pjobc', ctypes.c_uint32), ('tdev', ctypes.c_uint32),
+                ('tpgid', ctypes.c_uint32), ('nice', ctypes.c_int32), ('start_sec', ctypes.c_uint64),
+                ('start_usec', ctypes.c_uint64)]
+
+
+def start_time(pid, libproc):
+    """(seconds, microseconds) the process started, or None; tells a reused pid from the game."""
+    if libproc is None:
+        return None
+    info = BsdInfo()
+    if libproc.proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, ctypes.byref(info), ctypes.sizeof(info)) <= 0:
+        return None
+    return info.start_sec, info.start_usec
 
 
 def emit(event, **fields):
@@ -73,10 +96,47 @@ def game_pid():
     return None
 
 
-def front_pid():
-    asn = output('lsappinfo', 'front').strip()
-    match = re.search(r'\bpid\s*=\s*(\d+)', output('lsappinfo', 'info', '-only', 'pid', asn)) if asn else None
-    return int(match.group(1)) if match else None
+class GameTracker:
+    """Follows the game process without scanning ps every tick.
+
+    The pid found by one scan is checked each tick with kill(pid, 0) and its
+    start time, which is cheap and catches both exit and pid reuse. ps runs only
+    while no game is known, and at most every RESCAN_SECONDS.
+    """
+
+    def __init__(self, libproc=None, scan=game_pid, clock=time.monotonic):
+        self.libproc, self.scan, self.clock = libproc, scan, clock
+        self.pid = self.started = None
+        self.last_scan = float('-inf')
+
+    def poll(self):
+        if self.pid is not None and not (alive(self.pid) and start_time(self.pid, self.libproc) == self.started):
+            self.pid = self.started = None
+        if self.pid is None and self.clock() - self.last_scan >= RESCAN_SECONDS:
+            self.last_scan = self.clock()
+            self.pid = self.scan()
+            if self.pid is not None:
+                self.started = start_time(self.pid, self.libproc)
+        return self.pid
+
+
+class FrontTracker:
+    """Foreground process ID. lsappinfo is asked who is in front once per tick; the pid
+    behind an application serial number never changes, so it is looked up once per ASN."""
+
+    def __init__(self):
+        self.pids = {}
+
+    def pid(self):
+        asn = output('lsappinfo', 'front').strip()
+        if not asn:
+            return None
+        if asn not in self.pids:
+            match = re.search(r'\bpid\s*=\s*(\d+)', output('lsappinfo', 'info', '-only', 'pid', asn))
+            if not match:
+                return None  # not cached: the app may still be registering
+            self.pids = {asn: int(match.group(1))}  # only the current front app is kept
+        return self.pids[asn]
 
 
 def power_state():
@@ -150,14 +210,15 @@ def main():
         libproc = None
 
     helper = start_state_helper(args.cache, args.prefix, args.wine)
+    tracker, front = GameTracker(libproc), FrontTracker()
     focus = power = None
     last_power = last_sample = float('-inf')
     previous, previous_time = {}, None
     while alive(args.parent):
         now = time.monotonic()
         try:
-            game = game_pid()
-            state = 'game' if game is not None and front_pid() == game else 'other'
+            game = tracker.poll()
+            state = 'game' if game is not None and front.pid() == game else 'other'
             if state != focus:
                 focus = state
                 emit('focus', state=state)

@@ -169,6 +169,7 @@ install_wine_runtime() {
   # Keep cleanup local to this operation, including a failed checksum or extraction.
   (
     set -e
+    sweep_stale "$(dirname "$TMNF_RUNTIME")" '.runtime-install.*'
     staging="$(mktemp -d "$(dirname "$TMNF_RUNTIME")/.runtime-install.XXXXXX")" \
       || die "Cannot create runtime staging directory."
     # Bash 3.2 unwinds function locals before EXIT on errexit. Capture the path.

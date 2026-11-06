@@ -111,6 +111,7 @@ import_steam_folder() {
   # Copy into a staging directory inside the prefix, re-scan the copy, and only
   # then move it into place, so a source that changes mid-copy never reaches
   # the managed game destination with a symlink in it.
+  sweep_stale "$TMNF_PREFIX" '.import-staging.*'
   staging="$(mktemp -d "${TMNF_PREFIX}/.import-staging.XXXXXX")" || die "Cannot stage the import."
   printf -v cleanup 'rm -rf -- %q' "$staging"
   # shellcheck disable=SC2064

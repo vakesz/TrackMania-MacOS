@@ -31,6 +31,20 @@ die() {
   exit 1
 }
 
+# Remove abandoned staging leftovers: direct children of DIR named GLOB, of TYPE
+# (d by default, f for files), owned by this user, not symlinks, and idle for
+# more than an hour. Never fails the caller.
+sweep_stale() {
+  local dir="$1" glob="$2" type="${3:-d}" entry
+  test -d "$dir" || return 0
+  while IFS= read -r entry; do
+    test -n "$entry" || continue
+    rm -rf -- "$entry" || warn "Cannot remove stale $entry"
+  done < <(find "$dir" -mindepth 1 -maxdepth 1 -type "$type" -name "$glob" \
+    -user "$(id -u)" -mmin +60 2>/dev/null || true)
+  return 0
+}
+
 have() {
   command -v "$1" >/dev/null 2>&1
 }
@@ -268,6 +282,7 @@ download_verified() (
   fi
 
   say "Downloading $(basename "$destination")"
+  sweep_stale "$(dirname "$destination")" '*.partial.*' f
   partial="$(mktemp "${destination}.partial.XXXXXX")" || die "Cannot stage download."
   printf -v cleanup 'rm -f -- %q' "$partial"
   # shellcheck disable=SC2064

@@ -18,6 +18,26 @@ configure_competition_patch() {
     '  - id: CoreMod' >"${profile_dir}/competition.yaml"
 }
 
+# Put NEW in place of TMLOADER_DIR. The old directory is moved aside first and
+# restored if the new one cannot be moved in, so a failure never loses it.
+swap_tmloader_dir() {
+  local new="$1" old=""
+  mkdir -p "$(dirname "$TMLOADER_DIR")" || die "Cannot create $(dirname "$TMLOADER_DIR")"
+  sweep_stale "$(dirname "$TMLOADER_DIR")" '.tmloader-old.*'
+  if test -e "$TMLOADER_DIR"; then
+    old="$(mktemp -d "$(dirname "$TMLOADER_DIR")/.tmloader-old.XXXXXX")" \
+      || die "Cannot stage the previous ModLoader."
+    mv "$TMLOADER_DIR" "$old/TMLoader" || die "Cannot move the previous ModLoader aside."
+  fi
+  if ! mv "$new" "$TMLOADER_DIR"; then
+    if test -n "$old"; then
+      mv "$old/TMLoader" "$TMLOADER_DIR" && rm -rf -- "$old"
+    fi
+    die "Cannot install ModLoader into $TMLOADER_DIR"
+  fi
+  test -z "$old" || rm -rf -- "$old"
+}
+
 install_competition_patch() (
   local extract_dir entry cleanup
 
@@ -36,6 +56,7 @@ install_competition_patch() (
     esac
   done < <(unzip -Z1 "$TMLOADER_ARCHIVE")
 
+  sweep_stale "$TMNF_CACHE" '*-extract.*'
   extract_dir="$(mktemp -d "${TMNF_CACHE}/tmloader-extract.XXXXXX")"
   printf -v cleanup 'rm -rf -- %q' "$extract_dir"
   # shellcheck disable=SC2064
@@ -50,9 +71,7 @@ install_competition_patch() (
   verify_file "${extract_dir}/database/TmForever/products/CoreMod/${TMLOADER_COREMOD_VERSION}/CoreMod.dll" "$TMLOADER_COREMOD_SHA256" \
     || die "CoreMod verification failed."
 
-  rm -rf "$TMLOADER_DIR"
-  mkdir -p "$(dirname "$TMLOADER_DIR")"
-  mv "$extract_dir" "$TMLOADER_DIR"
+  swap_tmloader_dir "$extract_dir"
 
   configure_competition_patch
 

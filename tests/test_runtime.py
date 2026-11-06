@@ -505,6 +505,22 @@ class RuntimeInstall(unittest.TestCase):
         self.assertEqual(len(self.stub_lines()), 1)
         self.assertTrue(self.stub_lines()[0].endswith('.sha256'))
 
+    def test_pin_installs_when_the_release_checksum_is_unreachable(self):
+        self.serve_runtime()
+        (self.serve / 'trackmania-mac-{}-runtime.tar.xz.sha256'.format(self.version)).unlink()
+        self.write_pin()
+        result = self.install(extra_env=self.source_env('download'), explicit=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('unpinned', result.stderr)
+        self.assert_clean()
+
+    def test_unpinned_install_needs_the_release_checksum(self):
+        self.serve_runtime()
+        (self.serve / 'trackmania-mac-{}-runtime.tar.xz.sha256'.format(self.version)).unlink()
+        result = self.install(extra_env=self.source_env('download'), explicit=False)
+        self.assert_rejected(result)
+        self.assertIn('Cannot download runtime release', result.stderr)
+
     def test_missing_pin_warns_that_the_checksum_is_unpinned(self):
         self.serve_runtime()
         result = self.install(extra_env=self.source_env('download'), explicit=False)

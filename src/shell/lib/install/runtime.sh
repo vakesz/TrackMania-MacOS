@@ -211,17 +211,23 @@ install_wine_runtime() {
     else
       if test -z "$archive"; then
         archive="${TMNF_CACHE}/${RUNTIME_ARCHIVE_NAME}"
-        curl -q --fail --location --retry 3 --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
-          --output "${staging}/release.sha256" \
-          "${RUNTIME_RELEASE_URL}/${RUNTIME_ARCHIVE_NAME}.sha256" \
-          || die "Cannot download runtime release $RUNTIME_VERSION. $(runtime_download_hint)"
-        expected="$(awk 'NR==1 {print $1}' "${staging}/release.sha256")"
-        [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || die "Invalid release checksum."
-        expected="$(printf '%s' "$expected" | tr 'A-F' 'a-f')"
         pinned="$(runtime_pinned_checksum)"
+        if curl -q --fail --location --retry 3 --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
+          --output "${staging}/release.sha256" \
+          "${RUNTIME_RELEASE_URL}/${RUNTIME_ARCHIVE_NAME}.sha256"; then
+          expected="$(awk 'NR==1 {print $1}' "${staging}/release.sha256")"
+          [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || die "Invalid release checksum."
+          expected="$(printf '%s' "$expected" | tr 'A-F' 'a-f')"
+        elif test -n "$pinned"; then
+          # The pin is authoritative; the release checksum is only a tamper
+          # cross-check, so a cached archive still reinstalls offline.
+          expected=""
+        else
+          die "Cannot download runtime release $RUNTIME_VERSION. $(runtime_download_hint)"
+        fi
         if test -z "$pinned"; then
           warn "The runtime checksum is unpinned and came from the release itself; a compromised release could replace both archive and checksum."
-        elif test "$pinned" != "$expected"; then
+        elif test -n "$expected" && test "$pinned" != "$expected"; then
           die "The release checksum for runtime $RUNTIME_VERSION ($expected) differs from the checksum pinned in this hub ($pinned). Refusing to install."
         else
           expected="$pinned"

@@ -427,8 +427,18 @@ extension HubTitle {
 }
 
 extension Array where Element == HubTitle {
-    /// Sidebar sections: installed titles first, then the rest.
+    /// Sidebar sections: installed titles first, then the rest. Within a section,
+    /// supported titles lead; otherwise the backend order is kept.
     var sidebarSections: (installed: [HubTitle], available: [HubTitle]) {
-        (filter(\.isInstalled), filter { !$0.isInstalled })
+        func ordered(_ titles: [HubTitle]) -> [HubTitle] {
+            titles.filter(\.isSupported) + titles.filter { !$0.isSupported }
+        }
+        return (ordered(filter(\.isInstalled)), ordered(filter { !$0.isInstalled }))
+    }
+
+    /// Titles in the order the sidebar shows them; the first one is the default selection.
+    var sidebarOrder: [HubTitle] {
+        let sections = sidebarSections
+        return sections.installed + sections.available
     }
 }

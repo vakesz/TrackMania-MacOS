@@ -90,7 +90,7 @@ final class HubViewModel: ObservableObject {
     private func apply(_ snapshot: HubSnapshot) {
         self.snapshot = snapshot
         if selectedTitleID == nil || !snapshot.titles.contains(where: { $0.id == selectedTitleID }) {
-            selectedTitleID = snapshot.titles.first?.id
+            selectedTitleID = snapshot.titles.sidebarOrder.first?.id
         }
         if !snapshot.skippedTitles.isEmpty {
             let count = snapshot.skippedTitles.count

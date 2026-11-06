@@ -46,6 +46,14 @@ final class HubUITests: XCTestCase {
         XCTAssertTrue([installed].sidebarSections.available.isEmpty)
     }
 
+    func testSidebarOrderPutsInstalledThenSupportedFirst() {
+        let canyon = HubTitle(id: "tm-canyon", name: "Canyon", status: .provisional)
+        let tmnf = HubTitle(id: "tmnf", name: "Nations", status: .supported)
+        let tmu = HubTitle(id: "tmu", name: "United", status: .provisional,
+                           state: HubInstallationState(game: true))
+        XCTAssertEqual([canyon, tmnf, tmu].sidebarOrder.map(\.id), ["tmu", "tmnf", "tm-canyon"])
+    }
+
     func testDecodesNewFields() throws {
         let json = #"""
         {"schema":2,"hubVersion":"0.4.1","titles":[{"id":"tmnf","name":"N","sourceSize":1500000000,

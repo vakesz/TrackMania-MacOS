@@ -51,7 +51,12 @@ doctor() {
   validate_launch_options
   title_name="$TMNF_TITLE_NAME"
   title_short="$TMNF_TITLE_SHORT_NAME"
-  game_expected_sha="${TMNF_GAME_EXE_SHA256:-}"
+  # TMNF_GAME_EXE_SHA256 pins the TMNF release only; other titles have no
+  # executable pin yet and get presence coverage instead.
+  game_expected_sha=""
+  if test "$TMNF_TITLE" = tmnf; then
+    game_expected_sha="${TMNF_GAME_EXE_SHA256:-}"
+  fi
   needs_patch="$TMNF_TITLE_NEEDS_TMLOADER"
 
   if test -f "${TMNF_PREFIX}/system.reg" && require_owned_prefix >/dev/null 2>&1; then

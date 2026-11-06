@@ -205,7 +205,6 @@ install_wine_runtime() {
     # shellcheck disable=SC2064
     trap "$cleanup" EXIT
     if test -z "$archive" && test "$mode" != download && { test -e "$built" || test -L "$built"; }; then
-      runtime_is_complete "$built" || die "The local source build is incomplete or damaged."
       say "Installing the local source build"
       cp -pRP "$built" "${staging}/runtime" || die "Cannot copy the local runtime."
     else
@@ -243,8 +242,12 @@ install_wine_runtime() {
         || die "Cannot extract the runtime archive safely."
     fi
     source="${staging}/runtime"
-    runtime_is_complete "$source" || die "The runtime is incomplete or has the wrong version."
+    # Verify the staged tree before executing anything from it. When the
+    # destination already exists no probe runs, and publish verifies the source
+    # itself, so a second pass here would hash the same unchanged tree twice.
+    # (The copy of a local build is verified here, not the original beforehand.)
     if test ! -e "$TMNF_RUNTIME" && test ! -L "$TMNF_RUNTIME"; then
+      runtime_is_complete "$source" || die "The runtime is incomplete or has the wrong version."
       without_operation_lock "${source}/bin/wine" --version || die "Wine runtime probe failed."
       without_operation_lock "${source}/bin/x87sidecar" --probe || die "x87sidecar runtime probe failed."
     fi

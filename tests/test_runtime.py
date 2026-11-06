@@ -130,6 +130,16 @@ class RuntimeInstall(unittest.TestCase):
         self.package()
         self.assert_rejected(self.install('0' * 64))
 
+    def test_corrupted_archive_is_rejected_against_the_published_checksum(self):
+        self.package()
+        published = hashlib.sha256(self.archive.read_bytes()).hexdigest()
+        data = bytearray(self.archive.read_bytes())
+        data[len(data) // 2] ^= 0xFF
+        self.archive.write_bytes(bytes(data))
+        result = self.install(published)
+        self.assert_rejected(result)
+        self.assertIn('SHA-256 mismatch', result.stderr)
+
     def test_archive_digest_must_be_hex(self):
         self.package()
         for digest in ('g' * 64, 'a' * 63, '', 'a' * 64 + '\n', '-' * 64):

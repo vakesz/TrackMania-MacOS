@@ -143,6 +143,31 @@ class TitleRegistryTests(unittest.TestCase):
             result.stdout.strip(),
             '/tmp/tmnf-cache/games/tmu/tmunitedforever_setup.exe')
 
+    def test_wrapped_inno_installers_target_the_registry_game_dir(self):
+        """The 7z-wrapped installers (TMU, Canyon) get /DIR equal to GAME_DIR."""
+        stubs = (
+            'download_pinned_installer() { :; }; '
+            'unpack_inner_inno() { printf "/stub/setup.exe\\n"; }; '
+            'run_wine() { :; }; '
+            'run_released_installer() { printf "%s\\n" "$TMNF_INNO_DIR"; TMNF_INSTALLER_PID=0; }; '
+            'wait_inno_setup() { :; }; verify_installed_game() { :; }; say() { :; }; '
+        )
+        for path in sorted(TITLES.glob('*.json')):
+            data = json.loads(path.read_text())
+            if data['installer'] not in ('online-retail', 'online-trial'):
+                continue
+            with self.subTest(title=data['id']):
+                result = subprocess.run(
+                    ['/bin/bash', '-euc',
+                     '. src/shell/lib/common.sh; . src/shell/lib/install/game.sh; '
+                     + stubs + 'install_pinned_inno_game "$TMNF_TITLE_INSTALLER"'],
+                    cwd=ROOT, text=True, capture_output=True, timeout=15,
+                    env={'PATH': '/usr/bin:/bin', 'HOME': '/tmp/tmnf-no-home',
+                         'TMNF_TITLE': data['id']})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(),
+                                 'C:\\Program Files (x86)\\' + data['game_dir_name'])
+
     def test_save_dirs_are_declared_for_every_guarded_name(self):
         """managed_paths.save_dir_names() must stay a superset of the registry."""
         import sys

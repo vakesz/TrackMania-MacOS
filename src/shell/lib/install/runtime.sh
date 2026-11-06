@@ -169,17 +169,23 @@ install_wine_runtime() {
   # Keep cleanup local to this operation, including a failed checksum or extraction.
   (
     set -e
+    # build_runtime_locally appends its own clone cleanup to this EXIT trap.
+    cleanup=':'
+    # shellcheck disable=SC2064
+    trap "$cleanup" EXIT
+    trap 'exit 1' HUP INT TERM
+    # A source build can take hours; create the staging directory only after
+    # it, so a concurrent install's stale sweep never sees it idle for long.
+    if test -z "$archive" && test "$mode" = build; then
+      build_runtime_locally
+    fi
     sweep_stale "$(dirname "$TMNF_RUNTIME")" '.runtime-install.*'
     staging="$(mktemp -d "$(dirname "$TMNF_RUNTIME")/.runtime-install.XXXXXX")" \
       || die "Cannot create runtime staging directory."
     # Bash 3.2 unwinds function locals before EXIT on errexit. Capture the path.
-    printf -v cleanup 'rm -rf -- %q' "$staging"
+    printf -v cleanup '%s; rm -rf -- %q' "$cleanup" "$staging"
     # shellcheck disable=SC2064
     trap "$cleanup" EXIT
-    trap 'exit 1' HUP INT TERM
-    if test -z "$archive" && test "$mode" = build; then
-      build_runtime_locally
-    fi
     if test -z "$archive" && test "$mode" != download && { test -e "$built" || test -L "$built"; }; then
       runtime_is_complete "$built" || die "The local source build is incomplete or damaged."
       say "Installing the local source build"

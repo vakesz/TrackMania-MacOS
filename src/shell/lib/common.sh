@@ -177,7 +177,19 @@ readonly GAME_OPENAL="${GAME_DIR}/OpenAL32.dll"
 readonly GAME_OPENAL_CREATIVE="${GAME_DIR}/OpenAL32.creative.dll"
 readonly GAME_OPENAL_COPYING="${GAME_DIR}/OpenAL32.COPYING.txt"
 
+# Lowercase hex digest only. hashlib streams several times faster than shasum
+# on large archives; shasum remains the fallback when no Python is usable here.
+# -I is not an option: it would drop the PYTHONPATH that locates the package.
 sha256_file() {
+  local digest
+  if { [[ "$TMNF_PYTHON" = */* ]] && test -x "$TMNF_PYTHON"; } \
+    || { [[ "$TMNF_PYTHON" != */* ]] && have "$TMNF_PYTHON"; }; then
+    if digest="$(PYTHONPATH="$TMNF_PYTHONPATH" "$TMNF_PYTHON" -m tmnf.install.hashing sha256 "$1" 2>/dev/null)" \
+      && [[ "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+      printf '%s\n' "$digest"
+      return 0
+    fi
+  fi
   shasum -a 256 "$1" | awk '{print $1}'
 }
 

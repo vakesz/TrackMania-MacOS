@@ -40,7 +40,10 @@ hub download for normal use, or a checkout when building the runtime yourself.
 
 Download `TrackMania-Mac-<version>.app.zip` from
 [GitHub Releases](https://github.com/vakesz/TrackMania-MacOS/releases), unzip it,
-move the single **TrackMania Mac.app** to Applications, then open it. The native
+move the single **TrackMania Mac.app** to Applications, then open it. If macOS
+says it cannot verify the app (a release without Developer ID notarization),
+open **System Settings > Privacy & Security** and click **Open Anyway** once.
+The native
 hub shows every registered title and its install state. Nations Forever is the
 supported game; United Forever and Canyon have pinned official installers, while
 Original and Turbo use user-owned retail media or an existing Steam copy. Those

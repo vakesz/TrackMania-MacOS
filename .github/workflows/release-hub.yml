@@ -30,11 +30,21 @@ jobs:
           tag="v${version}"
           test "$GITHUB_REF_NAME" = "$tag" \
             || { echo "Tag $GITHUB_REF_NAME does not match VERSION $version" >&2; exit 1; }
-          test -n "$APPLE_CERT_P12" || { echo 'APPLE_CERT_P12 is required for a tag release.' >&2; exit 1; }
-          test -n "$TMNF_SIGN_IDENTITY" || { echo 'TMNF_SIGN_IDENTITY is required for a tag release.' >&2; exit 1; }
-          test "$TMNF_NOTARIZE" = 1 || { echo 'TMNF_NOTARIZE=1 is required for a tag release.' >&2; exit 1; }
-          test -n "$APPLE_ID" && test -n "$TMNF_TEAM_ID" && test -n "$TMNF_APP_PASSWORD" \
-            || { echo 'Apple notarization credentials are required for a tag release.' >&2; exit 1; }
+          # Without any signing secret the hub is ad-hoc signed and not notarized:
+          # it still publishes, and users approve it once in Privacy & Security.
+          # As soon as any signing secret is set, the full Developer ID and
+          # notarization configuration is required, so a half-configured
+          # repository fails instead of silently shipping an ad-hoc build.
+          signing_secrets="$APPLE_CERT_P12$TMNF_SIGN_IDENTITY$TMNF_NOTARIZE$APPLE_ID$TMNF_TEAM_ID$TMNF_APP_PASSWORD"
+          if test -z "$signing_secrets"; then
+            echo "::warning title=Unsigned hub release::No signing secrets are set; $tag ships an ad-hoc signed, unnotarized hub that Gatekeeper will block until the user allows it."
+          else
+            test -n "$APPLE_CERT_P12" || { echo 'APPLE_CERT_P12 is required for a signed tag release.' >&2; exit 1; }
+            test -n "$TMNF_SIGN_IDENTITY" || { echo 'TMNF_SIGN_IDENTITY is required for a signed tag release.' >&2; exit 1; }
+            test "$TMNF_NOTARIZE" = 1 || { echo 'TMNF_NOTARIZE=1 is required for a signed tag release.' >&2; exit 1; }
+            test -n "$APPLE_ID" && test -n "$TMNF_TEAM_ID" && test -n "$TMNF_APP_PASSWORD" \
+              || { echo 'Apple notarization credentials are required for a signed tag release.' >&2; exit 1; }
+          fi
           staging="$(mktemp -d)"
           trap 'rm -rf "$staging"' EXIT
           # The runtime archive is what the hub installs. The source archive is the

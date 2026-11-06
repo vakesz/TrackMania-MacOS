@@ -273,7 +273,7 @@ download_verified() (
   # shellcheck disable=SC2064
   trap "$cleanup" EXIT
   trap 'exit 1' HUP INT TERM
-  curl --fail --location --retry 3 --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
+  curl -q --fail --location --retry 3 --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
     --progress-bar --output "$partial" "$url" || die "Download failed: $url"
   verify_file "$partial" "$expected" || {
     rm -f "$partial"

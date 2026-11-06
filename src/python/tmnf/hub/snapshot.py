@@ -7,6 +7,7 @@ title-card problem, never as a broken window.
 
 from __future__ import annotations
 
+import pathlib
 import typing
 
 from . import paths as hub_paths
@@ -16,7 +17,24 @@ from . import state
 SCHEMA = 2
 
 
-def _actions(title: registry.Title, items: typing.Dict[str, state.Probe]) -> typing.List[dict]:
+def _actions(title: registry.Title, items: typing.Dict[str, state.Probe],
+             session_active: bool = False) -> typing.List[dict]:
+    actions = _base_actions(title, items)
+    if items['prefix'].ready:
+        actions.append({'id': 'doctor', 'label': 'Run checks', 'primary': False,
+                        'kind': 'verify'})
+        actions.append({'id': 'diagnostics', 'label': 'Create diagnostics report',
+                        'primary': False, 'kind': 'maintenance'})
+        if session_active:
+            actions.append({'id': 'stop', 'label': 'Stop game', 'primary': False,
+                            'kind': 'maintenance'})
+        actions.append({'id': 'uninstall', 'label': 'Uninstall\u2026', 'primary': False,
+                        'kind': 'destructive'})
+    return actions
+
+
+def _base_actions(title: registry.Title, items: typing.Dict[str, state.Probe]
+                  ) -> typing.List[dict]:
     def action(action_id: str, label: str, *, primary: bool = False,
                kind: str = 'build') -> dict:
         return {'id': action_id, 'label': label, 'primary': primary, 'kind': kind}
@@ -50,11 +68,23 @@ def _actions(title: registry.Title, items: typing.Dict[str, state.Probe]) -> typ
     raise registry.RegistryError(f'Unhandled installer kind: {title.installer}')
 
 
+def log_dir() -> pathlib.Path:
+    return pathlib.Path.home() / 'Library' / 'Logs' / 'TMNF'
+
+
+def _locations(paths: hub_paths.TitlePaths) -> dict:
+    return {'root': str(paths.root), 'prefix': str(paths.prefix),
+            'gameDir': str(paths.game_dir), 'userdata': str(paths.userdata),
+            'logs': str(log_dir())}
+
+
 def title_payload(title: registry.Title, paths: typing.Optional[hub_paths.TitlePaths] = None
                   ) -> dict:
     resolved = paths if paths is not None else hub_paths.compute(title)
     items = state.probe(title, resolved)
     icon, icon_source = resolved.resolve_icon()
+    # Fails safe: any probe error reads as inactive, which hides Stop game.
+    active = state.session_active(resolved.prefix)
     return {
         'id': title.id,
         'name': title.name,
@@ -64,12 +94,15 @@ def title_payload(title: registry.Title, paths: typing.Optional[hub_paths.TitleP
         'kind': title.installer,
         'notes': title.notes,
         'requiresSerial': title.requires_serial,
+        'sourceSize': title.source_size,
+        'locations': _locations(resolved),
+        'sessionActive': active,
         'error': None,
         'icon': str(icon) if icon else None,
         'iconSource': icon_source,
         'state': {name: probe.payload() for name, probe in items.items()},
         'apps': {'game': str(resolved.app), 'settings': str(resolved.settings_app)},
-        'actions': _actions(title, items),
+        'actions': _actions(title, items, active),
     }
 
 
@@ -86,6 +119,9 @@ def contained_payload(title: registry.Title) -> dict:
             'kind': title.installer,
             'notes': title.notes,
             'requiresSerial': title.requires_serial,
+            'sourceSize': title.source_size,
+            'locations': {},
+            'sessionActive': False,
             'error': f'{error}',
             'icon': None,
             'iconSource': None,
@@ -106,12 +142,22 @@ def _error_placeholder(title_id: str, message: str) -> dict:
         'status': 'provisional',
         'notes': '',
         'requiresSerial': False,
+        'sourceSize': None,
+        'locations': {},
+        'sessionActive': False,
         'error': message,
         'state': {},
         'apps': {'game': '', 'settings': ''},
         'actions': [],
     })
     return payload
+
+
+def _hub_version() -> str:
+    try:
+        return hub_paths.runtime_version()
+    except OSError:
+        return ''
 
 
 def snapshot() -> dict:
@@ -122,7 +168,8 @@ def snapshot() -> dict:
     try:
         titles, schema_errors, unreadable = registry.load_registry()
     except registry.RegistryError as failure:
-        return {'schema': SCHEMA, 'titles': [], 'error': str(failure)}
+        return {'schema': SCHEMA, 'hubVersion': _hub_version(), 'titles': [],
+                'error': str(failure)}
     payloads = []
     for title in titles:
         payloads.append(contained_payload(title))
@@ -132,7 +179,7 @@ def snapshot() -> dict:
     notes += [f'{path.name}: not valid JSON' for path in unreadable]
     if notes:
         error = '; '.join(notes)
-    payload = {'schema': SCHEMA, 'titles': payloads}
+    payload = {'schema': SCHEMA, 'hubVersion': _hub_version(), 'titles': payloads}
     if error is not None:
         payload['error'] = error
     return payload

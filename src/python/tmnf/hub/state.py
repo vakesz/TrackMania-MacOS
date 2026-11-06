@@ -14,8 +14,9 @@ import typing
 
 from . import paths as hub_paths
 from . import registry
+from tmnf.guard import operation_guard
 
-__all__ = ['probe']
+__all__ = ['probe', 'session_active']
 
 
 class Probe(typing.NamedTuple):
@@ -182,3 +183,18 @@ def probe(title: registry.Title, paths: typing.Optional[hub_paths.TitlePaths] = 
         'settingsApp': Probe(_app_ready(resolved.settings_app), ''),
     }
     return items
+
+
+def session_active(prefix: pathlib.Path) -> bool:
+    """True only when Wine's server lock for this prefix is provably held.
+
+    One stat plus a momentary non-blocking lockf; never starts Wine. Anything
+    unexpected counts as inactive, so the answer never raises.
+    """
+    try:
+        operation_guard.check_inactive(prefix)
+    except ValueError as error:
+        return str(error).startswith('Wine is active')
+    except Exception:  # noqa: BLE001 - a probe must never break the snapshot
+        return False
+    return False

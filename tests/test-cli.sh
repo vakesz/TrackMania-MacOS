@@ -121,6 +121,52 @@ test "$doctor_status" -ne 0
 printf '%s\n' "$doctor_output" | grep -q 'Wine: wine-test'
 printf '%s\n' "$doctor_output" | grep -q 'TMNF: installed executable'
 printf '%s\n' "$doctor_output" | grep -q 'Competition Patch is missing'
+# A direct doctor on an idle prefix takes the lock itself and runs deep checks.
+printf '%s\n' "$doctor_output" | grep -q 'WoW64: Microsoft Windows'
+if printf '%s\n' "$doctor_output" | grep -q 'A session owns the prefix'; then
+  echo 'doctor reported a busy prefix on an idle one' >&2
+  exit 1
+fi
+
+# A prefix that is really busy degrades with the session message.
+OPERATION_LOCK="${FAKE_ROOT}/.prefix.tmnf-operation.lock"
+PYTHONPATH="${PROJECT_DIR}/src/python" /usr/bin/python3 -m tmnf.guard.operation_guard \
+  run "$FAKE_PREFIX" /bin/sleep 60 >/dev/null 2>&1 &
+holder=$!
+for _ in $(seq 1 50); do
+  test -e "$OPERATION_LOCK" && break
+  sleep 0.1
+done
+sleep 0.3
+busy_output="$("${PROJECT_DIR}/src/shell/cli/tmnf" doctor 2>&1)" || true
+printf '%s\n' "$busy_output" | grep -q 'A session owns the prefix right now'
+if printf '%s\n' "$busy_output" | grep -q 'WoW64:'; then
+  echo 'doctor ran prefix probes while the prefix was busy' >&2
+  exit 1
+fi
+printf '%s\n' "$busy_output" | grep -q 'Wine: wine-test'
+pkill -P "$holder" 2>/dev/null || true
+kill "$holder" 2>/dev/null || true
+wait "$holder" 2>/dev/null || true
+
+# Any other lock failure is reported as itself, never as a busy session.
+chmod 666 "$OPERATION_LOCK"
+unsafe_output="$("${PROJECT_DIR}/src/shell/cli/tmnf" doctor 2>&1)" || true
+printf '%s\n' "$unsafe_output" | grep -q 'Cannot check the prefix'
+if printf '%s\n' "$unsafe_output" | grep -q 'A session owns the prefix'; then
+  echo 'doctor mislabelled an unsafe lock as a busy session' >&2
+  exit 1
+fi
+rm -f "$OPERATION_LOCK"
+
+# Diagnostics writes one zip and ends with the machine-readable line.
+diagnostics_output="$("${PROJECT_DIR}/src/shell/cli/tmnf" diagnostics 2>&1)"
+diagnostics_last="$(printf '%s\n' "$diagnostics_output" | tail -1)"
+case "$diagnostics_last" in
+  "Diagnostics report: ${FAKE_HOME}/Library/Logs/TMNF/diagnostics-tmnf-"*.zip) ;;
+  *) echo "unexpected diagnostics output: $diagnostics_last" >&2; exit 1 ;;
+esac
+test -f "${diagnostics_last#Diagnostics report: }"
 
 # The default renderer is D9VK; playing without it installed must fail clearly.
 : >"$CALL_LOG"

@@ -3,12 +3,13 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import zipfile
 import unittest
 from unittest import mock
 
 from tmnf.hub import run as hub_run
 from tmnf.hub import paths as hub_paths
-from tmnf.hub import registry, snapshot, state
+from tmnf.hub import diagnostics, registry, snapshot, state
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -181,7 +182,8 @@ class HubBackendTests(unittest.TestCase):
         items.update({"gameApp": state.Probe(False, ""),
                       "settingsApp": state.Probe(False, "")})
         actions = snapshot._actions(title, items)
-        self.assertEqual([action["id"] for action in actions], ["install-apps"])
+        self.assertEqual([action["id"] for action in actions],
+                         ["install-apps", "doctor", "diagnostics", "uninstall"])
         self.assertTrue(actions[0]["primary"])
 
     def test_unmanaged_or_symlinked_app_is_not_ready(self):
@@ -281,6 +283,136 @@ class HubBackendTests(unittest.TestCase):
                     self.assertNotEqual(result.returncode, 0)
                     self.assertTrue(result.stderr.strip())
                     self.assertFalse((home / "Games").exists())
+
+    NEW_FIELDS = {"sourceSize": (int, type(None)), "locations": dict, "sessionActive": bool}
+
+    def test_new_fields_for_titles_and_placeholders(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_hub("snapshot", home=directory)
+            data = json.loads(result.stdout)
+            self.assertEqual(data["hubVersion"], (ROOT / "VERSION").read_text().strip())
+            for title in data["titles"]:
+                for key, kind in self.NEW_FIELDS.items():
+                    self.assertIsInstance(title[key], kind, key)
+                self.assertEqual(set(title["locations"]),
+                                 {"root", "prefix", "gameDir", "userdata", "logs"})
+                for value in title["locations"].values():
+                    self.assertTrue(value.startswith("/"))
+                self.assertEqual(title["locations"]["logs"],
+                                 str(Path(directory) / "Library/Logs/TMNF"))
+                self.assertFalse(title["sessionActive"])
+        placeholder = snapshot._error_placeholder("broken", "bad")
+        self.assertEqual(placeholder["locations"], {})
+        self.assertIsNone(placeholder["sourceSize"])
+        self.assertIs(placeholder["sessionActive"], False)
+
+    def test_management_actions_need_a_ready_prefix(self):
+        title = registry.get("tmnf")
+        items = {name: state.Probe(False, "") for name in
+                 ("runtime", "prefix", "directx", "renderer", "game", "gameApp", "settingsApp")}
+        def ids(active=False):
+            return [a["id"] for a in snapshot._actions(title, items, active)]
+
+        self.assertEqual(ids(True), ["install"])
+        items["prefix"] = state.Probe(True, "")
+        self.assertEqual(ids(), ["install", "update", "doctor", "diagnostics", "uninstall"])
+        self.assertEqual(ids(True),
+                         ["install", "update", "doctor", "diagnostics", "stop", "uninstall"])
+        kinds = {a["id"]: a["kind"] for a in snapshot._actions(title, items, True)}
+        self.assertEqual((kinds["doctor"], kinds["diagnostics"], kinds["stop"], kinds["uninstall"]),
+                         ("verify", "maintenance", "maintenance", "destructive"))
+
+    def test_session_active_is_safe(self):
+        guard = state.operation_guard
+        with mock.patch.object(guard, "check_inactive",
+                               side_effect=ValueError("Wine is active for prefix: x")):
+            self.assertTrue(state.session_active(Path("/x")))
+        for error in (ValueError("Unsafe Wine prefix"), OSError("boom"), RuntimeError("x")):
+            with mock.patch.object(guard, "check_inactive", side_effect=error):
+                self.assertFalse(state.session_active(Path("/x")))
+        with mock.patch.object(guard, "check_inactive", return_value=None):
+            self.assertFalse(state.session_active(Path("/x")))
+        self.assertFalse(state.session_active(Path("/private/tmp/does-not-exist-tmnf")))
+
+    def test_session_active_sees_a_held_wine_server_lock(self):
+        # Managed paths must sit below home or /private/tmp.
+        with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
+            root = Path(directory).resolve()
+            prefix = root / "prefix"
+            prefix.mkdir(mode=0o755)
+            info = prefix.lstat()
+            user_dir = root / f".wine-{os.getuid()}"
+            lock_dir = user_dir / f"server-{info.st_dev:x}-{info.st_ino:x}"
+            for private in (user_dir, lock_dir):
+                private.mkdir(mode=0o700)
+            lock = lock_dir / "lock"
+            lock.touch(mode=0o600)
+            with mock.patch.object(state.operation_guard, "WINE_SERVER_ROOT", root):
+                self.assertFalse(state.session_active(prefix))
+                code = ("import fcntl,sys,time;f=open(sys.argv[1],'r+b');"
+                        "fcntl.lockf(f,fcntl.LOCK_EX,1,0,0);print('ok',flush=True);time.sleep(30)")
+                child = subprocess.Popen(["/usr/bin/python3", "-c", code, str(lock)],
+                                         stdout=subprocess.PIPE, text=True)
+                try:
+                    self.assertEqual(child.stdout.readline().strip(), "ok")
+                    self.assertTrue(state.session_active(prefix))
+                finally:
+                    child.kill()
+                    child.wait()
+                self.assertFalse(state.session_active(prefix))
+
+    def test_new_actions_dispatch_to_the_cli(self):
+        cases = {"doctor": ["doctor"], "diagnostics": ["diagnostics"], "stop": ["stop"],
+                 "uninstall": ["uninstall", "--yes"]}
+        for action, extra in cases.items():
+            with self.subTest(action=action), \
+                    mock.patch.object(hub_run, "available_action_ids", return_value={action}), \
+                    mock.patch.object(hub_run.os, "execve", side_effect=KeyboardInterrupt) as execve, \
+                    self.assertRaises(KeyboardInterrupt):
+                hub_run.run("tmnf", action, None)
+            command = execve.call_args.args[1]
+            self.assertTrue(command[1].endswith("src/shell/cli/tmnf"))
+            self.assertEqual(command[2:], extra)
+
+    def test_redact_home_and_username(self):
+        text = "/Users/alice/Games and alice here, malice and alice_x stay; ~/x"
+        out = diagnostics.redact(text, "/Users/alice", "alice")
+        self.assertNotIn("/Users/alice", out)
+        self.assertIn("~/Games", out)
+        self.assertIn("<user> here", out)
+        self.assertIn("malice", out)
+        self.assertIn("alice_x", out)
+
+    def test_diagnostics_zip_contents_are_redacted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory).resolve() / "alice"
+            logs = home / "Library/Logs/TMNF"
+            logs.mkdir(parents=True)
+            for index in range(7):
+                log = logs / f"run{index}.log"
+                log.write_text(f"line from {home} by alice\n")
+                os.utime(log, (1000 + index, 1000 + index))
+            (logs / "big.log").write_text("x" * (diagnostics.LOG_TAIL_BYTES + 100) + f"END {home}")
+            os.utime(logs / "big.log", (9000, 9000))
+            with mock.patch.dict(os.environ, {"HOME": str(home), "TMNF_TITLE": "tmnf"}), \
+                    mock.patch.object(diagnostics.getpass, "getuser", return_value="alice"):
+                target = diagnostics.build("tmnf", doctor_output=f"doctor says {home}\n")
+            self.assertEqual(target.parent, logs)
+            self.assertRegex(target.name, r"^diagnostics-tmnf-\d{8}-\d{6}\.zip$")
+            with zipfile.ZipFile(target) as archive:
+                names = set(archive.namelist())
+                self.assertTrue({"summary.txt", "doctor.txt", "snapshot.json"} <= names)
+                self.assertEqual(len([n for n in names if n.startswith("logs/")]),
+                                 diagnostics.LOG_COUNT)
+                self.assertIn("logs/big.log", names)
+                for name in names:
+                    body = archive.read(name).decode()
+                    self.assertNotIn(str(home), body, name)
+                    self.assertNotIn("alice", body, name)
+                self.assertLessEqual(len(archive.read("logs/big.log")),
+                                     diagnostics.LOG_TAIL_BYTES + 100)
+                self.assertTrue(archive.read("logs/big.log").decode().endswith("END ~"))
+                self.assertEqual(json.loads(archive.read("snapshot.json"))["id"], "tmnf")
 
 
 if __name__ == "__main__":

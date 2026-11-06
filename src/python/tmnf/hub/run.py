@@ -93,4 +93,12 @@ def run(title_id: str, action_id: str, source: typing.Optional[str],
         _exec(cli, ['app'], title_id)
     if action_id == 'import':
         _exec(cli, ['import', source], title_id)
+    if action_id == 'doctor':
+        _exec(cli, ['doctor'], title_id)
+    if action_id == 'diagnostics':
+        _exec(cli, ['diagnostics'], title_id)
+    if action_id == 'stop':
+        _exec(cli, ['stop'], title_id)
+    if action_id == 'uninstall':
+        _exec(cli, ['uninstall', '--yes'], title_id)
     die(f'Unsupported hub action: {action_id}')

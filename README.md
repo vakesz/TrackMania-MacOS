@@ -14,6 +14,10 @@ This is an independent community project, not affiliated with Nadeo or Ubisoft.
 Games and Microsoft DirectX are downloaded from their original hosts or supplied
 by you. They are not redistributed here.
 
+> [!NOTE]
+> Looking for Trackmania 2020? [Trackmania2020-MacOS](https://github.com/V-Roman-V/Trackmania2020-MacOS) is a separate community project, inspired by this one.  
+> It isn't part of this hub for now, but it could be integrated later.
+
 ## What you need
 
 - A Mac with Apple Silicon (M1 or later) running macOS 14 Sonoma or later.

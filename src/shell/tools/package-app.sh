@@ -6,7 +6,7 @@
 # profile (xcrun notarytool store-credentials); no password is passed on argv.
 set -euo pipefail
 
-PROJECT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")/../../.." && pwd)"
+PROJECT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)"
 VERSION="$(cat "${PROJECT_DIR}/VERSION")"
 HUB_NAME="TrackMania Mac"
 APP_DIR="${PROJECT_DIR}/.build/app/${HUB_NAME}.app"

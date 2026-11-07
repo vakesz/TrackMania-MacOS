@@ -40,6 +40,7 @@ install_openal() (
     esac
   done < <(unzip -Z1 "$OPENAL_SOFT_ARCHIVE")
 
+  sweep_stale "$TMNF_CACHE" '*-extract.*'
   extract_dir="$(mktemp -d "${TMNF_CACHE}/openal-extract.XXXXXX")"
   printf -v cleanup 'rm -rf -- %q' "$extract_dir"
   # shellcheck disable=SC2064

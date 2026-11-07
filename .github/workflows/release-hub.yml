@@ -5,22 +5,33 @@ on:
       - 'v*'
   workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
 jobs:
   hub-app:
     runs-on: macos-15
+    # Secrets and the release upload live behind the "release" environment, so
+    # its protection rules (required reviewers, tag-only branches) gate them.
+    environment: release
+    permissions:
+      contents: write
     env:
-      APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
-      APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
-      TMNF_SIGN_IDENTITY: ${{ secrets.TMNF_SIGN_IDENTITY }}
-      TMNF_NOTARIZE: ${{ secrets.TMNF_NOTARIZE }}
-      TMNF_NOTARY_PROFILE: tmnf-ci
+      # Never a secret: a manual run on a branch builds an unsigned, unpublished hub.
+      IS_TAG_BUILD: ${{ startsWith(github.ref, 'refs/tags/v') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2, pinned
+        with:
+          version: 0.13.5
       - name: Verify tag, runtime and source release assets and signing configuration
+        id: verify
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
+          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+          TMNF_SIGN_IDENTITY: ${{ secrets.TMNF_SIGN_IDENTITY }}
+          TMNF_NOTARIZE: ${{ secrets.TMNF_NOTARIZE }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           TMNF_TEAM_ID: ${{ secrets.TMNF_TEAM_ID }}
           TMNF_APP_PASSWORD: ${{ secrets.TMNF_APP_PASSWORD }}
@@ -30,11 +41,24 @@ jobs:
           tag="v${version}"
           test "$GITHUB_REF_NAME" = "$tag" \
             || { echo "Tag $GITHUB_REF_NAME does not match VERSION $version" >&2; exit 1; }
-          test -n "$APPLE_CERT_P12" || { echo 'APPLE_CERT_P12 is required for a tag release.' >&2; exit 1; }
-          test -n "$TMNF_SIGN_IDENTITY" || { echo 'TMNF_SIGN_IDENTITY is required for a tag release.' >&2; exit 1; }
-          test "$TMNF_NOTARIZE" = 1 || { echo 'TMNF_NOTARIZE=1 is required for a tag release.' >&2; exit 1; }
-          test -n "$APPLE_ID" && test -n "$TMNF_TEAM_ID" && test -n "$TMNF_APP_PASSWORD" \
-            || { echo 'Apple notarization credentials are required for a tag release.' >&2; exit 1; }
+          # Without any signing secret the hub is ad-hoc signed and not notarized:
+          # it still publishes, and users approve it once in Privacy & Security.
+          # As soon as any signing secret is set, the full Developer ID and
+          # notarization configuration is required, so a half-configured
+          # repository fails instead of silently shipping an ad-hoc build.
+          signing_secrets="$APPLE_CERT_P12$TMNF_SIGN_IDENTITY$TMNF_NOTARIZE$APPLE_ID$TMNF_TEAM_ID$TMNF_APP_PASSWORD"
+          has_signing=false
+          if test -z "$signing_secrets"; then
+            echo "::warning title=Unsigned hub release::No signing secrets are set; $tag ships an ad-hoc signed, unnotarized hub that Gatekeeper will block until the user allows it."
+          else
+            test -n "$APPLE_CERT_P12" || { echo 'APPLE_CERT_P12 is required for a signed tag release.' >&2; exit 1; }
+            test -n "$TMNF_SIGN_IDENTITY" || { echo 'TMNF_SIGN_IDENTITY is required for a signed tag release.' >&2; exit 1; }
+            test "$TMNF_NOTARIZE" = 1 || { echo 'TMNF_NOTARIZE=1 is required for a signed tag release.' >&2; exit 1; }
+            test -n "$APPLE_ID" && test -n "$TMNF_TEAM_ID" && test -n "$TMNF_APP_PASSWORD" \
+              || { echo 'Apple notarization credentials are required for a signed tag release.' >&2; exit 1; }
+            has_signing=true
+          fi
+          echo "has_signing=$has_signing" >> "$GITHUB_OUTPUT"
           staging="$(mktemp -d)"
           trap 'rm -rf "$staging"' EXIT
           # The runtime archive is what the hub installs. The source archive is the
@@ -50,9 +74,16 @@ jobs:
             expected="$(printf '%s' "$expected" | tr 'A-F' 'a-f')"
             [[ "$expected" =~ ^[0-9a-f]{64}$ ]] && test "$expected" = "$actual" \
               || { echo "Published checksum verification failed for $asset." >&2; exit 1; }
+            # The verified runtime digest is pinned into the hub being built.
+            if test "$kind" = runtime; then
+              echo "runtime_sha256=$expected" >> "$GITHUB_OUTPUT"
+            fi
           done
       - name: Import Developer ID certificate
-        if: env.APPLE_CERT_P12 != ''
+        if: steps.verify.outputs.has_signing == 'true'
+        env:
+          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
         run: |
           cert="$RUNNER_TEMP/tmnf-cert.p12"
           echo "$APPLE_CERT_P12" | base64 --decode > "$cert"
@@ -63,8 +94,9 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions actions.keychain
           rm "$cert"
       - name: Store notarytool credentials
-        if: env.TMNF_NOTARIZE == '1'
+        if: steps.verify.outputs.has_signing == 'true'
         env:
+          TMNF_NOTARY_PROFILE: tmnf-ci
           APPLE_ID: ${{ secrets.APPLE_ID }}
           TMNF_TEAM_ID: ${{ secrets.TMNF_TEAM_ID }}
           TMNF_APP_PASSWORD: ${{ secrets.TMNF_APP_PASSWORD }}
@@ -72,6 +104,14 @@ jobs:
           xcrun notarytool store-credentials "$TMNF_NOTARY_PROFILE" \
             --apple-id "$APPLE_ID" --team-id "$TMNF_TEAM_ID" --password "$TMNF_APP_PASSWORD"
       - name: Build hub app archive
+        env:
+          TMNF_RUNTIME_PIN_SHA256: ${{ steps.verify.outputs.runtime_sha256 }}
+          # A tag build must carry the runtime pin; package-app.sh fails without it.
+          TMNF_REQUIRE_RUNTIME_PIN: ${{ env.IS_TAG_BUILD == 'true' && '1' || '0' }}
+          # Signing secrets are exposed only for tag builds that verified them.
+          TMNF_SIGN_IDENTITY: ${{ steps.verify.outputs.has_signing == 'true' && secrets.TMNF_SIGN_IDENTITY || '' }}
+          TMNF_NOTARIZE: ${{ steps.verify.outputs.has_signing == 'true' && secrets.TMNF_NOTARIZE || '' }}
+          TMNF_NOTARY_PROFILE: tmnf-ci
         run: ./src/shell/tools/package-app.sh all
       - name: Upload app archive artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, pinned

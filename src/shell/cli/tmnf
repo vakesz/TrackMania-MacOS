@@ -19,6 +19,7 @@ Commands:
   configure    Open TMNF's graphics launcher
   d9vk         Install the bundled D9VK Direct3D 9 DLL into the prefix
   doctor       Check the installation and print useful diagnostics
+  diagnostics  Write a redacted diagnostics zip to ~/Library/Logs/TMNF
   stop         Stop Wine processes belonging to the TMNF prefix
   app          Install the game and settings apps in Applications
   setup        Install runtime, prefix and DirectX without the game
@@ -52,7 +53,7 @@ case "$command" in
     validate_launch_options
     guard_prefix_operation "${TMNF_PROJECT_DIR}/src/shell/cli/tmnf" "$@"
     ;;
-  hub|titles)
+  hub|titles|diagnostics)
     # Snapshot and listing must work even with an unrelated launch-option env
     # var mistyped; launch options only matter for play paths below.
     tmnf_title_is_known "$TMNF_TITLE" || die "Unknown title: $TMNF_TITLE"
@@ -68,6 +69,7 @@ case "$command" in
   configure) configure_game ;;
   d9vk) install_d9vk ;;
   doctor) doctor ;;
+  diagnostics) hub_command diagnostics ;;
   stop) stop_game ;;
   app) install_app ;;
   titles) hub_command titles ;;

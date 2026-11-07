@@ -85,5 +85,72 @@ class MonitorTests(unittest.TestCase):
         self.assertRegex(out.getvalue(), r'^tmnf-mon: tick=\d+\.\d{3} event=state_helper status=unavailable')
 
 
+class TrackerTests(unittest.TestCase):
+    """Spawn counts of the per-second monitor loop, with subprocess stubbed."""
+
+    GAME_PS = '  100 /sbin/launchd\n 4242 Z:\\Games\\TmForever.exe -nologo\n'
+    NO_GAME_PS = '  100 /sbin/launchd\n'
+
+    def setUp(self):
+        self.calls = []
+        self.now = 0.0
+        self.alive = True
+
+    def stub_run(self, ps):
+        def run(command, **_):
+            self.calls.append(list(command[:2] if command[0] == 'lsappinfo' else command[:1]))
+            if command[0] == 'ps':
+                return mock.Mock(stdout=ps)
+            if command[1] == 'front':
+                return mock.Mock(stdout='ASN:0x0-0x1:\n')
+            return mock.Mock(stdout='    pid = 4242 !cgsConnection\n')
+        return mock.patch.object(monitor.subprocess, 'run', side_effect=run)
+
+    def ticks(self, count, ps):
+        game = monitor.GameTracker(libproc=None, clock=lambda: self.now)
+        front = monitor.FrontTracker()
+        seen = []
+        with self.stub_run(ps), mock.patch.object(monitor, 'alive', side_effect=lambda _: self.alive):
+            for tick in range(count):
+                self.now = float(tick)
+                pid = game.poll()
+                seen.append((pid, front.pid() if pid is not None else None))
+        return seen
+
+    def test_running_game_costs_one_ps_spawn_over_many_ticks(self):
+        seen = self.ticks(30, self.GAME_PS)
+        self.assertEqual(set(seen), {(4242, 4242)})
+        self.assertEqual(self.calls.count(['ps']), 1)
+        # lsappinfo front once per tick; the pid behind the ASN is looked up once.
+        self.assertEqual(self.calls.count(['lsappinfo', 'front']), 30)
+        self.assertEqual(self.calls.count(['lsappinfo', 'info']), 1)
+
+    def test_missing_game_rescans_at_most_every_five_seconds(self):
+        seen = self.ticks(30, self.NO_GAME_PS)
+        self.assertEqual({pid for pid, _ in seen}, {None})
+        self.assertEqual(self.calls.count(['ps']), 6)
+        self.assertNotIn(['lsappinfo', 'front'], self.calls)  # no game: foreground is irrelevant
+
+    def test_exited_game_is_noticed_at_once_and_rescan_is_throttled(self):
+        game = monitor.GameTracker(libproc=None, clock=lambda: self.now)
+        with self.stub_run(self.GAME_PS), mock.patch.object(monitor, 'alive', side_effect=lambda _: self.alive):
+            self.assertEqual(game.poll(), 4242)
+            self.alive, self.now = False, 1.0
+            self.assertIsNone(game.poll())
+            self.assertEqual(self.calls.count(['ps']), 1)
+            self.alive, self.now = True, 6.0
+            self.assertEqual(game.poll(), 4242)
+        self.assertEqual(self.calls.count(['ps']), 2)
+
+    def test_reused_pid_is_not_mistaken_for_the_game(self):
+        starts = iter([(1, 0), (2, 0)])
+        game = monitor.GameTracker(libproc=object(), clock=lambda: self.now)
+        with self.stub_run(self.GAME_PS), mock.patch.object(monitor, 'alive', return_value=True), \
+                mock.patch.object(monitor, 'start_time', side_effect=lambda *_: next(starts)):
+            self.assertEqual(game.poll(), 4242)  # scan records start (1, 0)
+            self.now = 1.0
+            self.assertIsNone(game.poll())  # same pid, new start time: dropped, scan throttled
+
+
 if __name__ == '__main__':
     unittest.main()

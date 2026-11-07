@@ -9,7 +9,12 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2, pinned
+        with:
+          version: 0.13.5
       - name: Install validation tools
-        run: brew install shellcheck uv
+        run: brew install shellcheck
       - name: Validate
         run: make check

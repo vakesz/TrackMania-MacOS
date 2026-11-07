@@ -31,6 +31,20 @@ die() {
   exit 1
 }
 
+# Remove abandoned staging leftovers: direct children of DIR named GLOB, of TYPE
+# (d by default, f for files), owned by this user, not symlinks, and idle for
+# more than an hour. Never fails the caller.
+sweep_stale() {
+  local dir="$1" glob="$2" type="${3:-d}" entry
+  test -d "$dir" || return 0
+  while IFS= read -r entry; do
+    test -n "$entry" || continue
+    rm -rf -- "$entry" || warn "Cannot remove stale $entry"
+  done < <(find "$dir" -mindepth 1 -maxdepth 1 -type "$type" -name "$glob" \
+    -user "$(id -u)" -mmin +60 2>/dev/null || true)
+  return 0
+}
+
 have() {
   command -v "$1" >/dev/null 2>&1
 }
@@ -163,7 +177,19 @@ readonly GAME_OPENAL="${GAME_DIR}/OpenAL32.dll"
 readonly GAME_OPENAL_CREATIVE="${GAME_DIR}/OpenAL32.creative.dll"
 readonly GAME_OPENAL_COPYING="${GAME_DIR}/OpenAL32.COPYING.txt"
 
+# Lowercase hex digest only. hashlib streams several times faster than shasum
+# on large archives; shasum remains the fallback when no Python is usable here.
+# -I is not an option: it would drop the PYTHONPATH that locates the package.
 sha256_file() {
+  local digest
+  if { [[ "$TMNF_PYTHON" = */* ]] && test -x "$TMNF_PYTHON"; } \
+    || { [[ "$TMNF_PYTHON" != */* ]] && have "$TMNF_PYTHON"; }; then
+    if digest="$(PYTHONPATH="$TMNF_PYTHONPATH" "$TMNF_PYTHON" -m tmnf.install.hashing sha256 "$1" 2>/dev/null)" \
+      && [[ "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+      printf '%s\n' "$digest"
+      return 0
+    fi
+  fi
   shasum -a 256 "$1" | awk '{print $1}'
 }
 
@@ -268,12 +294,13 @@ download_verified() (
   fi
 
   say "Downloading $(basename "$destination")"
+  sweep_stale "$(dirname "$destination")" '*.partial.*' f
   partial="$(mktemp "${destination}.partial.XXXXXX")" || die "Cannot stage download."
   printf -v cleanup 'rm -f -- %q' "$partial"
   # shellcheck disable=SC2064
   trap "$cleanup" EXIT
   trap 'exit 1' HUP INT TERM
-  curl --fail --location --retry 3 --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
+  curl -q --fail --location --retry 3 --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
     --progress-bar --output "$partial" "$url" || die "Download failed: $url"
   verify_file "$partial" "$expected" || {
     rm -f "$partial"

@@ -176,7 +176,9 @@ install_pinned_inno_game() {
   installer_path="$(_cache_installer_path "$title_id")"
   inner="$(unpack_inner_inno "$installer_path")"
   rm -f "$installer_log"
-  TMNF_INNO_DIR="C:\Program Files (x86)\${TMNF_TITLE_GAME_DIR_NAME}" \
+  # Inside double quotes "\$" is a literal dollar sign, so the separator
+  # before the expansion must be an escaped backslash.
+  TMNF_INNO_DIR="C:\\Program Files (x86)\\${TMNF_TITLE_GAME_DIR_NAME}" \
     run_released_installer "$inner" "$title_name"
   wait_inno_setup "$TMNF_INSTALLER_PID" "$installer_log" "$title_name"
   verify_installed_game "$GAME_EXE" "" "$title_name"

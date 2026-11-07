@@ -3,155 +3,37 @@ import SwiftUI
 struct TitleDetailView: View {
     let title: HubTitle
     @ObservedObject var model: HubViewModel
+    @ObservedObject var updates: UpdateChecker
+    @AppStorage(HubDefaults.dismissedUpdate) private var dismissedUpdate = ""
     @State private var runtimeChoiceAction: HubAction?
+    @State private var uninstallAction: HubAction?
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                HStack(alignment: .center, spacing: 18) {
-                    GameIconView(title: title, size: 84)
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(title.name)
-                            .font(.system(size: 26, weight: .semibold, design: .rounded))
-                        HStack(spacing: 8) {
-                            Circle()
-                                .fill(title.supportColor)
-                                .frame(width: 7, height: 7)
-                            Text(title.supportLabel)
-                                .font(.callout.weight(.medium))
-                                .foregroundStyle(title.supportColor)
-                            Text(title.availability)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                            if title.requiresSerial == true {
-                                Text("Serial key required")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    Spacer()
+            VStack(alignment: .leading, spacing: 20) {
+                if let info = updates.available, info.tag != dismissedUpdate {
+                    UpdateBanner(info: info) { dismissedUpdate = info.tag }
                 }
-
-                HStack(spacing: 10) {
-                    if let primaryAction {
-                        Button {
-                            perform(primaryAction)
-                        } label: {
-                            Label(primaryAction.label, systemImage: actionIcon(primaryAction))
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                        .disabled(model.runningAction != nil || title.error != nil)
-                    }
-
-                    if title.state.gameApp?.ready == true {
-                        Button {
-                            model.openApp(at: title.apps.game, for: title)
-                        } label: {
-                            Label("Play", systemImage: "play.fill")
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.large)
-                        .disabled(model.runningAction != nil)
-                    }
-
-                    if let secondaryActions = nonPrimaryActions, !secondaryActions.isEmpty {
-                        Menu("More") {
-                            ForEach(secondaryActions) { action in
-                                Button(action.label) { perform(action) }
-                                    .disabled(model.runningAction != nil)
-                            }
-                        }
-                        .menuStyle(.borderlessButton)
-                    }
-
-                    if title.state.settingsApp?.ready == true {
-                        Button("Settings") { model.openApp(at: title.apps.settings, for: title) }
-                            .disabled(model.runningAction != nil)
-                    }
-
-                    Spacer()
-                    Button { model.reload() } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.plain)
-                    .help("Refresh installation status")
-                    .disabled(model.runningAction != nil)
+                HeroHeaderView(title: title)
+                ActionBar(title: title, model: model, perform: perform)
+                if let run = model.run(for: title) {
+                    ActivityCard(run: run, model: model)
                 }
-
-                Divider()
-
-                VStack(alignment: .leading, spacing: 13) {
-                    Text("Installation")
-                        .font(.headline)
-                    ForEach(title.summary) { item in
-                        HStack(spacing: 10) {
-                            Image(systemName: item.ready ? "checkmark.circle.fill" : "circle")
-                                .foregroundStyle(item.ready ? Color.green : Color.secondary)
-                                .frame(width: 16)
-                            Text(item.label)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Text(item.ready ? "Ready" : "Not installed")
-                                .foregroundStyle(item.ready ? .primary : .secondary)
-                        }
-                        .font(.callout)
-                    }
-                }
-
-                if !title.notes.isEmpty {
-                    Text(title.notes)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                if let error = title.error {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                if model.isRunning(title) || (model.hasActivity(for: title) && !model.log.isEmpty) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        if model.isRunning(title) {
-                            HStack {
-                                ProgressView("Working on \(title.name)…")
-                                Spacer()
-                                Button("Cancel") { model.cancelRunning() }
-                            }
-                            if let progress = model.progressDescription(for: title) {
-                                Text(progress)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                            }
-                        }
-                        if !model.log.isEmpty {
-                            DisclosureGroup("Installer details") {
-                                ScrollView {
-                                    Text(model.log)
-                                        .font(.system(.caption, design: .monospaced))
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .textSelection(.enabled)
-                                }
-                                .frame(minHeight: 100, maxHeight: 220)
-                            }
-                        }
-                    }
-                }
-
                 if let message = model.message(for: title) {
-                    Text(message)
-                        .font(.callout)
-                        .foregroundStyle(model.runningAction == nil ? Color.secondary : Color.blue)
+                    Text(message).font(.callout).foregroundStyle(.secondary)
+                }
+                SetupChecklistCard(title: title)
+                DetailsCard(title: title, model: model)
+                if !title.notes.isEmpty {
+                    Callout(text: title.notes, systemImage: "info.circle")
+                }
+                if let error = title.error {
+                    Callout(text: error, systemImage: "exclamationmark.triangle.fill", tint: .orange)
                 }
             }
             .padding(32)
-            .frame(maxWidth: 760, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .frame(maxWidth: 780, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .top)
         }
         .confirmationDialog(
             "Install the Wine runtime",
@@ -173,34 +55,43 @@ struct TitleDetailView: View {
                 + "then compiles them; it needs Xcode, Rosetta 2 and Homebrew, can take hours, "
                 + "and removes its build files when it succeeds.")
         }
+        .confirmationDialog(
+            "Uninstall \(title.name)?",
+            isPresented: Binding(get: { uninstallAction != nil },
+                                 set: { if !$0 { uninstallAction = nil } }),
+            titleVisibility: .visible,
+            presenting: uninstallAction
+        ) { action in
+            Button(Self.confirmLabel(action.label), role: .destructive) { model.run(action, for: title) }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text(HubUIText.uninstall(title))
+        }
     }
 
-    private var primaryAction: HubAction? {
-        title.actions.first(where: \.primary) ?? title.actions.first
-    }
-
-    private var nonPrimaryActions: [HubAction]? {
-        guard let primaryAction else { return nil }
-        return title.actions.filter { $0.id != primaryAction.id }
+    /// Menu items end in "…" because they open a dialog; the dialog's own button must not.
+    nonisolated static func confirmLabel(_ label: String) -> String {
+        label.hasSuffix("…") ? String(label.dropLast()) : label
     }
 
     private func perform(_ action: HubAction) {
         if action.kind == .import {
             model.chooseImportSource(for: title, action: action)
+        } else if action.kind == .destructive {
+            uninstallAction = action
         } else if title.needsRuntimeChoice(for: action) {
             runtimeChoiceAction = action
         } else {
             model.run(action, for: title)
         }
     }
+}
 
-    private func actionIcon(_ action: HubAction) -> String {
-        switch action.kind {
-        case .install: "arrow.down.to.line"
-        case .import: "tray.and.arrow.down"
-        case .apps: "macwindow.badge.plus"
-        case .verify: "arrow.triangle.2.circlepath"
-        case .build, .unknown: "wrench.and.screwdriver"
-        }
+enum HubUIText {
+    static func uninstall(_ title: HubTitle) -> String {
+        let removed = title.locations?.prefix ?? String(localized: "this game's Wine prefix")
+        let kept = title.locations?.userdata.map { String(localized: "your saved data at \($0)") }
+            ?? String(localized: "your saved data")
+        return String(localized: "This removes \(removed). It keeps \(kept), the cached installers and the runtime.")
     }
 }

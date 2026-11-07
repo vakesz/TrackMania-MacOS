@@ -418,7 +418,7 @@ def fetch(name):
             if part.exists():
                 part.unlink()
             try:
-                run('curl', '--fail', '--location', '--retry', '3', '--connect-timeout', '20', '--speed-limit', '1024', '--speed-time', '60', '--output', part, spec['url'],
+                run('curl', '-q', '--fail', '--location', '--retry', '3', '--connect-timeout', '20', '--speed-limit', '1024', '--speed-time', '60', '--output', part, spec['url'],
                     title=f'{name}: downloading {spec["url"]}')
             except BaseException:
                 part.unlink(missing_ok=True)

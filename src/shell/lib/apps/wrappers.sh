@@ -161,6 +161,7 @@ install_app() {
       # Swap atomically: the old launcher stays roll-backable until the new
       # one is fully in place, so a failed move never leaves the machine
       # without an installed launcher.
+      sweep_stale "$(dirname "$TMNF_LAUNCHER")" '.launcher-previous.*'
       previous="$(mktemp -d "$(dirname "$TMNF_LAUNCHER")/.launcher-previous.XXXXXX")"
       mv "$TMNF_LAUNCHER" "$previous/launcher"
     fi

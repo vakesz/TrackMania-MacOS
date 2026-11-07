@@ -162,7 +162,10 @@ from the `APPLE_ID`, `TMNF_TEAM_ID` and `TMNF_APP_PASSWORD` secrets.
 
 Do not publish a hub whose versioned runtime archive is unavailable: first-run
 installation downloads it. The source archive is published as the runtime's
-corresponding source. The tag workflow enforces the matching `VERSION`, both
-assets and their checksums, and Developer ID notarization before it attaches a
-hub zip; use a new version and coherent runtime build for any archive-format
+corresponding source. The tag workflow enforces the matching `VERSION` and both
+assets and their checksums before it attaches a hub zip. If the repository has
+no signing secrets, it publishes an ad-hoc signed, unnotarized hub with a
+workflow warning; users must allow it once under System Settings > Privacy &
+Security. If any signing secret is set, the workflow requires the complete
+Developer ID and notarization configuration and fails otherwise. Use a new version and coherent runtime build for any archive-format
 change. Build the hub from a clean, pushed commit so its build mode works.

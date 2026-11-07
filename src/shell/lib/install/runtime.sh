@@ -26,6 +26,24 @@ runtime_download_hint() {
   fi
 }
 
+# Print the runtime checksum pinned in config/runtime-pin ("<version> <sha256>"),
+# found like the payload's other config files. Prints nothing when there is no
+# usable pin; a pin for another version is ignored with a warning.
+runtime_pinned_checksum() {
+  local file="${TMNF_PROJECT_DIR}/config/runtime-pin" version hash extra
+  test -f "$file" && test ! -L "$file" || return 0
+  read -r version hash extra <"$file" || true
+  if [[ ! "$hash" =~ ^[0-9a-fA-F]{64}$ ]] || test -n "$extra"; then
+    warn "Ignoring malformed runtime pin: $file"
+    return 0
+  fi
+  if test "$version" != "$RUNTIME_VERSION"; then
+    warn "Ignoring runtime pin for version ${version}; this is runtime ${RUNTIME_VERSION}."
+    return 0
+  fi
+  printf '%s' "$hash" | tr 'A-F' 'a-f'
+}
+
 find_git() {
   if test -x /usr/bin/git; then
     printf '%s' /usr/bin/git
@@ -149,7 +167,7 @@ install_wine_runtime() {
   local expected="${TMNF_RUNTIME_SHA256:-}"
   local mode="${TMNF_RUNTIME_SOURCE-auto}"
   local workspace=""
-  local staging source cleanup status
+  local staging source cleanup status pinned
 
   validate_runtime_source
   is_safe_managed_path "$TMNF_RUNTIME" || die "Unsafe runtime path: $TMNF_RUNTIME"
@@ -169,30 +187,50 @@ install_wine_runtime() {
   # Keep cleanup local to this operation, including a failed checksum or extraction.
   (
     set -e
-    staging="$(mktemp -d "$(dirname "$TMNF_RUNTIME")/.runtime-install.XXXXXX")" \
-      || die "Cannot create runtime staging directory."
-    # Bash 3.2 unwinds function locals before EXIT on errexit. Capture the path.
-    printf -v cleanup 'rm -rf -- %q' "$staging"
+    # build_runtime_locally appends its own clone cleanup to this EXIT trap.
+    cleanup=':'
     # shellcheck disable=SC2064
     trap "$cleanup" EXIT
     trap 'exit 1' HUP INT TERM
+    # A source build can take hours; create the staging directory only after
+    # it, so a concurrent install's stale sweep never sees it idle for long.
     if test -z "$archive" && test "$mode" = build; then
       build_runtime_locally
     fi
+    sweep_stale "$(dirname "$TMNF_RUNTIME")" '.runtime-install.*'
+    staging="$(mktemp -d "$(dirname "$TMNF_RUNTIME")/.runtime-install.XXXXXX")" \
+      || die "Cannot create runtime staging directory."
+    # Bash 3.2 unwinds function locals before EXIT on errexit. Capture the path.
+    printf -v cleanup '%s; rm -rf -- %q' "$cleanup" "$staging"
+    # shellcheck disable=SC2064
+    trap "$cleanup" EXIT
     if test -z "$archive" && test "$mode" != download && { test -e "$built" || test -L "$built"; }; then
-      runtime_is_complete "$built" || die "The local source build is incomplete or damaged."
       say "Installing the local source build"
       cp -pRP "$built" "${staging}/runtime" || die "Cannot copy the local runtime."
     else
       if test -z "$archive"; then
         archive="${TMNF_CACHE}/${RUNTIME_ARCHIVE_NAME}"
-        curl --fail --location --retry 3 --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
+        pinned="$(runtime_pinned_checksum)"
+        if curl -q --fail --location --retry 3 --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
           --output "${staging}/release.sha256" \
-          "${RUNTIME_RELEASE_URL}/${RUNTIME_ARCHIVE_NAME}.sha256" \
-          || die "Cannot download runtime release $RUNTIME_VERSION. $(runtime_download_hint)"
-        expected="$(awk 'NR==1 {print $1}' "${staging}/release.sha256")"
-        [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || die "Invalid release checksum."
-        expected="$(printf '%s' "$expected" | tr 'A-F' 'a-f')"
+          "${RUNTIME_RELEASE_URL}/${RUNTIME_ARCHIVE_NAME}.sha256"; then
+          expected="$(awk 'NR==1 {print $1}' "${staging}/release.sha256")"
+          [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || die "Invalid release checksum."
+          expected="$(printf '%s' "$expected" | tr 'A-F' 'a-f')"
+        elif test -n "$pinned"; then
+          # The pin is authoritative; the release checksum is only a tamper
+          # cross-check, so a cached archive still reinstalls offline.
+          expected=""
+        else
+          die "Cannot download runtime release $RUNTIME_VERSION. $(runtime_download_hint)"
+        fi
+        if test -z "$pinned"; then
+          warn "The runtime checksum is unpinned and came from the release itself; a compromised release could replace both archive and checksum."
+        elif test -n "$expected" && test "$pinned" != "$expected"; then
+          die "The release checksum for runtime $RUNTIME_VERSION ($expected) differs from the checksum pinned in this hub ($pinned). Refusing to install."
+        else
+          expected="$pinned"
+        fi
         download_verified "${RUNTIME_RELEASE_URL}/${RUNTIME_ARCHIVE_NAME}" "$archive" "$expected" \
           || die "Cannot download the runtime archive."
       else
@@ -204,8 +242,12 @@ install_wine_runtime() {
         || die "Cannot extract the runtime archive safely."
     fi
     source="${staging}/runtime"
-    runtime_is_complete "$source" || die "The runtime is incomplete or has the wrong version."
+    # Verify the staged tree before executing anything from it. When the
+    # destination already exists no probe runs, and publish verifies the source
+    # itself, so a second pass here would hash the same unchanged tree twice.
+    # (The copy of a local build is verified here, not the original beforehand.)
     if test ! -e "$TMNF_RUNTIME" && test ! -L "$TMNF_RUNTIME"; then
+      runtime_is_complete "$source" || die "The runtime is incomplete or has the wrong version."
       without_operation_lock "${source}/bin/wine" --version || die "Wine runtime probe failed."
       without_operation_lock "${source}/bin/x87sidecar" --probe || die "x87sidecar runtime probe failed."
     fi

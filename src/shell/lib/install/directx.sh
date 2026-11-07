@@ -11,6 +11,7 @@ install_directx_runtime() (
   fi
 
   download_verified "$DIRECTX_URL" "$DIRECTX_ARCHIVE" "$DIRECTX_SHA256"
+  sweep_stale "$TMNF_CACHE" '*-extract.*'
   extract_dir="$(mktemp -d "${TMNF_CACHE}/directx-extract.XXXXXX")"
   printf -v cleanup 'rm -rf -- %q' "$extract_dir"
   # shellcheck disable=SC2064

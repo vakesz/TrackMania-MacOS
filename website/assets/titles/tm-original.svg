@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">Original</title>
+  <desc id="description">An original icon of a stepped arch ramp with a start beacon, in amber and cream over deep brown.</desc>
+  <defs>
+    <linearGradient id="backdrop" x1="130" y1="80" x2="900" y2="980" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4A2C16"/>
+      <stop offset="0.55" stop-color="#2B190D"/>
+      <stop offset="1" stop-color="#170C05"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="200" y1="820" x2="840" y2="220" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFE9B8"/>
+      <stop offset="1" stop-color="#F2A93B"/>
+    </linearGradient>
+    <linearGradient id="spark" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#7CF0C9"/>
+      <stop offset="1" stop-color="#1FB6A3"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.05" r="0.95">
+      <stop stop-color="#C77A2E" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#C77A2E" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+    <clipPath id="tile"><rect x="48" y="48" width="928" height="928" rx="218"/></clipPath>
+  </defs>
+
+  <rect x="48" y="48" width="928" height="928" rx="218" fill="url(#backdrop)"/>
+  <rect x="62" y="62" width="900" height="900" rx="204" fill="none" stroke="#FFE9B8" stroke-opacity="0.22" stroke-width="8"/>
+  <ellipse cx="512" cy="210" rx="425" ry="340" fill="url(#glow)" clip-path="url(#tile)"/>
+  <g filter="url(#shadow)" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M200 820 V560 C200 380 340 260 512 260 C684 260 824 380 824 560 V820" fill="none" stroke="#120803" stroke-width="210"/>
+    <path d="M200 820 V560 C200 380 340 260 512 260 C684 260 824 380 824 560 V820" fill="none" stroke="url(#accent)" stroke-width="150"/>
+    <path d="M200 820 V560 C200 380 340 260 512 260 C684 260 824 380 824 560 V820" fill="none" stroke="#2B190D" stroke-width="86"/>
+    <path d="M200 820 V560 C200 380 340 260 512 260 C684 260 824 380 824 560 V820" fill="none" stroke="#FFF6E2" stroke-opacity="0.85" stroke-width="12" stroke-dasharray="44 38"/>
+    <circle cx="512" cy="560" r="62" fill="url(#spark)"/>
+    <circle cx="512" cy="560" r="62" fill="none" stroke="#FFF6E2" stroke-opacity="0.6" stroke-width="10"/>
+  </g>
+</svg>

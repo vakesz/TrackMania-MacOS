@@ -1,23 +1,56 @@
 # TrackMania Mac
 
-Install and play the TrackMania Forever family on Apple Silicon with a native
-hub app and a patched Wine runtime. The runtime includes D9VK, MoltenVK and an
-x87 translator that preserves the games' 24-bit floating-point precision.
-Nations Forever installs with Competition Patch, working textures and audio.
+**Play TrackMania Nations Forever on an Apple Silicon Mac.** Download one free
+app, click **Install**, and it sets up everything for you: the game, a patched
+Windows compatibility layer (Wine), DirectX and the Competition Patch. You don't
+need Windows, a virtual machine or developer tools.
 
-| Title | Install source | Status |
-| --- | --- | --- |
-| Nations Forever (`tmnf`) | free Nadeo download | supported |
-| United Forever (`tmu`) | official retail installer (serial key needed) | provisional |
-| Original (`tm-original`) | your own retail disk image or setup executable | provisional |
-| TrackMania 2 Canyon (`tm-canyon`) | official ManiaPlanet trial | provisional |
-| Turbo (`tm-turbo`) | existing Steam game folder | provisional |
+**Website:** <https://vakesz.github.io/TrackMania-MacOS/> ·
+**Download:** [latest release](https://github.com/vakesz/TrackMania-MacOS/releases/latest)
 
-Provisional titles install, but renderer, DRM, online services and full
-gameplay have not been qualified under Wine. See [docs/hub-app.md](docs/hub-app.md).
+![The TrackMania Mac hub app with Nations Forever selected, showing the Install button and setup checklist](docs/images/hub.png)
 
-This is an independent community project. Games and Microsoft DirectX are
-downloaded from their original hosts or supplied by you, not redistributed here.
+This is an independent community project, not affiliated with Nadeo or Ubisoft.
+Games and Microsoft DirectX are downloaded from their original hosts or supplied
+by you. They are not redistributed here.
+
+## What you need
+
+- A Mac with Apple Silicon (M1 or later) running macOS 14 Sonoma or later.
+  Intel Macs are not supported.
+- An internet connection and a few gigabytes of free disk space.
+- Rosetta 2. If it's missing, the installer adds it for you.
+
+## Quick start
+
+1. **Download** `TrackMania-Mac-<version>.app.zip` from the
+   [latest release](https://github.com/vakesz/TrackMania-MacOS/releases/latest).
+2. **Unzip it** and drag **TrackMania Mac.app** into your **Applications** folder.
+3. **Open it.** If macOS says it can't verify the app, open
+   **System Settings > Privacy & Security**, scroll down and click
+   **Open Anyway**. You only have to do this once.
+4. **Pick TrackMania Nations Forever** in the sidebar and click
+   **Install or repair**. Choose **Download prebuilt (recommended)** when asked how to get the
+   runtime. Downloading takes a few minutes; building it yourself takes hours.
+5. **Play.** When the setup checklist is all green, click **Play** in the hub,
+   or open **TrackMania Nations Forever** from your Applications folder.
+
+The install adds two apps to your Applications folder:
+
+| App | What it does |
+| --- | --- |
+| **TrackMania Nations Forever** | Starts the game with Competition Patch. Use this to play. |
+| **TrackMania Settings** | Opens the game's own launcher to change graphics, resolution and audio. Close the game first, then save and close Settings before you play. |
+
+### Your first launch
+
+- Starting the game takes a while before a window appears. The window can open
+  **behind other windows**, so check Mission Control or the Dock.
+- The game shows its own **"Network check"** dialog. Click **OK**. The account
+  screen comes next.
+- The game opens in the display mode chosen in **TrackMania Settings**
+  (fullscreen or windowed, at the resolution you pick). With more than one
+  monitor, fullscreen uses the primary display.
 
 | In game | Main menu |
 | --- | --- |
@@ -26,56 +59,59 @@ downloaded from their original hosts or supplied by you, not redistributed here.
 Both screenshots are from an M1 Pro in a 1280x720 window with the DXVK frame
 rate overlay enabled (`DXVK_HUD=fps,frametimes`).
 
-## Requirements
+## Which games work?
 
-An Apple Silicon Mac and an internet connection. Rosetta 2 is also required; the
-installer adds it if necessary. The native hub bundles its own Python runtime, so
-normal use needs no developer tools. A source checkout additionally needs the
-Xcode command-line tools for `make`.
+| Title | Where the game comes from | Status |
+| --- | --- | --- |
+| Nations Forever | free download from Nadeo | ✅ supported |
+| United Forever | official retail installer (needs your serial key) | 🧪 provisional |
+| Original | your own retail disc image or setup file | 🧪 provisional |
+| TrackMania 2 Canyon | official ManiaPlanet trial | 🧪 provisional |
+| Turbo | your existing Steam game folder | 🧪 provisional |
 
-Close any existing TMNF session before installing or updating. Choose the native
-hub download for normal use, or a checkout when building the runtime yourself.
+**Provisional** means the title installs, but graphics, copy protection, online
+play and full gameplay have not been tested enough under Wine to call it
+supported. See [the hub guide](docs/hub-app.md) for details.
 
-## Option 1: native hub download
+## Common questions
 
-Download `TrackMania-Mac-<version>.app.zip` from
-[GitHub Releases](https://github.com/vakesz/TrackMania-MacOS/releases), unzip it,
-move the single **TrackMania Mac.app** to Applications, then open it. If macOS
-says it cannot verify the app (a release without Developer ID notarization),
-open **System Settings > Privacy & Security** and click **Open Anyway** once.
-The native
-hub shows every registered title and its install state. Nations Forever is the
-supported game; United Forever and Canyon have pinned official installers, while
-Original and Turbo use user-owned retail media or an existing Steam copy. Those
-four entries are provisional and are not yet qualified for complete gameplay,
-graphics or online services. See [the hub guide](docs/hub-app.md) for details.
+**Is it free?** Yes. The hub and this project are free and open source.
+Nations Forever is a free game.
 
-For TMNF, it downloads the ready-built runtime, game, DirectX and Competition
-Patch (or builds the runtime on your Mac when you choose that in the hub; see
-the build prerequisites under Option 3), then creates two separate apps:
+**The game window doesn't show up.** Give it a minute, then look in Mission
+Control or click the game in the Dock. Windows can open behind others.
 
-- **TrackMania Nations Forever** starts the game with Competition Patch.
-- **TrackMania Settings** opens the original launcher to change graphics and
-  audio settings. Close the game before changing these settings.
+**How do I change graphics settings?** Close the game, open
+**TrackMania Settings**, change what you want, save, close it, then start the
+game again. A new install starts with conservative settings (Nice shaders,
+post-processing and stadium water geometry off, at most six opponents) so it
+runs well on any Apple Silicon Mac.
 
-Save and close the settings launcher, then use the game app to play with
-Competition Patch.
+**The first lap on a new track stutters.** The renderer builds its shader cache
+the first time it sees a track, and later visits are smoother. See
+[runtime fixes and troubleshooting](docs/runtime.md).
 
-The session supervisor tracks both settings and game executables, so a launcher
-exit alone does not authorize cleanup. Normal quits are quiet; failed or
-uncertain sessions show an alert with the log location. Uncertainty does not
-authorize killing a game that may still be running. Use `make stop` when you
-explicitly want to stop the selected prefix.
+**Where are my saves and replays?** In `~/Games/TMNF/UserData/TmForever`. See
+[where files go](#where-files-go) for everything else.
 
-On the first launch the game shows its own "Network check" dialog for the
-peer-to-peer firewall test; click OK. The account screen follows. A launch
-takes a while to show a window; the game's windows may open behind others.
+**How do I uninstall?** In the hub, select the game, click the **⋯** button and
+choose **Uninstall…**. This removes the game's Wine prefix and keeps your saves,
+the downloaded installers and the runtime.
 
-The two installed apps go in `/Applications` when it is writable, otherwise in
-`~/Applications`. They use their installed support files, not the hub bundle or
-a source checkout.
+**Something went wrong.** In the hub, click **⋯ > Open Logs Folder** and attach
+the newest log when you
+[open an issue](https://github.com/vakesz/TrackMania-MacOS/issues).
 
-## Option 2: use a source checkout
+---
+
+## For advanced users
+
+Everything below is optional. The hub app above is all you need to play.
+
+You'll need the Xcode command-line tools for `make`. Close any running
+TrackMania session before you install or update.
+
+### Install from a source checkout
 
 From the repository root, this installs TMNF with the runtime chosen by
 `RUNTIME`:
@@ -87,7 +123,8 @@ make install RUNTIME=build    # compile the runtime here, then install it
 ```
 
 `make setup` takes the same `RUNTIME` choice. `build` has the prerequisites
-listed under Option 3. An already installed runtime is never replaced.
+listed under [Build the runtime yourself](#build-the-runtime-yourself). An
+already installed runtime is never replaced.
 
 To install from an archive you already downloaded instead, point the installer
 at it and give the checksum from the release:
@@ -109,7 +146,11 @@ xattr -dr com.apple.quarantine "$HOME/Downloads/trackmania-mac-${version}-runtim
 Archives that `make install` fetches with `curl` are not quarantined, so this
 step is only for a browser download.
 
-## Option 3: build the runtime yourself
+The installed apps go in `/Applications` when it is writable, otherwise in
+`~/Applications`. They use their installed support files, not the hub bundle or
+a source checkout.
+
+### Build the runtime yourself
 
 This compiles the whole runtime from the pinned sources instead of downloading
 it, then installs the game. Install [Homebrew](https://brew.sh) and the full
@@ -133,14 +174,14 @@ install it clones the commit that hub was built from (git comes with Xcode) into
 `~/Library/Caches/TMNF/build`, builds there and deletes that folder after a
 successful install. You need Apple Silicon, Rosetta 2, full Xcode and Homebrew
 (missing formulae are installed with `brew install`). Allow several gigabytes
-of disk space and a substantial first build. Builds use every CPU core by default; use `TMNF_JOBS=4 make build` to
-leave some free.
+of disk space and a substantial first build. Builds use every CPU core by
+default; use `TMNF_JOBS=4 make build` to leave some free.
 
 The deployment target is macOS 14. x87sidecar also depends on the installed
 Rosetta version; its compatibility probe must pass. See
 [building and releasing](docs/building.md) for the tested host and limitations.
 
-## Everyday commands
+### Everyday commands
 
 | Command | Action |
 | --- | --- |
@@ -154,22 +195,17 @@ Rosetta version; its compatibility probe must pass. See
 | `./src/shell/cli/tmnf play-vanilla` | Run the official game without Competition Patch |
 | `./src/shell/cli/tmnf uninstall` | Remove the Wine prefix after confirmation |
 
-A new installation starts with Nice shaders, post-processing and stadium water
-geometry disabled, four game threads and at most six opponents. Existing
-settings are preserved. Use the Settings app to adjust them.
-
-The game runs in the display mode it is set to in **TrackMania Settings**
-(fullscreen or windowed, at the resolution you pick). On more than one monitor,
-fullscreen uses the primary display, so set the resolution to match it. To force
-a fixed windowed size instead, set `TMNF_WINDOW_SIZE=1280x720` (any `WxH`);
-that runs the game inside a separate Wine virtual desktop for this session.
+To force a fixed windowed size, set `TMNF_WINDOW_SIZE=1280x720` (any `WxH`).
+That runs the game inside a separate Wine virtual desktop for this session.
 Each dimension must be between 1 and 65535.
 
-The renderer keeps a shader cache between launches. A first visit to a track can
-still stutter. The patches improve specific problems; they do not guarantee a
-particular frame rate. See [runtime fixes and troubleshooting](docs/runtime.md).
+The session supervisor tracks both settings and game executables, so a launcher
+exit alone does not authorize cleanup. Normal quits are quiet; failed or
+uncertain sessions show an alert with the log location. Uncertainty does not
+authorize killing a game that may still be running. Use `make stop` when you
+explicitly want to stop the selected prefix.
 
-## Where files go
+### Where files go
 
 | Files | Default location |
 | --- | --- |
@@ -197,30 +233,44 @@ App logs rotate before launch when they reach 2 MiB, retaining three numbered
 backups. A currently running verbose session can exceed that size because game
 output goes directly to a file, not a pipe that could interrupt a surviving game.
 
-For a diagnostic comparison, `TMNF_X87=off make play` uses stock Rosetta math.
+### Diagnostic overrides
+
+`TMNF_X87=off make play` uses stock Rosetta math for a comparison.
 `TMNF_AUDIO=off make play` disables sound. Normal installs enable both audio
 and the patched translator. These temporary overrides do not change saved game
 settings. `make install` replaces the game's Creative OpenAL with OpenAL Soft;
 `TMNF_OPENAL=creative make install` puts the original back and keeps it on
 later installs.
 
-## Development
+### How it works
+
+The runtime is a patched Wine build with D9VK (Direct3D 9 to Vulkan), MoltenVK
+(Vulkan to Metal) and x87sidecar, an x87 translator that preserves the game's
+24-bit floating-point precision under Rosetta. The native hub bundles its own
+Python runtime, so it needs no developer tools. See
+[runtime fixes and troubleshooting](docs/runtime.md) for the patches.
+
+### Development
 
 `make check` runs shell checks, Ruff, Python tests, the CLI integration test and
 the Swift hub tests. Build, packaging, signing and release steps are in
 [docs/building.md](docs/building.md); patch details are in
 [docs/runtime.md](docs/runtime.md); contribution rules are in
-[.github/CONTRIBUTING.md](.github/CONTRIBUTING.md).
+[.github/CONTRIBUTING.md](.github/CONTRIBUTING.md). The project website lives in
+[`website/`](website) and deploys to GitHub Pages on every push to `main` that
+changes it.
 
 Run `make smoke` only from a checkout with a built runtime and initialized
 prefix, with Rosetta 2, Python 3 and network access for the HTTPS probe. Close
 the game and Settings app first; audio checks need a working output device.
 
-This project's own scripts and tests use the MIT license. Patches and bundled third-party
-code retain their upstream licenses. See [LICENSE](LICENSE) and the `licenses`
-directory in each runtime archive. OpenAL Soft (LGPL 2.1 or later) is downloaded
-from its official release during installation, not bundled; its license is
-installed next to it in the game directory.
+## License
+
+This project's own scripts and tests use the MIT license. Patches and bundled
+third-party code retain their upstream licenses. See [LICENSE](LICENSE) and the
+`licenses` directory in each runtime archive. OpenAL Soft (LGPL 2.1 or later)
+is downloaded from its official release during installation, not bundled; its
+license is installed next to it in the game directory.
 
 ## Acknowledgements
 

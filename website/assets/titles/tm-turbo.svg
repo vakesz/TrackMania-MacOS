@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">Turbo</title>
+  <desc id="description">An original icon of three speed streaks converging toward a bright chevron, in electric lime and teal over charcoal.</desc>
+  <defs>
+    <linearGradient id="backdrop" x1="130" y1="80" x2="900" y2="980" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#10302E"/>
+      <stop offset="0.55" stop-color="#081A1C"/>
+      <stop offset="1" stop-color="#040B0D"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="200" y1="820" x2="840" y2="220" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#EFFFB0"/>
+      <stop offset="1" stop-color="#5BE37A"/>
+    </linearGradient>
+    <linearGradient id="spark" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#7CF3FF"/>
+      <stop offset="1" stop-color="#1FA8FF"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.05" r="0.95">
+      <stop stop-color="#1FA89A" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#1FA89A" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+    <clipPath id="tile"><rect x="48" y="48" width="928" height="928" rx="218"/></clipPath>
+  </defs>
+
+  <rect x="48" y="48" width="928" height="928" rx="218" fill="url(#backdrop)"/>
+  <rect x="62" y="62" width="900" height="900" rx="204" fill="none" stroke="#EFFFB0" stroke-opacity="0.22" stroke-width="8"/>
+  <ellipse cx="512" cy="210" rx="425" ry="340" fill="url(#glow)" clip-path="url(#tile)"/>
+  <g filter="url(#shadow)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M170 360 L560 360" stroke="url(#accent)" stroke-width="54" opacity="0.55"/>
+    <path d="M130 520 L600 520" stroke="url(#accent)" stroke-width="64" opacity="0.8"/>
+    <path d="M170 680 L560 680" stroke="url(#accent)" stroke-width="54" opacity="0.55"/>
+    <path d="M610 300 L850 520 L610 740" stroke="#03100E" stroke-width="190"/>
+    <path d="M610 300 L850 520 L610 740" stroke="url(#spark)" stroke-width="130"/>
+    <path d="M610 300 L850 520 L610 740" stroke="#F2FFFF" stroke-opacity="0.8" stroke-width="14" stroke-dasharray="40 34"/>
+  </g>
+</svg>

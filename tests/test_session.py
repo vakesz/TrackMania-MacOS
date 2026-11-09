@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -1239,6 +1240,92 @@ class ResultTests(unittest.TestCase):
         self.path.chmod(0o666)
         with self.assertRaises(ValueError):
             session.read_result(self.path)
+
+
+@unittest.skipUnless(shutil.which("cc"), "a host C compiler is required")
+class SettleDecisionTests(unittest.TestCase):
+    """The early end of session.c's handoff window, without Wine."""
+
+    @classmethod
+    def setUpClass(cls):
+        temporary = tempfile.TemporaryDirectory(prefix="tmnf-settle-")
+        cls.addClassCleanup(temporary.cleanup)
+        cls.binary = Path(temporary.name) / "session-settle"
+        subprocess.run(
+            [
+                "cc",
+                "-std=c99",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                str(ROOT / "tests/session-settle.c"),
+                "-o",
+                str(cls.binary),
+            ],
+            check=True,
+        )
+
+    # root_known, root_exited, live_targets, live_job, ambiguous, accounted,
+    # job_query_ok, active, total, known_job
+    SAFE = dict(
+        root_known=1,
+        root_exited=1,
+        live_targets=0,
+        live_job=0,
+        ambiguous=0,
+        accounted=1,
+        job_query_ok=1,
+        active=0,
+        total=3,
+        known_job=3,
+    )
+
+    def decide(self, **changes):
+        facts = dict(self.SAFE, **changes)
+        result = subprocess.run(
+            [str(self.binary)] + [str(facts[key]) for key in self.SAFE],
+            text=True,
+            stdout=subprocess.PIPE,
+            check=True,
+        )
+        return result.stdout.strip()
+
+    def test_finished_root_with_an_empty_matching_job_ends_early(self):
+        self.assertEqual(self.decide(), "early")
+
+    def test_every_missing_condition_keeps_the_full_window(self):
+        for change in (
+            {"root_known": 0},
+            {"root_exited": 0},
+            {"live_targets": 1},
+            {"live_job": 1},
+            {"ambiguous": 1},
+            {"accounted": 0},
+            {"job_query_ok": 0},
+            {"active": 1},
+            {"total": 4},  # a process was created after the snapshots
+            {"total": 2},
+        ):
+            with self.subTest(change=change):
+                self.assertEqual(self.decide(**change), "wait")
+
+    def test_a_failed_job_query_never_ends_early_whatever_it_reported(self):
+        self.assertEqual(self.decide(job_query_ok=0, active=0, total=3), "wait")
+
+    def test_live_root_desktop_close_and_live_job_processes_keep_the_window(self):
+        # Desktop-close handling needs a live root or a live job process.
+        self.assertEqual(self.decide(root_exited=0, live_job=1, active=1), "wait")
+        self.assertEqual(self.decide(live_job=1, active=1), "wait")
+
+    def test_session_only_uses_the_helper_after_the_settled_checks(self):
+        source = (ROOT / "src/c/session.c").read_text()
+        self.assertIn('#include "session_settle.h"', source)
+        self.assertEqual(source.count("settle_may_end_early("), 1)
+        early = source.index("settle_may_end_early(")
+        settled = source.index("if (settled)")
+        self.assertLess(early, settled)
+        # The early path reuses the settled branch, so state and reason cannot differ.
+        self.assertEqual(source.count('state = "exited";'), 1)
 
 
 if __name__ == "__main__":

@@ -111,6 +111,12 @@ process, and asks it to close after the game exits. Unknown descendants,
 incomplete observations or a stuck desktop produce an uncertain result rather
 than a job-wide kill.
 
+After the last watched process exits, the helper waits two seconds for a
+handoff before reporting. It skips that wait only when the launch root has
+exited, the job has no active process, a fresh job accounting read matches every
+process it observed, and nothing is unrecognized. A failed accounting query,
+desktop close, or live job process keeps the full wait.
+
 Wine's console host is recognized only by native System32 path/file identity,
 byte equality with the bundled reference, and a retained parent in the same
 job. Only its completed zero-status lifecycle is exempt from unknown-child

@@ -130,3 +130,15 @@ jobs:
             | tee "${RUNNER_TEMP}/x87.log"
           grep -Eq '^1 passed[ ,]' "${RUNNER_TEMP}/x87.log" \
             || { echo 'The native x87 test did not run to a pass (skipped or deselected).' >&2; exit 1; }
+  # The hub's process runner shares state between a waiter thread, a poll loop
+  # and the cancel handle. Run its tests under ThreadSanitizer, which make
+  # check does not. The build is sanitized, so it does not share the cache of
+  # the check job.
+  swift-tsan:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned
+        with:
+          persist-credentials: false
+      - name: HubProcessTests under ThreadSanitizer
+        run: swift test --package-path src/swift --sanitize=thread --filter HubProcessTests

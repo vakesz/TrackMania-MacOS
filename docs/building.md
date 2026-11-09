@@ -79,9 +79,8 @@ before the tag exists:
 2. Replace `config/release-assets.sha256` with the two lines from the
    `.sha256` files under `.build/dist/` (`shasum` format, runtime then source).
    `tests/test_hub_package.py` fails until the file names the current `VERSION`.
-   `config/` is a build input, so package once: after this edit `make package`
-   asks for `make build` again, and the source archive carries the previous
-   release's (unused) copy of the file.
+   The file is left out of the build inputs and the source archive, so editing
+   it doesn't invalidate the build.
 3. Merge the hash file through a PR, push the tag from the merged commit, and
    attach the runtime and source archives to that tag's release. The workflow
    downloads them; re-run it if it started before they were attached.

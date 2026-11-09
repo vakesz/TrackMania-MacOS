@@ -342,6 +342,7 @@ class PackagerCommands(unittest.TestCase):
             self.assertNotEqual(self.check_staged_app(app).returncode, 0)
 
 
+@unittest.skipUnless((ROOT / ".git").exists(), "source archives omit the release hash file")
 class ReleaseAssetsFile(unittest.TestCase):
     """config/release-assets.sha256 is the committed trust anchor for tag builds."""
 

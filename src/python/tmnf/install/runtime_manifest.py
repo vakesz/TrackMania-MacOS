@@ -90,7 +90,7 @@ def link_stays_inside(root, directory, target):
     current = directory
     missing = False
     parts = [part for part in target.split('/') if part not in ('', '.')]
-    for index, part in enumerate(parts):
+    for part in parts:
         if not missing and not current.is_dir():
             return False
         if part == '..':

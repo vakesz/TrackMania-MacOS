@@ -218,8 +218,8 @@ def _read_reg_string(text, index, terminator):
             value = ''.join(out)
             try:
                 value = value.encode('utf-16-le', 'surrogatepass').decode('utf-16-le')
-            except UnicodeError:
-                raise ValueError('lone surrogate escape')
+            except UnicodeError as error:
+                raise ValueError('lone surrogate escape') from error
             return value, index
         if char != '\\':
             out.append(char)
@@ -262,8 +262,8 @@ def _parse_reg_value(rest):
         raise ValueError('malformed hex value')
     try:
         value = bytes(int(item, 16) for item in items).decode('utf-16-le')
-    except UnicodeError:
-        raise ValueError('malformed hex string')
+    except UnicodeError as error:
+        raise ValueError('malformed hex string') from error
     return value.rstrip('\0')
 
 
@@ -289,8 +289,8 @@ def _personal_values(registry):
     """
     try:
         text = _registry_text(registry)
-    except UnicodeError:
-        raise _unreadable_registry(registry, 'undecodable file')
+    except UnicodeError as error:
+        raise _unreadable_registry(registry, 'undecodable file') from error
     lines = []
     for line in text.split('\n'):
         line = line.rstrip('\r')
@@ -315,7 +315,7 @@ def _personal_values(registry):
                 if name.casefold() == 'personal':
                     values.append(_parse_reg_value(line[end + 1:].strip()))
         except ValueError as error:
-            raise _unreadable_registry(registry, 'line {}: {}'.format(number, error))
+            raise _unreadable_registry(registry, 'line {}: {}'.format(number, error)) from error
     return values
 
 
@@ -389,7 +389,7 @@ def redirected_documents(prefix):
                 if location is not None:
                     locations.append(location)
         except ValueError as error:
-            raise _unreadable_registry(registry, error)
+            raise _unreadable_registry(registry, error) from error
     return locations
 
 

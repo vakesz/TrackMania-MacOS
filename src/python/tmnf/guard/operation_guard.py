@@ -277,8 +277,8 @@ def _signal_group(pid, signum):
                     if kevent.fflags & select.KQ_NOTE_EXIT:
                         return
                 raise signal_error
-        except (ValueError, RuntimeError):
-            raise signal_error
+        except (ValueError, RuntimeError) as error:
+            raise signal_error from error
 
 
 def run(prefix, command):

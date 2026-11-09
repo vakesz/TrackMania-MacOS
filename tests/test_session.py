@@ -415,7 +415,7 @@ class SessionTests(unittest.TestCase):
                     with mock.patch.object(session.time, 'monotonic', return_value=100) as clock:
                         def delayed_read(path):
                             result = read_result(path)
-                            if result and result['state'] == state:
+                            if result and result['state'] == state:  # noqa: B023 (called within this iteration)
                                 clock.return_value = 500
                             return result
 

@@ -1,3 +1,6 @@
+# Fixtures defined in a loop body are only called within that same iteration (as mock
+# side effects or joined threads), so B023's late-binding concern never applies here.
+# ruff: noqa: B023
 import concurrent.futures
 import contextlib
 import fcntl

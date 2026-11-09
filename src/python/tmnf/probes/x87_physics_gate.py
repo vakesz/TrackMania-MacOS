@@ -174,7 +174,7 @@ def generate(funcs):
             out.append('    memcpy(c->ret, &r, sizeof(r));')
         out.append('}')
     out += ['', 'const struct function FUNCTIONS[] = {']
-    for i, (name, rva, convention, ret, args) in enumerate(funcs):
+    for i, (name, _rva, convention, _ret, args) in enumerate(funcs):
         bufs = (1 if convention == 'thiscall' else 0) + args.count('buf')
         out.append(f'    {{"{name}", call_{i}, {bufs}}},')
     out += ['};', f'const int FUNCTION_COUNT = {len(funcs)};']

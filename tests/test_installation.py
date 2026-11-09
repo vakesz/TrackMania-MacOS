@@ -347,7 +347,8 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         self.assertEqual(game_openal.read_bytes(), b'fake Creative OpenAL router')
         self.assertFalse((game_openal.parent / 'OpenAL32.creative.dll').exists())
 
-    def test_reused_directx_repairs_all_compilers_without_wine(self):
+    def directx_prefix_fixture(self):
+        """Runtime Wine-owned d3dx9 DLLs, plus the native copies DXSETUP leaves in the prefix."""
         self.prefix.mkdir(parents=True)
         for arch, directory in (('i386', 'syswow64'), ('x86_64', 'system32')):
             source = self.runtime / ('lib/wine/{}-windows'.format(arch))
@@ -357,12 +358,80 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
             for dll in ('d3dx9_30', 'd3dx9_43'):
                 (source / (dll + '.dll')).write_text(arch + dll)
                 (dest / (dll + '.dll')).write_text('native')
+
+    def test_reused_directx_repairs_all_compilers_without_wine(self):
+        self.directx_prefix_fixture()
         result = self.shell('. ./src/shell/cli/install.sh; printf "%s\\n" "$DIRECTX_SHA256" >"$DIRECTX_MARKER"; install_directx_runtime')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.log.exists())
         for arch, directory in (('i386', 'syswow64'), ('x86_64', 'system32')):
             for dll in ('d3dx9_30', 'd3dx9_43'):
                 self.assertEqual((self.prefix / 'drive_c/windows' / directory / (dll + '.dll')).read_text(), arch + dll)
+
+    # Shell functions replace the network, archive tool and Wine; every call is
+    # appended to TEST_LOG as one line. Run with STUB_NO_DXSETUP=1 for an archive
+    # without the installer, STUB_DXSETUP_FAIL=1 for an installer that exits non-zero.
+    FRESH_DIRECTX = '''. ./src/shell/cli/install.sh
+download_verified() { printf 'download|%s|%s|%s\\n' "$1" "$2" "$3" >>"$TEST_LOG"; mkdir -p "$(dirname "$2")"; : >"$2"; }
+bsdtar() {
+  printf 'bsdtar|%s\\n' "$*" >>"$TEST_LOG"
+  test -n "${STUB_NO_DXSETUP:-}" || : >"${@: -1}/DXSETUP.exe"
+}
+run_wine() {
+  printf 'run_wine|%s|%s\\n' "${WINEDLLOVERRIDES-unset}" "$*" >>"$TEST_LOG"
+  case "$1" in */DXSETUP.exe) test -z "${STUB_DXSETUP_FAIL:-}" || return 7 ;; esac
+}
+install_directx_runtime'''
+
+    def fresh_directx_calls(self):
+        return [line.split('|') for line in self.log.read_text().splitlines()] if self.log.exists() else []
+
+    def test_fresh_directx_install_runs_silently_without_mono_then_restores_wine_dlls(self):
+        self.directx_prefix_fixture()
+        marker = self.prefix / '.tmnf-directx-jun2010'
+        result = self.shell(self.FRESH_DIRECTX)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.fresh_directx_calls()
+        self.assertEqual([call[0] for call in calls], ['download', 'bsdtar', 'run_wine', 'run_wine'])
+        pins = json.loads((ROOT / 'config/pins.json').read_text())
+        self.assertEqual(calls[0][1], pins['directx_url'])
+        self.assertEqual(calls[0][3], pins['directx_sha256'])
+        setup, boot = calls[2], calls[3]
+        self.assertTrue(setup[2].startswith(str(self.home / 'cache/directx-extract.')), setup)
+        self.assertTrue(setup[2].endswith('/DXSETUP.exe /silent'), setup)
+        self.assertEqual(setup[1], 'mscoree=')
+        self.assertEqual(boot[1:], ['mscoree,mshtml=', 'wineboot --update'])
+        self.assertEqual(marker.read_text(), pins['directx_sha256'] + '\n')
+        # Wine's own d3dx9 replaces whatever DXSETUP left behind.
+        for arch, directory in (('i386', 'syswow64'), ('x86_64', 'system32')):
+            for dll in ('d3dx9_30', 'd3dx9_43'):
+                self.assertEqual((self.prefix / 'drive_c/windows' / directory / (dll + '.dll')).read_text(), arch + dll)
+        self.assertEqual(list((self.home / 'cache').glob('directx-extract.*')), [])
+        # The marker now makes a second run a no-op for Wine.
+        result = self.shell(self.FRESH_DIRECTX)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.fresh_directx_calls(), [])
+
+    def test_directx_archive_without_installer_dies_before_marker_or_wine(self):
+        self.directx_prefix_fixture()
+        result = self.shell(self.FRESH_DIRECTX, STUB_NO_DXSETUP='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('DirectX archive did not contain DXSETUP.exe', result.stderr)
+        self.assertFalse((self.prefix / '.tmnf-directx-jun2010').exists())
+        self.assertEqual([call[0] for call in self.fresh_directx_calls()], ['download', 'bsdtar'])
+        self.assertEqual(list((self.home / 'cache').glob('directx-extract.*')), [])
+
+    def test_failing_directx_setup_leaves_no_marker_and_skips_the_restore(self):
+        self.directx_prefix_fixture()
+        result = self.shell(self.FRESH_DIRECTX, STUB_DXSETUP_FAIL='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.prefix / '.tmnf-directx-jun2010').exists())
+        calls = self.fresh_directx_calls()
+        self.assertEqual([call[0] for call in calls], ['download', 'bsdtar', 'run_wine'])
+        self.assertTrue(calls[-1][2].endswith('/DXSETUP.exe /silent'))
+        # DXSETUP's native copies stay: only a completed install restores Wine's.
+        self.assertEqual((self.prefix / 'drive_c/windows/system32/d3dx9_43.dll').read_text(), 'native')
+        self.assertEqual(list((self.home / 'cache').glob('directx-extract.*')), [])
 
     def test_mod_readiness_is_distinct_from_payload(self):
         project, _, loader, _, target, _ = self.modded_fixture()
@@ -919,6 +988,43 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
             check_uninstall(self.prefix, self.home / 'userdata')
         self.assertTrue((outside / 'TmForever/Replays').is_symlink())
 
+    def test_fresh_prefix_creation_writes_ownership_marker_before_wineboot(self):
+        command = self.fresh_wineboot_fixture()
+        # The fake wineboot reports what it found at the moment Wine would run.
+        boot = self.home / 'fake-wineboot'
+        boot.write_text(boot.read_text().replace(
+            "(prefix / 'system.reg').touch()",
+            "(prefix / 'marker-at-boot').write_text((prefix / '.tmnf-prefix').read_text())\n"
+            "(prefix / 'system.reg').touch()"))
+        result = self.shell(command, TMNF_USERDATA=str(self.home / 'userdata'), TMNF_TITLE='tmnf')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.prefix / '.tmnf-prefix').read_text(), 'tmnf:1\n')
+        self.assertEqual((self.prefix / 'marker-at-boot').read_text(), 'tmnf:1\n')
+        check_prefix(str(self.prefix))
+        self.assertFalse((self.prefix / '.tmnf-initializing').exists())
+
+    def test_nonempty_unmanaged_directory_is_refused_before_wineboot_runs(self):
+        command = self.fresh_wineboot_fixture()
+        self.prefix.mkdir(parents=True)
+        (self.prefix / 'personal.txt').write_text('keep')
+        result = self.shell(command, TMNF_USERDATA=str(self.home / 'userdata'))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Choose an empty prefix or a managed TMNF installation', result.stderr)
+        self.assertEqual(sorted(path.name for path in self.prefix.iterdir()), ['personal.txt'])
+        self.assertFalse((self.home / 'userdata').exists())
+
+    def test_prefix_with_system_reg_but_no_marker_is_refused_untouched(self):
+        command = self.fresh_wineboot_fixture()
+        self.prefix.mkdir(parents=True)
+        (self.prefix / 'system.reg').write_text('someone else\'s registry')
+        result = self.shell(command, TMNF_USERDATA=str(self.home / 'userdata'))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('error:', result.stderr)
+        self.assertFalse((self.prefix / '.tmnf-prefix').exists())
+        self.assertEqual(sorted(path.name for path in self.prefix.iterdir()), ['system.reg'])
+        self.assertEqual((self.prefix / 'system.reg').read_text(), "someone else's registry")
+        self.assertFalse(self.log.exists())
+
     def test_failed_wineboot_keeps_retry_marker_without_seeding(self):
         result = self.shell('. ./src/shell/cli/install.sh; wine_binary() { printf /fake; }; '
                             'wineboot_binary() { printf /usr/bin/false; }; initialize_prefix',
@@ -1030,7 +1136,8 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
         unrelated.mkdir()
         (unrelated / '.tmnf-launcher').touch()
         (unrelated / 'keep').write_text('keep')
-        result = self.shell('./tests/test-cli.sh', timeout=45, TMNF_LAUNCHER=str(unrelated),
+        # About 20 launcher runs at ~2 s each: 30-40 s alone, so 45 s left no headroom for a busy machine.
+        result = self.shell('./tests/test-cli.sh', timeout=180, TMNF_LAUNCHER=str(unrelated),
                             TMNF_SETTINGS_APP=str(self.home / 'unrelated-settings.app'),
                             TMNF_AUDIO='invalid', TMNF_WINDOW_SIZE='invalid',
                             ROSETTA_X87_PATH='/not-a-translator')

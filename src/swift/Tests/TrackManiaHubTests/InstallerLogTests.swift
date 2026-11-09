@@ -106,4 +106,65 @@ final class InstallerProgressTests: XCTestCase {
     func testPlainTextEndingInPercentIsAStage() {
         XCTAssertEqual(parse("Disk is 50%").stage, "Disk is 50%")
     }
+
+    func testEarlyErrorSurvivesLaterOutput() {
+        var log = InstallerLog()
+        log.append("Downloading a\nerror: checksum mismatch\n")
+        // Enough later output that the text window has dropped the error line.
+        for index in 0..<10_000 { log.append("step \(index)\n") }
+        XCTAssertFalse(log.text.contains("error: "))
+        let progress = InstallerProgress.parse(log)
+        XCTAssertEqual(progress.error, "checksum mismatch")
+        XCTAssertEqual(progress.stage, "step 9999")
+    }
+
+    func testLaterErrorReplacesEarlierOne() {
+        XCTAssertEqual(parse("error: first\nstep\nerror: second\nstep\n").error, "second")
+    }
+
+    func testErrorAndStageInTheLineBeingWritten() {
+        XCTAssertEqual(parse("Installing\nerror: half a li").error, "half a li")
+        XCTAssertEqual(parse("Installing\nerror: half a li").stage, "error: half a li")
+        XCTAssertEqual(parse("Installing\n[mvk-info] chatter").stage, "Installing")
+    }
+
+    func testResetForgetsErrorAndStage() {
+        var log = InstallerLog()
+        log.append("error: boom\n")
+        log.reset()
+        XCTAssertEqual(InstallerProgress.parse(log), InstallerProgress())
+    }
+
+    /// The previous implementation, which re-split the whole log on every call.
+    private func reference(_ log: InstallerLog) -> InstallerProgress {
+        var result = InstallerProgress()
+        result.fraction = InstallerProgress.percent(in: log.lastLine)
+        for line in log.text.split(whereSeparator: \.isNewline).reversed() {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if result.error == nil, trimmed.hasPrefix("error: ") {
+                result.error = String(trimmed.dropFirst("error: ".count))
+            }
+            if result.stage == nil, !InstallerProgress.isNoise(trimmed), !InstallerProgress.isRuntimeChatter(line) {
+                result.stage = trimmed
+            }
+            if result.error != nil, result.stage != nil { break }
+        }
+        return result
+    }
+
+    func testMatchesFullRescanForChunkedInput() {
+        let transcript = "$ tmnf hub run tmnf install\nDownloading runtime.tar.xz\n"
+            + "#####   30.0%\r######  60.0%\r#######  100.0%\n"
+            + "[mvk-info] Created VkInstance\n\tVK_KHR_x v1\n0024:fixme:ole:Co stub\n"
+            + "Installing TrackMania United Forever\n   \nDisk is 50%\nerror: nope\nafter error\r\nlast"
+        for chunk in [1, 2, 3, 7, 50, transcript.count] {
+            var log = InstallerLog()
+            var rest = Substring(transcript)
+            while !rest.isEmpty {
+                log.append(String(rest.prefix(chunk)))
+                rest = rest.dropFirst(chunk)
+                XCTAssertEqual(InstallerProgress.parse(log), reference(log), "chunk \(chunk), after \(log.text.debugDescription)")
+            }
+        }
+    }
 }

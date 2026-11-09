@@ -12,6 +12,10 @@ struct InstallerLog: Equatable, Sendable {
     private var committedCount = 0
     private var currentCount = 0
     private var pendingReturn = false
+    /// The newest `error: ` line and installer stage among the committed lines. Recorded as
+    /// lines are committed, so they outlive the trimmed text and parsing never rescans the log.
+    private(set) var latestError: String?
+    private(set) var latestStage: String?
 
     var text: String { committed + current }
     var isEmpty: Bool { committed.isEmpty && current.isEmpty }
@@ -49,6 +53,7 @@ struct InstallerLog: Equatable, Sendable {
     mutating func reset() { self = InstallerLog() }
 
     private mutating func commitLine() {
+        InstallerProgress.scan(current, error: &latestError, stage: &latestStage)
         committed += current
         committed += "\n"
         committedCount += currentCount + 1
@@ -76,20 +81,29 @@ struct InstallerProgress: Equatable, Sendable {
     var stage: String?
     var error: String?
 
+    /// Cost is the length of the line in progress; finished lines were already folded into
+    /// `latestError` and `latestStage` as they were committed.
     static func parse(_ log: InstallerLog) -> InstallerProgress {
         var result = InstallerProgress()
         result.fraction = percent(in: log.lastLine)
-        for line in log.text.split(whereSeparator: \.isNewline).reversed() {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if result.error == nil, trimmed.hasPrefix("error: ") {
-                result.error = String(trimmed.dropFirst("error: ".count))
-            }
-            if result.stage == nil, !isNoise(trimmed), !isRuntimeChatter(line) {
-                result.stage = trimmed
-            }
-            if result.error != nil, result.stage != nil { break }
-        }
+        result.error = log.latestError
+        result.stage = log.latestStage
+        scan(log.current, error: &result.error, stage: &result.stage)
         return result
+    }
+
+    /// Folds the lines of `text` into the newest `error: ` line and the newest stage; a later
+    /// match replaces an earlier one, and a line that is neither leaves both alone.
+    static func scan(_ text: String, error: inout String?, stage: inout String?) {
+        for line in text.split(whereSeparator: \.isNewline) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("error: ") {
+                error = String(trimmed.dropFirst("error: ".count))
+            }
+            if !isNoise(trimmed), !isRuntimeChatter(line) {
+                stage = trimmed
+            }
+        }
     }
 
     /// A trailing `NN.N%`, as a fraction in 0...1.
@@ -116,7 +130,7 @@ struct InstallerProgress: Equatable, Sendable {
     }
 
     /// Blank lines, the echoed command and curl's bar are not a stage.
-    private static func isNoise(_ line: String) -> Bool {
+    static func isNoise(_ line: String) -> Bool {
         if line.isEmpty || line.hasPrefix("$ ") { return true }
         let bar = Set("#=>-.O_ \t")
         var body = Substring(line)

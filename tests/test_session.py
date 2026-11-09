@@ -388,6 +388,230 @@ class SessionTests(unittest.TestCase):
                         r"HKCU\Software\Wine\AppDefaults\TmForever.exe\Direct3D",
                     )
 
+    GPU_KEY = r"Software\\Wine\\AppDefaults\\TmForever.exe\\Direct3D"
+    DRIVERS_KEY = r"Software\\Wine\\Drivers"
+
+    def write_user_reg(self, *keys, header=session.USER_REG_HEADER):
+        """keys: (key path with doubled backslashes, [value lines]) in Wine's layout."""
+        lines = [header, r";; All keys relative to \\User\\S-1-5-21-0-0-0-1000", "", "#arch=win64"]
+        for key, values in keys:
+            lines += ["", "[{}] 1700000000".format(key), "#time=1dc0000000000000"] + list(values)
+        (self.prefix / "user.reg").write_text("\n".join(lines) + "\n")
+
+    def full_user_reg(self, audio='"coreaudio"', vendor="dword:000010de", device="dword:00000611"):
+        self.write_user_reg(
+            (self.DRIVERS_KEY, ['"Audio"=' + audio]),
+            (self.GPU_KEY, ['"VideoPciDeviceID"=' + device, '"VideoPciVendorID"=' + vendor]),
+        )
+
+    def registry_writes(self, options=("--audio", "on", "--settings")):
+        (self.home / "wine.jsonl").unlink(missing_ok=True)
+        result = self.cli(
+            options=list(options) + ["--startup-timeout", "3"], target=[r"C:\Games\TmForever.exe"]
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.wine_calls()
+        self.assertEqual(calls[-1]["args"][0], str(self.helper))
+        return [call["args"][4] for call in calls if call["args"][0] == "reg"], result
+
+    def test_values_already_in_user_reg_are_not_written_again(self):
+        self.full_user_reg()
+        self.assertEqual(self.registry_writes()[0], [])
+        self.full_user_reg(audio='""')
+        writes, _ = self.registry_writes(("--audio", "off", "--settings"))
+        self.assertEqual(writes, [])
+
+    def test_only_the_values_that_differ_are_written(self):
+        for name, kwargs, expected in (
+            ("audio", dict(audio='""'), ["Audio"]),
+            ("vendor", dict(vendor="dword:000010df"), ["VideoPciVendorID"]),
+            ("device", dict(device="dword:00000612"), ["VideoPciDeviceID"]),
+        ):
+            with self.subTest(name):
+                self.full_user_reg(**kwargs)
+                self.assertEqual(self.registry_writes()[0], expected)
+
+    def test_absent_key_or_value_is_written(self):
+        self.write_user_reg((self.DRIVERS_KEY, ['"Audio"="coreaudio"']))
+        self.assertEqual(self.registry_writes()[0], ["VideoPciVendorID", "VideoPciDeviceID"])
+        self.write_user_reg((self.DRIVERS_KEY, ['"Other"="coreaudio"']), (self.GPU_KEY, []))
+        self.assertEqual(
+            self.registry_writes()[0], ["Audio", "VideoPciVendorID", "VideoPciDeviceID"]
+        )
+        # A different executable's key is not this one's.
+        self.write_user_reg(
+            (self.DRIVERS_KEY, ['"Audio"="coreaudio"']),
+            (
+                self.GPU_KEY.replace("TmForever.exe", "Other.exe"),
+                ['"VideoPciVendorID"=dword:000010de', '"VideoPciDeviceID"=dword:00000611'],
+            ),
+        )
+        self.assertEqual(self.registry_writes()[0], ["VideoPciVendorID", "VideoPciDeviceID"])
+
+    def test_missing_user_reg_writes_everything(self):
+        self.assertFalse((self.prefix / "user.reg").exists())
+        self.assertEqual(
+            self.registry_writes()[0], ["Audio", "VideoPciVendorID", "VideoPciDeviceID"]
+        )
+
+    def test_malformed_user_reg_writes_everything(self):
+        good = ["[{}] 1700000000".format(self.DRIVERS_KEY), '"Audio"="coreaudio"']
+        gpu = [
+            "[{}] 1700000000".format(self.GPU_KEY),
+            '"VideoPciVendorID"=dword:000010de',
+            '"VideoPciDeviceID"=dword:00000611',
+        ]
+
+        def text(*parts, newline="\n"):
+            return newline.join(parts).encode()
+
+        header = session.USER_REG_HEADER
+        every = ["Audio", "VideoPciVendorID", "VideoPciDeviceID"]
+        cases = {
+            "empty": (b"", every),
+            "binary": (b"\xff\xfe\x00garbage\x00", every),
+            "wrong header": (text("WINE REGISTRY Version 1", "", *good, "", *gpu, ""), every),
+            "no header": (text(*good, "", *gpu, ""), every),
+            "crlf": (text(header, "", *good, "", *gpu, "", newline="\r\n"), every),
+            "duplicate key": (text(header, "", *good, "", *good, "", *gpu, ""), ["Audio"]),
+            "duplicate value": (
+                text(header, "", *good, '"Audio"="coreaudio"', "", *gpu, ""),
+                ["Audio"],
+            ),
+            "conflicting duplicate": (
+                text(header, "", *good, '"Audio"=""', "", *gpu, ""),
+                ["Audio"],
+            ),
+            "single backslashes": (
+                text(
+                    header, "", "[Software\\Wine\\Drivers] 1", '"Audio"="coreaudio"', "", *gpu, ""
+                ),
+                ["Audio"],
+            ),
+            "wrong dword width": (
+                text(
+                    header,
+                    "",
+                    *good,
+                    "",
+                    gpu[0],
+                    '"VideoPciVendorID"=dword:10de',
+                    '"VideoPciDeviceID"=dword:00000611',
+                    "",
+                ),
+                ["VideoPciVendorID"],
+            ),
+        }
+        for name, (content, expected) in cases.items():
+            with self.subTest(name):
+                (self.prefix / "user.reg").write_bytes(content)
+                self.assertEqual(self.registry_writes()[0], expected)
+        # Control: the same good lines, well formed, are skipped.
+        (self.prefix / "user.reg").write_text(
+            "\n".join([session.USER_REG_HEADER, "", *good, "", *gpu, ""]) + "\n"
+        )
+        self.assertEqual(self.registry_writes()[0], [])
+
+    def test_unreadable_or_unexpected_user_reg_files_are_ignored(self):
+        path = self.prefix / "user.reg"
+        self.full_user_reg()
+        path.chmod(0)
+        self.addCleanup(path.chmod, 0o600)
+        self.assertEqual(
+            self.registry_writes()[0], ["Audio", "VideoPciVendorID", "VideoPciDeviceID"]
+        )
+        path.chmod(0o600)
+        real = self.home / "real-user.reg"
+        path.replace(real)
+        path.symlink_to(real)
+        self.assertEqual(
+            self.registry_writes()[0], ["Audio", "VideoPciVendorID", "VideoPciDeviceID"]
+        )
+        path.unlink()
+        path.mkdir()
+        self.assertEqual(
+            self.registry_writes()[0], ["Audio", "VideoPciVendorID", "VideoPciDeviceID"]
+        )
+
+    def test_a_live_wineserver_means_user_reg_is_not_trusted(self):
+        # user.reg may lag the live registry; a matching file proves nothing then.
+        self.full_user_reg()
+        patcher = mock.patch.dict(os.environ, HOME=str(self.home))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        args = [
+            [
+                "reg",
+                "add",
+                r"HKCU\Software\Wine\Drivers",
+                "/v",
+                "Audio",
+                "/t",
+                "REG_SZ",
+                "/d",
+                "coreaudio",
+                "/f",
+            ]
+        ]
+        self.assertEqual(session._unapplied(self.prefix, args), [])
+        for failure in (ValueError("Wine is active for prefix"), OSError("probe failed")):
+            with (
+                self.subTest(failure=failure),
+                mock.patch.object(guard, "check_inactive", side_effect=failure),
+            ):
+                self.assertEqual(session._unapplied(self.prefix, args), args)
+        # A server that appears while user.reg is being read is caught by the second probe.
+        with mock.patch.object(
+            guard, "check_inactive", side_effect=[None, ValueError("Wine is active")]
+        ):
+            self.assertEqual(session._unapplied(self.prefix, args), args)
+
+    def test_unrecognized_registry_commands_are_always_written(self):
+        self.full_user_reg()
+        patcher = mock.patch.dict(os.environ, HOME=str(self.home))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        odd = [
+            [
+                "reg",
+                "add",
+                r"HKLM\Software\Wine\Drivers",
+                "/v",
+                "Audio",
+                "/t",
+                "REG_SZ",
+                "/d",
+                "coreaudio",
+                "/f",
+            ],
+            [
+                "reg",
+                "add",
+                r"HKCU\Software\Wine\Drivers",
+                "/v",
+                "Audio",
+                "/t",
+                "REG_BINARY",
+                "/d",
+                "00",
+                "/f",
+            ],
+            [
+                "reg",
+                "add",
+                r"HKCU\Software\Wine\Drivers",
+                "/v",
+                "Audio",
+                "/t",
+                "REG_SZ",
+                "/d",
+                'a"b',
+                "/f",
+            ],
+            ["reg", "delete", r"HKCU\Software\Wine\Drivers", "/v", "Audio", "/f"],
+        ]
+        self.assertEqual(session._unapplied(self.prefix, odd), odd)
+
     def test_hung_initial_registry_command_never_starts_helper_or_cleanup(self):
         unrelated = self.spawn([sys.executable, "-c", "import time; time.sleep(30)"])
         started = time.monotonic()

@@ -67,6 +67,8 @@ check:
 	uv run --frozen --group typecheck mypy
 	uv run --frozen --group test pytest -q
 	./tests/test-cli.sh
+	@command -v swiftlint >/dev/null 2>&1 || (echo 'error: swiftlint is required (brew install swiftlint on macOS)' >&2; exit 1)
+	cd src/swift && swiftlint lint --strict --quiet
 	swift test --package-path src/swift
 
 smoke:

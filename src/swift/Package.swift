@@ -7,13 +7,13 @@ let package = Package(
     name: "TrackManiaHub",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "TrackManiaHub", targets: ["TrackManiaHub"]),
+        .executable(name: "TrackManiaHub", targets: ["TrackManiaHub"])
     ],
     targets: [
         .executableTarget(name: "TrackManiaHub"),
         .testTarget(
             name: "TrackManiaHubTests",
-            dependencies: ["TrackManiaHub"],
-        ),
+            dependencies: ["TrackManiaHub"]
+        )
     ]
 )

@@ -18,8 +18,7 @@ import_source() {
   case "$TMNF_TITLE" in
     tmnf) die "TMNF uses the free download flow (make install); import is for retail titles." ;;
   esac
-  require_owned_prefix || die "A managed Wine prefix is required."
-  validate_managed_layout || die "Unsafe installation layout."
+  require_owned_managed_layout
 
   if test -d "$source"; then
     import_steam_folder "$source"

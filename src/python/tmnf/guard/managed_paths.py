@@ -187,13 +187,221 @@ def save_dir_names():
     return tuple(sorted(names))
 
 
+_SHELL_FOLDER_SECTIONS = (
+    'software\\microsoft\\windows\\currentversion\\explorer\\shell folders',
+    'software\\microsoft\\windows\\currentversion\\explorer\\user shell folders',
+)
+_REG_ESCAPES = {'a': '\a', 'b': '\b', 't': '\t', 'n': '\n', 'v': '\v', 'f': '\f', 'r': '\r',
+                'e': '\x1b'}
+_HEX_ESCAPE = re.compile('[0-9A-Fa-f]{1,4}')
+_OCTAL_ESCAPE = re.compile('[0-7]{1,3}')
+_USERPROFILE = '%USERPROFILE%'
+
+
+def _unreadable_registry(registry, detail):
+    return ValueError(
+        'Cannot verify the Documents location in {} ({}); back up your saves manually '
+        'before removing the prefix yourself'.format(registry, detail))
+
+
+def _read_reg_string(text, index, terminator):
+    """Read a Wine-escaped string from text[index:]; return (value, index past terminator).
+
+    Wine's dump_strW writes backslash, the terminator, C escapes (\\n), octal and \\xHHHH
+    (UTF-16 code unit) escapes. A surrogate pair stays two escapes and is joined here.
+    """
+    out = []
+    while index < len(text):
+        char = text[index]
+        index += 1
+        if char == terminator:
+            value = ''.join(out)
+            try:
+                value = value.encode('utf-16-le', 'surrogatepass').decode('utf-16-le')
+            except UnicodeError:
+                raise ValueError('lone surrogate escape')
+            return value, index
+        if char != '\\':
+            out.append(char)
+            continue
+        if index >= len(text):
+            break
+        char = text[index]
+        if char in _REG_ESCAPES:
+            out.append(_REG_ESCAPES[char])
+            index += 1
+        elif char == 'x':
+            digits = _HEX_ESCAPE.match(text, index + 1)
+            if not digits:
+                raise ValueError('malformed \\x escape')
+            out.append(chr(int(digits.group(), 16)))
+            index = digits.end()
+        elif char in '01234567':
+            digits = _OCTAL_ESCAPE.match(text, index)
+            out.append(chr(int(digits.group(), 8)))
+            index = digits.end()
+        else:
+            out.append(char)
+            index += 1
+    raise ValueError('unterminated string')
+
+
+def _parse_reg_value(rest):
+    """The string held by a Wine REG_SZ/REG_EXPAND_SZ value body (the text after '=')."""
+    for tag in ('"', 'str:"', 'str(2):"'):
+        if rest.startswith(tag):
+            value, end = _read_reg_string(rest, len(tag), '"')
+            if rest[end:].strip():
+                raise ValueError('trailing text after the value')
+            return value
+    match = re.match(r'hex\([12]\):', rest, re.IGNORECASE)
+    if not match:
+        raise ValueError('not a string value')
+    items = [item.strip() for item in rest[match.end():].split(',')]
+    if not all(re.fullmatch('[0-9A-Fa-f]{2}', item) for item in items):
+        raise ValueError('malformed hex value')
+    try:
+        value = bytes(int(item, 16) for item in items).decode('utf-16-le')
+    except UnicodeError:
+        raise ValueError('malformed hex string')
+    return value.rstrip('\0')
+
+
+def _registry_text(registry):
+    if registry.is_symlink() or not registry.is_file():
+        raise _unreadable_registry(registry, 'not a regular file')
+    data = registry.read_bytes()
+    try:
+        return data.decode('utf-8')
+    except UnicodeDecodeError:
+        # Wine escapes non-ASCII as \x, so this is a legacy or hand-edited file.
+        return data.decode('latin-1')
+
+
+def _personal_values(registry):
+    """Raw 'Personal' values from the Shell Folders sections of a Wine user.reg.
+
+    Real Wine format (server/registry.c): `WINE REGISTRY Version 2`, sections like
+    `[Software\\\\Microsoft\\\\...\\\\Shell Folders] <time>`, values like
+    `"Personal"="C:\\\\users\\\\name\\\\Documents"` and, for REG_EXPAND_SZ,
+    `"Personal"=str(2):"%USERPROFILE%\\\\Documents"`; hex values wrap with a trailing
+    backslash. Lines outside the two sections are never interpreted.
+    """
+    try:
+        text = _registry_text(registry)
+    except UnicodeError:
+        raise _unreadable_registry(registry, 'undecodable file')
+    lines = []
+    for line in text.split('\n'):
+        line = line.rstrip('\r')
+        if lines and lines[-1].endswith('\\') and not lines[-1].startswith(('[', '#')):
+            lines[-1] = lines[-1][:-1] + line.strip()
+        else:
+            lines.append(line)
+    values = []
+    section = None
+    for number, line in enumerate(lines, 1):
+        line = line.strip()
+        try:
+            if line.startswith('['):
+                name, _ = _read_reg_string(line, 1, ']')
+                section = name.casefold() in _SHELL_FOLDER_SECTIONS
+            elif section and line and not line.startswith(('#', ';', '@')):
+                if not line.startswith('"'):
+                    raise ValueError('unrecognized line')
+                name, end = _read_reg_string(line, 1, '"')
+                if not line.startswith('=', end):
+                    raise ValueError('missing "="')
+                if name.casefold() == 'personal':
+                    values.append(_parse_reg_value(line[end + 1:].strip()))
+        except ValueError as error:
+            raise _unreadable_registry(registry, 'line {}: {}'.format(number, error))
+    return values
+
+
+def _profile_windows_paths(prefix):
+    """Windows paths of each profile folder in the prefix, for %USERPROFILE%."""
+    for root in ('users', 'Documents and Settings'):
+        folder = prefix / 'drive_c' / root
+        if existing_directory(folder):
+            for profile in sorted(folder.iterdir()):
+                if existing_directory(profile):
+                    yield 'C:\\{}\\{}'.format(root, profile.name)
+
+
+def _windows_location(prefix, value):
+    """Map a Windows path to its location in the prefix, or None if it does not exist."""
+    if not value or not re.match(r'[A-Za-z]:[\\/]', value):
+        raise ValueError('unsupported path {!r}'.format(value))
+    parts = [part for part in re.split(r'[\\/]+', value[3:]) if part not in ('', '.')]
+    for part in parts:
+        if (part == '..' or ':' in part or part.endswith((' ', '.'))
+                or any(ord(char) < 32 for char in part)):
+            raise ValueError('unsupported path {!r}'.format(value))
+    letter = value[0].lower()
+    if letter == 'c':
+        current = prefix / 'drive_c'
+    else:
+        drive = prefix / 'dosdevices' / (letter + ':')
+        if not os.path.lexists(drive):
+            return None
+        current = drive.resolve(strict=True)
+    if not os.path.lexists(current):
+        return None
+    for part in parts:
+        candidate = current / part
+        if not os.path.lexists(candidate):
+            # Windows names are case-insensitive, and so is Wine's lookup.
+            try:
+                names = [name for name in os.listdir(current) if name.casefold() == part.casefold()]
+            except (FileNotFoundError, NotADirectoryError):
+                return None
+            if not names:
+                return None
+            if len(names) > 1:
+                raise ValueError('ambiguous path {!r}'.format(value))
+            candidate = current / names[0]
+        current = candidate
+    return current
+
+
+def redirected_documents(prefix):
+    """Existing locations the prefix's registry gives the Windows Personal shell folder.
+
+    A missing user.reg is a fresh prefix and yields nothing. Anything else that cannot
+    be read or mapped raises ValueError, so callers fail closed.
+    """
+    registry = prefix / 'user.reg'
+    if not os.path.lexists(registry):
+        return []
+    locations = []
+    for value in _personal_values(registry):
+        try:
+            if '%' in value:
+                if value[:len(_USERPROFILE)].upper() != _USERPROFILE or '%' in value[len(_USERPROFILE):]:
+                    raise ValueError('unsupported variable in {!r}'.format(value))
+                candidates = [profile + value[len(_USERPROFILE):]
+                              for profile in _profile_windows_paths(prefix)]
+            else:
+                candidates = [value]
+            for candidate in candidates:
+                location = _windows_location(prefix, candidate)
+                if location is not None:
+                    locations.append(location)
+        except ValueError as error:
+            raise _unreadable_registry(registry, error)
+    return locations
+
+
 def check_uninstall(prefix, userdata):
-    """Read-only guard for known profile folders, not custom Shell Folders registry paths.
+    """Read-only guard for every known save location in the prefix.
 
     Returns the resolved prefix path, the only path a caller may remove.
     Raises ValueError/OSError/RuntimeError if ownership or save safety is uncertain.
-    The caller must hold the prefix operation lock through removal. Custom registry
-    save locations require an explicit user backup; this is not a registry parser.
+    The caller must hold the prefix operation lock through removal. Locations are the
+    default profile Documents folders plus the Personal shell folder redirections in
+    the prefix's user.reg, which is read only for that value and fails closed when it
+    exists but cannot be understood (a missing user.reg is a fresh prefix).
     """
     check_layout([str(prefix), str(userdata)])
     check_prefix(str(prefix))
@@ -223,15 +431,27 @@ def check_uninstall(prefix, userdata):
         elif prefix in resolved.parents:
             raise ValueError('Back up user files before uninstalling: {}'.format(path))
 
-    for documents in profile_documents(prefix):
-        if prefix in documents.resolve(strict=True).parents:
+    names = save_dir_names()
+    checked = set()
+
+    def check_location(documents):
+        resolved = documents.resolve(strict=True)
+        if resolved in checked:
+            return
+        checked.add(resolved)
+        if resolved == prefix or prefix in resolved.parents:
             inspect(documents)
         else:
             # Outside Documents may contain a save-folder alias back into Wine.
-            for name in save_dir_names():
+            for name in names:
                 child = documents / name
                 if os.path.lexists(child):
                     inspect(child)
+
+    for documents in profile_documents(prefix):
+        check_location(documents)
+    for documents in redirected_documents(prefix):
+        check_location(documents)
     return prefix
 
 
@@ -346,7 +566,6 @@ def main():
                 raise ValueError('{} requires PREFIX USERDATA'.format(args.command))
             if args.command == 'uninstall':
                 resolved_prefix = check_uninstall(*args.paths)
-                print('warning: Custom Windows Shell Folders registry save locations are not checked; back them up explicitly before removal.', file=sys.stderr)
                 # The one path the caller may remove: resolved once, already verified.
                 print(resolved_prefix)
             else:

@@ -10,8 +10,8 @@
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
     <link rel="canonical" href="https://vakesz.github.io/TrackMania-MacOS/">
-    <link rel="icon" href="assets/app-icon.png">
-    <link rel="apple-touch-icon" href="assets/app-icon.png">
+    <link rel="icon" href="assets/app-icon-192.png">
+    <link rel="apple-touch-icon" href="assets/app-icon-192.png">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="TrackMania Mac">
     <meta property="og:title" content="TrackMania Mac: Play TrackMania Forever on Apple Silicon">
@@ -48,7 +48,7 @@
     <header class="site-header">
       <div class="shell">
         <a class="wordmark" href="#top" aria-label="TrackMania Mac home">
-          <img src="assets/app-icon.png" alt="" width="28" height="28">
+          <img src="assets/app-icon-96.png" alt="" width="28" height="28">
           <span>TrackMania Mac</span>
         </a>
         <nav aria-label="Main navigation">
@@ -77,7 +77,10 @@
           <p class="note" id="release-note" aria-live="polite">Free and open source. No Windows or developer tools needed.</p>
         </div>
         <div class="hero-shot">
-          <img src="assets/hub.png" alt="The TrackMania Mac hub with Nations Forever selected, showing the Install button and a setup checklist" width="900" height="652" fetchpriority="high" decoding="async">
+          <picture>
+            <source srcset="assets/hub.webp" type="image/webp">
+            <img src="assets/hub.png" alt="The TrackMania Mac hub with Nations Forever selected, showing the Install button and a setup checklist" width="900" height="652" fetchpriority="high" decoding="async">
+          </picture>
         </div>
       </section>
 
@@ -202,7 +205,10 @@
             </li>
             <li>
               <figure>
-                <img src="assets/hub-welcome.png" alt="The TrackMania Mac welcome sheet listing first-run tips" width="900" height="652" loading="lazy" decoding="async">
+                <picture>
+                  <source srcset="assets/hub-welcome.webp" type="image/webp">
+                  <img src="assets/hub-welcome.png" alt="The TrackMania Mac welcome sheet listing first-run tips" width="900" height="652" loading="lazy" decoding="async">
+                </picture>
                 <figcaption><strong>Welcome</strong>The hub explains what to expect before you start.</figcaption>
               </figure>
             </li>
@@ -263,7 +269,7 @@
 
       <section class="download" aria-labelledby="download-title">
         <div class="shell">
-          <img src="assets/app-icon.png" alt="" width="96" height="96" loading="lazy" decoding="async">
+          <img src="assets/app-icon-192.png" alt="" width="96" height="96" loading="lazy" decoding="async">
           <h2 id="download-title">Ready to race?</h2>
           <p>TrackMania Mac runs on macOS 14 and later on Apple Silicon.</p>
           <a class="button" id="download-button-bottom" href="https://github.com/vakesz/TrackMania-MacOS/releases/latest" rel="noopener">

@@ -94,7 +94,7 @@ class Session:
         for (start, name), following in zip(bounds, bounds[1:] + [(end, None)]):
             if following[0] > start:
                 result.append((start, following[0], name))
-        merged = []
+        merged: list = []
         for phase in result:
             if merged and merged[-1][2] == phase[2]:
                 merged[-1] = (merged[-1][0], phase[1], phase[2])
@@ -113,7 +113,7 @@ def summary(values):
 
 def by_state(session):
     phases = session.phases()
-    totals = {}
+    totals: dict = {}
     for start, end, name in phases:
         entry = totals.setdefault(name, {'seconds': 0.0, 'fps': [], 'cpu': []})
         entry['seconds'] += end - start
@@ -132,7 +132,7 @@ def by_state(session):
 
 def by_map(session):
     """{map: {'races', 'seconds', 'fps'}} over race phases, named by the map loaded then."""
-    maps = {}
+    maps: dict = {}
     for start, end, name in session.phases():
         if name != 'race':
             continue

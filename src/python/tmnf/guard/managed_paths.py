@@ -210,7 +210,7 @@ def _read_reg_string(text, index, terminator):
     Wine's dump_strW writes backslash, the terminator, C escapes (\\n), octal and \\xHHHH
     (UTF-16 code unit) escapes. A surrogate pair stays two escapes and is joined here.
     """
-    out = []
+    out: list[str] = []
     while index < len(text):
         char = text[index]
         index += 1
@@ -238,8 +238,9 @@ def _read_reg_string(text, index, terminator):
             index = digits.end()
         elif char in '01234567':
             digits = _OCTAL_ESCAPE.match(text, index)
-            out.append(chr(int(digits.group(), 8)))
-            index = digits.end()
+            # char is an octal digit, so the pattern always matches here.
+            out.append(chr(int(digits.group(), 8)))  # type: ignore[union-attr]
+            index = digits.end()  # type: ignore[union-attr]
         else:
             out.append(char)
             index += 1
@@ -291,7 +292,7 @@ def _personal_values(registry):
         text = _registry_text(registry)
     except UnicodeError as error:
         raise _unreadable_registry(registry, 'undecodable file') from error
-    lines = []
+    lines: list[str] = []
     for line in text.split('\n'):
         line = line.rstrip('\r')
         if lines and lines[-1].endswith('\\') and not lines[-1].startswith(('[', '#')):
@@ -542,7 +543,7 @@ def record_profile_baseline(prefix):
         if baseline.is_symlink() or not baseline.is_file():
             raise ValueError('Invalid profile initialization provenance')
         return  # Never recapture Wine-created profiles on an interrupted retry.
-    profiles = []
+    profiles: list[str] = []
     for root in (prefix / 'drive_c/users', prefix / 'drive_c/Documents and Settings'):
         if existing_directory(root):
             profiles.extend(str(path.relative_to(prefix)) for path in root.iterdir())

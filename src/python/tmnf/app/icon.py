@@ -79,7 +79,8 @@ def entries(data, offset):
 
 def icon_groups(data):
     va, resource = resources(data)
-    images, groups = {}, {}
+    images: dict = {}
+    groups: dict = {}
     for kind, offset in entries(resource, 0):
         if kind not in (RT_ICON, RT_GROUP_ICON):
             continue
@@ -104,14 +105,14 @@ def icon_groups(data):
 def best_images(data):
     """Return {size: ico bytes} for the deepest image of each size in the richest group."""
     images, groups = icon_groups(data)
-    chosen = {}
+    chosen: dict = {}
     for group in groups.values():
         check_bounds(group, 0, 6)
         reserved, kind, count = struct.unpack_from('<HHH', group)
         if reserved or kind != 1:
             raise ValueError('unsupported icon group')
         check_bounds(group, 6, count * 14)
-        candidates = {}
+        candidates: dict = {}
         for k in range(count):
             w, h, colors, reserved, planes, bits, size, ident = struct.unpack_from('<BBBBHHIH', group, 6 + k * 14)
             if reserved or w != h or ident not in images:

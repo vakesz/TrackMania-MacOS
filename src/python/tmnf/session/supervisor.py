@@ -117,8 +117,8 @@ def _timeout(value):
 
 @contextmanager
 def _signals():
-    interrupted = []
-    handlers = {}
+    interrupted: list[int] = []
+    handlers: dict = {}
 
     def interrupt(signum, frame):
         if not interrupted:
@@ -349,7 +349,7 @@ def run(prefix, wine, helper, command, watch=(), desktop=None,
                     shutil.rmtree(directory)
                 else:
                     _log('helper PID {} has not ended; retained result directory {}'.format(
-                        helper_host.pid, directory))
+                        helper_host.pid, directory))  # type: ignore[union-attr]  # ended is False only when helper_host is set
             _check_interrupt(interrupted)
 
 
@@ -396,7 +396,7 @@ def main(argv=None):
                    args.desktop, args.startup_timeout, args.cleanup_timeout, args.audio, args.settings)
     except InterruptedError as error:
         _log(error.args[1] if len(error.args) > 1 else str(error))
-        return 128 + error.errno
+        return 128 + error.errno  # type: ignore[operator]  # _check_interrupt always sets errno
     except (TimeoutError, subprocess.TimeoutExpired) as error:
         _log(str(error))
         return 124

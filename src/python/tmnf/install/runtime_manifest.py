@@ -144,7 +144,7 @@ def verify_runtime(root, version):
     if root.is_symlink() or not root.is_dir():
         raise ValueError('Runtime root must be a real directory: {}'.format(root))
     root = root.resolve()
-    inventory = {}
+    inventory: dict[str, tuple] = {}
     pending = [root]
     while pending:
         directory = pending.pop()
@@ -216,7 +216,7 @@ def extract_archive(archive, staging, expected, root_name='runtime'):
         stream.seek(0)
         with tarfile.open(fileobj=stream, mode='r:*') as tar:
             members = {}
-            spellings = {}
+            spellings: dict = {}
             for member in tar.getmembers():
                 name = safe_name(member.name)
                 if name != root_name and not name.startswith(prefix_name):
@@ -276,7 +276,7 @@ def extract_archive(archive, staging, expected, root_name='runtime'):
                 else:
                     path.parent.mkdir(parents=True, exist_ok=True)
                     if member.isreg():
-                        with tar.extractfile(member) as source, path.open('xb') as dest:
+                        with tar.extractfile(member) as source, path.open('xb') as dest:  # type: ignore[union-attr]  # None only for non-regular members
                             shutil.copyfileobj(source, dest)
                         path.chmod(member.mode & 0o777)
             for name, target in hard_targets.items():

@@ -213,7 +213,8 @@ def main():
     tracker, front = GameTracker(libproc), FrontTracker()
     focus = power = None
     last_power = last_sample = float('-inf')
-    previous, previous_time = {}, None
+    previous: dict = {}
+    previous_time = None
     while alive(args.parent):
         now = time.monotonic()
         try:

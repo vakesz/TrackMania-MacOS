@@ -24,7 +24,7 @@ class Probe(typing.NamedTuple):
     note: str
 
     def payload(self) -> dict:
-        value = {'ready': self.ready}
+        value: dict[str, object] = {'ready': self.ready}
         if self.note:
             value['note'] = self.note
         return value

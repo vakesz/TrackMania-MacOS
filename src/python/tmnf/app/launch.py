@@ -84,7 +84,8 @@ def run(launcher, action, log_path):
                 stamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
                 output.write((('\n' if output.tell() else '') + stamp + ' ' + message + '\n').encode('ascii'))
 
-            interrupted, handlers = [], {}
+            interrupted: list[int] = []
+            handlers: dict = {}
 
             def interrupt(signum, frame):
                 if not interrupted:

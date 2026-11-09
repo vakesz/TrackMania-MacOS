@@ -134,7 +134,7 @@ def contained_payload(title: registry.Title) -> dict:
 def _error_placeholder(title_id: str, message: str) -> dict:
     # Swift decodes id, name, shortName, status and notes as non-optional
     # strings: a placeholder must never emit null for them.
-    payload = {key: None for key in ('engine', 'kind', 'icon', 'iconSource')}
+    payload: dict[str, object] = {key: None for key in ('engine', 'kind', 'icon', 'iconSource')}
     payload.update({
         'id': title_id,
         'name': title_id,

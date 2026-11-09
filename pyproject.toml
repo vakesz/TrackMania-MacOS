@@ -12,6 +12,7 @@ requires-python = ">=3.9"
 [dependency-groups]
 test = ["pytest>=8"]
 lint = ["ruff>=0.17"]
+typecheck = ["mypy>=1.14"]
 
 [tool.uv]
 package = false
@@ -28,3 +29,13 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["B", "E4", "E7", "E9", "F", "S602", "S605"]
+
+[tool.mypy]
+# Current mypy no longer accepts 3.9, so this is the lowest target it can
+# check. The code still runs on 3.9 (requires-python); ruff target-version
+# and the test suite cover that side.
+python_version = "3.10"
+files = ["src/python/tmnf"]
+# tmnf is not installed; resolve it from src/python as pytest does.
+mypy_path = ["src/python"]
+check_untyped_defs = true

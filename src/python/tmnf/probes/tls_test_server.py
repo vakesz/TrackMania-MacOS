@@ -52,7 +52,7 @@ class Server(ThreadingHTTPServer):
         try:
             secured = self.context.wrap_socket(connection, server_side=True)
             self.connections += 1
-            secured.test_id = self.connections  # type: ignore[attr-defined]  # read back by Handler  # type: ignore[attr-defined]  # read back by Handler
+            secured.test_id = self.connections  # type: ignore[attr-defined]  # read back by Handler
             return secured, address
         except (OSError, ValueError) as error:
             connection.close()

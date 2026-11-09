@@ -19,6 +19,27 @@ struct RunRecord: Equatable {
     var reportPath: String?
 }
 
+/// Console output and progress of the running action. Separate from `HubViewModel` so the
+/// ~10 flushes a second invalidate only the activity views that read it.
+@MainActor
+final class InstallerActivity: ObservableObject {
+    @Published private(set) var log = InstallerLog()
+    @Published private(set) var progress = InstallerProgress()
+    @Published private(set) var logRevision = 0
+
+    func reset() {
+        log.reset()
+        progress = InstallerProgress()
+        logRevision += 1
+    }
+
+    func append(_ output: String) {
+        log.append(output)
+        progress = InstallerProgress.parse(log)
+        logRevision += 1
+    }
+}
+
 @MainActor
 final class HubViewModel: ObservableObject {
     /// Output is applied in batches so curl's progress bar cannot make the UI stutter.
@@ -27,15 +48,15 @@ final class HubViewModel: ObservableObject {
 
     @Published private(set) var snapshot: HubSnapshot?
     @Published private(set) var message: String?
-    @Published private(set) var log = InstallerLog()
-    @Published private(set) var progress = InstallerProgress()
-    @Published private(set) var logRevision = 0
     @Published private(set) var runningAction: String?
     @Published private(set) var runningTitleID: String?
     @Published private(set) var activityTitleID: String?
     @Published private(set) var lastRun: RunRecord?
     @Published private(set) var cancelling = false
     @Published var selectedTitleID: String?
+
+    /// Not published by the view model: only views that show output observe it.
+    let activity = InstallerActivity()
 
     /// Called when a run ends and the UI is idle again (the quit flow waits on it).
     var onIdle: (() -> Void)?
@@ -239,9 +260,7 @@ final class HubViewModel: ObservableObject {
         flushTask?.cancel()
         flushTask = nil
         pendingOutput = ""
-        log.reset()
-        progress = InstallerProgress()
-        logRevision += 1
+        activity.reset()
     }
 
     private func enqueue(_ chunk: String) {
@@ -259,10 +278,8 @@ final class HubViewModel: ObservableObject {
         flushTask?.cancel()
         flushTask = nil
         guard !pendingOutput.isEmpty else { return }
-        log.append(pendingOutput)
+        activity.append(pendingOutput)
         pendingOutput = ""
-        progress = InstallerProgress.parse(log)
-        logRevision += 1
     }
 
     func isRunning(_ title: HubTitle) -> Bool {

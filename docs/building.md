@@ -66,7 +66,30 @@ repository inputs and the corresponding patched upstream source snapshots. It is
 the corresponding source for the runtime archive; the hub does not build from it.
 
 Run `make check` again before publishing. The hub expects the matching
-runtime archive and checksum to exist in the same GitHub Release tag.
+runtime archive to exist in the same GitHub Release tag.
+
+### Releasing: order matters
+
+The tag workflow trusts `config/release-assets.sha256`, committed in the tagged
+commit, not the `.sha256` files beside the release assets (anyone who can
+replace an asset could replace those too). So the hashes go through review
+before the tag exists:
+
+1. Bump `VERSION`, run `make build` and `make package`.
+2. Replace `config/release-assets.sha256` with the two lines from the
+   `.sha256` files under `.build/dist/` (`shasum` format, runtime then source).
+   `tests/test_hub_package.py` fails until the file names the current `VERSION`.
+   `config/` is a build input, so package once: after this edit `make package`
+   asks for `make build` again, and the source archive carries the previous
+   release's (unused) copy of the file.
+3. Merge the hash file through a PR, push the tag from the merged commit, and
+   attach the runtime and source archives to that tag's release. The workflow
+   downloads them; re-run it if it started before they were attached.
+
+The workflow then verifies the release assets against the committed file, builds
+the unsigned hub, signs it in a separate job and publishes the zip. Publishing
+never overwrites: if a run fails after attaching only part of the hub assets,
+delete the partial asset from the release by hand before re-running.
 
 ### Runtime source modes
 
@@ -137,7 +160,9 @@ runtime inside the app, so the hub and later Game/Settings app wrappers do not
 depend on a host Python installation. Set `TMNF_BUNDLED_PYTHON_ROOT` to an
 already installed compatible uv-managed Python root for an offline package
 build. `make zip` rebuilds that app, signs it and writes the zip and SHA-256
-checksum under `.build/dist/`.
+checksum under `.build/dist/`. The release workflow uses the two halves
+separately: `package-app.sh build-unsigned` builds the unsigned app, and
+`package-app.sh sign` signs an existing app, notarizes and zips it.
 
 The executable at `Contents/MacOS/TrackMania Mac` is a signed arm64 Mach-O
 binary, not a shell wrapper; launcher resources sit below
@@ -156,14 +181,19 @@ from the `APPLE_ID`, `TMNF_TEAM_ID` and `TMNF_APP_PASSWORD` secrets.
 ## Release order
 
 1. Build and verify the runtime/source archives.
-2. Upload all four runtime/source artifacts to the release tag.
-3. Build, sign and notarize the native hub zip for that exact version.
-4. Upload the hub zip and its checksum.
+2. Commit their SHA-256 digests in `config/release-assets.sha256` through a PR
+   (see "Releasing: order matters" above).
+3. Upload the runtime/source archives to the release for the tag.
+4. Tag. The workflow builds, signs and notarizes the native hub zip for that
+   exact version, then uploads the hub zip and its checksum.
 
 Do not publish a hub whose versioned runtime archive is unavailable: first-run
 installation downloads it. The source archive is published as the runtime's
-corresponding source. The tag workflow enforces the matching `VERSION` and both
-assets and their checksums before it attaches a hub zip. If the repository has
+corresponding source. The tag workflow enforces the matching `VERSION` and
+checks both assets against `config/release-assets.sha256` before it builds a
+hub zip; the committed runtime digest is what the hub pins. It builds without
+secrets, signs in a separate job behind the `release` environment, and publishes
+from a third job without `--clobber`. If the repository has
 no signing secrets, it publishes an ad-hoc signed, unnotarized hub with a
 workflow warning; users must allow it once under System Settings > Privacy &
 Security. If any signing secret is set, the workflow requires the complete

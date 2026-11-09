@@ -1,6 +1,8 @@
 import json
 import os
 import plistlib
+import re
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -12,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 VERSION = (ROOT / "VERSION").read_text().strip()
 APP = ROOT / ".build/app/TrackMania Mac.app"
 ZIP = ROOT / ".build/dist" / f"TrackMania-Mac-{VERSION}.app.zip"
+PACKAGER = ROOT / "src/shell/tools/package-app.sh"
+RELEASE_ASSETS = ROOT / "config/release-assets.sha256"
 ICON_SIZES = {
     "icon_16x16.png": 16,
     "icon_16x16@2x.png": 32,
@@ -29,13 +33,43 @@ ICON_SIZES = {
 class HubPackageTests(unittest.TestCase):
     def test_native_hub_bundle_and_zip(self):
         pin = "ABCDEF0123456789" * 4
+        # The release workflow builds unsigned in one job and signs a tar of
+        # that app in another, so exercise the same two separate processes.
+        ZIP.unlink(missing_ok=True)
+        env = {**os.environ, "TMNF_RUNTIME_PIN_SHA256": pin}
         result = subprocess.run(
-            ["/bin/bash", "src/shell/tools/package-app.sh", "all"],
+            ["/bin/bash", str(PACKAGER), "build-unsigned"],
             cwd=ROOT,
             text=True,
             capture_output=True,
             timeout=180,
-            env={**os.environ, "TMNF_RUNTIME_PIN_SHA256": pin},
+            env=env,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(APP.is_dir())
+        self.assertFalse(ZIP.exists(), "build-unsigned must not write the zip")
+
+        # Carry the app the way CI does: upload-artifact loses symlinks and exec
+        # bits, so the workflow ships a tar; sign must work on its extraction.
+        with tempfile.TemporaryDirectory() as directory:
+            tarball = Path(directory) / "hub-app.tar"
+            tar_env = {**os.environ, "COPYFILE_DISABLE": "1"}
+            subprocess.run(
+                ["tar", "-C", str(APP.parent), "-cf", str(tarball), APP.name],
+                check=True,
+                env=tar_env,
+            )
+            shutil.rmtree(APP)
+            subprocess.run(
+                ["tar", "-C", str(APP.parent), "-xf", str(tarball)], check=True, env=tar_env
+            )
+
+        result = subprocess.run(
+            ["/bin/bash", str(PACKAGER), "sign"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=180,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -218,6 +252,127 @@ class HubPackageTests(unittest.TestCase):
                 ],
                 check=True,
             )
+
+
+class PackagerCommands(unittest.TestCase):
+    """Subcommand wiring, with the build, sign and zip steps stubbed out."""
+
+    def dispatch(self, command):
+        result = subprocess.run(
+            [
+                "/bin/bash",
+                "-euc",
+                '. "$1"; build_appbundle() { echo build; }; sign_appbundle() { echo sign; }; '
+                'build_zip() { echo zip; }; main "$2"',
+                "fixture",
+                str(PACKAGER),
+                command,
+            ],
+            text=True,
+            capture_output=True,
+            timeout=30,
+            env={"PATH": "/usr/bin:/bin"},
+        )
+        return result, result.stdout.split()
+
+    def test_each_command_runs_its_steps_in_order(self):
+        expected = {
+            "build-unsigned": ["build"],
+            "sign": ["sign", "zip"],
+            "appbundle": ["build", "sign"],
+            "zip": ["build", "sign", "zip"],
+            "all": ["build", "sign", "zip"],
+        }
+        for command, steps in expected.items():
+            with self.subTest(command=command):
+                result, ran = self.dispatch(command)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(ran, steps)
+
+    def test_unknown_command_is_rejected_and_help_lists_the_new_ones(self):
+        result, ran = self.dispatch("bogus")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(ran, [])
+        result, _ = self.dispatch("--help")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("build-unsigned", result.stdout)
+        self.assertIn("sign", result.stdout)
+
+    def check_staged_app(self, app_dir):
+        return subprocess.run(
+            [
+                "/bin/bash",
+                "-euc",
+                '. "$1"; APP_DIR="$2"; check_staged_app',
+                "fixture",
+                str(PACKAGER),
+                str(app_dir),
+            ],
+            text=True,
+            capture_output=True,
+            timeout=30,
+            env={"PATH": "/usr/bin:/bin"},
+        )
+
+    def test_sign_refuses_a_missing_or_mangled_app(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory) / "TrackMania Mac.app"
+            self.assertNotEqual(self.check_staged_app(app).returncode, 0)
+
+            contents = app / "Contents"
+            (contents / "MacOS").mkdir(parents=True)
+            (contents / "Resources/launcher/python/bin").mkdir(parents=True)
+            (contents / "Info.plist").write_text("<plist/>")
+            executable = contents / "MacOS/TrackMania Mac"
+            python = contents / "Resources/launcher/python/bin/python3"
+            for path in (executable, python):
+                path.write_text("#!/bin/sh\n")
+            executable.chmod(0o755)
+            python.chmod(0o644)
+            # Exec bits lost in transit would make signing silently skip Python.
+            result = self.check_staged_app(app)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("bundled Python", result.stderr)
+
+            python.chmod(0o755)
+            result = self.check_staged_app(app)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            executable.chmod(0o644)
+            self.assertNotEqual(self.check_staged_app(app).returncode, 0)
+
+
+class ReleaseAssetsFile(unittest.TestCase):
+    """config/release-assets.sha256 is the committed trust anchor for tag builds."""
+
+    def test_names_exactly_the_current_runtime_and_source_archives(self):
+        text = RELEASE_ASSETS.read_text()
+        self.assertTrue(text.endswith("\n"))
+        lines = text.splitlines()
+        entries = []
+        for line in lines:
+            match = re.fullmatch(r"([0-9a-f]{64})  (trackmania-mac-[^ /]+\.tar\.xz)", line)
+            self.assertIsNotNone(match, f"malformed line: {line!r}")
+            entries.append(match.groups())
+        self.assertEqual(
+            [name for _, name in entries],
+            [f"trackmania-mac-{VERSION}-runtime.tar.xz", f"trackmania-mac-{VERSION}-source.tar.xz"],
+        )
+        self.assertEqual(len({digest for digest, _ in entries}), 2)
+
+    def test_is_in_shasum_format(self):
+        # shasum -c must accept the file as committed (it reads files that are
+        # absent here, so only parsing is checked: every line is "properly
+        # formatted" and nothing is reported as a format error).
+        result = subprocess.run(
+            ["shasum", "-a", "256", "--strict", "-c", str(RELEASE_ASSETS)],
+            cwd=Path(tempfile.gettempdir()),
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+        self.assertNotIn("improperly formatted", result.stderr)
+        self.assertNotIn("no properly formatted", result.stderr)
 
 
 class RuntimePinWriter(unittest.TestCase):

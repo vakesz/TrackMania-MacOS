@@ -6,14 +6,20 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+# Three jobs, so that no single job both runs repository code and holds a
+# secret or a release-write token:
+#   build    runs repository code (swift build, uv), has no secrets and no write token.
+#   sign     holds the signing secrets, runs no build step, only signs the tar
+#            the build job produced (checked against that job's reported SHA-256).
+#   publish  holds the write token, runs no repository code, and never replaces
+#            an existing release asset.
 jobs:
-  hub-app:
+  build:
     runs-on: macos-15
-    # Secrets and the release upload live behind the "release" environment, so
-    # its protection rules (required reviewers, tag-only branches) gate them.
-    environment: release
     permissions:
-      contents: write
+      contents: read
+    outputs:
+      app_sha256: ${{ steps.pack.outputs.app_sha256 }}
     env:
       # Never a secret: a manual run on a branch builds an unsigned, unpublished hub.
       IS_TAG_BUILD: ${{ startsWith(github.ref, 'refs/tags/v') }}
@@ -24,11 +30,108 @@ jobs:
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2, pinned
         with:
           version: 0.13.5
-      - name: Verify tag, runtime and source release assets and signing configuration
+      - name: Verify tag and the runtime and source release assets
         id: verify
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(tr -d '\r\n' < VERSION)"
+          tag="v${version}"
+          test "$GITHUB_REF_NAME" = "$tag" \
+            || { echo "Tag $GITHUB_REF_NAME does not match VERSION $version" >&2; exit 1; }
+          # The trust anchor is config/release-assets.sha256 as committed (and
+          # reviewed) in the tagged commit, not any checksum stored next to the
+          # assets: whoever can overwrite release assets can overwrite those too.
+          hashfile=config/release-assets.sha256
+          test -s "$hashfile" \
+            || { echo "$hashfile is missing or empty; merge it through a PR before tagging $tag." >&2; exit 1; }
+          staging="$(mktemp -d)"
+          trap 'rm -rf "$staging"' EXIT
+          : > "$staging/expected.sha256"
+          # The runtime archive is what the hub installs. The source archive is the
+          # corresponding source for it; the hub does not build from it.
+          for kind in runtime source; do
+            asset="trackmania-mac-${version}-${kind}.tar.xz"
+            count="$(awk -v asset="$asset" '$2 == asset { n++ } END { print n + 0 }' "$hashfile")"
+            test "$count" = 1 \
+              || { echo "$hashfile must contain exactly one entry for $asset (found $count)." >&2; exit 1; }
+            expected="$(awk -v asset="$asset" '$2 == asset { print $1 }' "$hashfile")"
+            [[ "$expected" =~ ^[0-9a-f]{64}$ ]] \
+              || { echo "$hashfile has a malformed digest for $asset." >&2; exit 1; }
+            printf '%s  %s\n' "$expected" "$asset" >> "$staging/expected.sha256"
+            # The committed runtime digest is pinned into the hub being built.
+            if test "$kind" = runtime; then
+              echo "runtime_sha256=$expected" >> "$GITHUB_OUTPUT"
+            fi
+          done
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$staging" \
+            --pattern "trackmania-mac-${version}-runtime.tar.xz" \
+            --pattern "trackmania-mac-${version}-source.tar.xz"
+          (cd "$staging" && shasum -a 256 -c expected.sha256) \
+            || { echo "Release $tag assets do not match $hashfile." >&2; exit 1; }
+      - name: Build unsigned hub app
+        env:
+          TMNF_RUNTIME_PIN_SHA256: ${{ steps.verify.outputs.runtime_sha256 }}
+          # A tag build must carry the runtime pin; package-app.sh fails without it.
+          TMNF_REQUIRE_RUNTIME_PIN: ${{ env.IS_TAG_BUILD == 'true' && '1' || '0' }}
+        run: ./src/shell/tools/package-app.sh build-unsigned
+      - name: Pack unsigned app as a tar
+        id: pack
+        # upload-artifact does not keep symlinks or exec bits, so ship a tar.
+        # COPYFILE_DISABLE keeps AppleDouble files out of the sealed bundle.
+        run: |
+          set -euo pipefail
+          tarball="$RUNNER_TEMP/hub-app.tar"
+          COPYFILE_DISABLE=1 tar -C .build/app -cf "$tarball" "TrackMania Mac.app"
+          echo "app_sha256=$(shasum -a 256 "$tarball" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+      - name: Upload unsigned app tar
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, pinned
+        with:
+          name: hub-app-unsigned
+          path: ${{ runner.temp }}/hub-app.tar
+          if-no-files-found: error
+          retention-days: 1
+
+  sign:
+    needs: build
+    runs-on: macos-15
+    # Secrets live behind the "release" environment, so its protection rules
+    # (required reviewers, tag-only branches) gate them.
+    environment: release
+    permissions:
+      contents: read
+    env:
+      IS_TAG_BUILD: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    # This job must not build anything: no swift build, no uv, no package
+    # manager. It runs the tagged package-app.sh `sign` command only.
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned
+        with:
+          persist-credentials: false
+      - name: Download unsigned app tar
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0, pinned
+        with:
+          name: hub-app-unsigned
+          path: ${{ runner.temp }}/hub-app
+      - name: Verify the unsigned app tar and unpack it
+        env:
+          EXPECTED_SHA256: ${{ needs.build.outputs.app_sha256 }}
+        run: |
+          set -euo pipefail
+          tarball="$RUNNER_TEMP/hub-app/hub-app.tar"
+          test -f "$tarball" || { echo 'The build job did not provide hub-app.tar.' >&2; exit 1; }
+          actual="$(shasum -a 256 "$tarball" | awk '{print $1}')"
+          [[ "$EXPECTED_SHA256" =~ ^[0-9a-f]{64}$ ]] && test "$EXPECTED_SHA256" = "$actual" \
+            || { echo 'Unsigned app tar does not match the SHA-256 reported by the build job.' >&2; exit 1; }
+          mkdir -p .build/app
+          rm -rf ".build/app/TrackMania Mac.app"
+          tar -C .build/app -xf "$tarball"
+      - name: Check signing configuration
+        id: signing
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
           APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
           TMNF_SIGN_IDENTITY: ${{ secrets.TMNF_SIGN_IDENTITY }}
           TMNF_NOTARIZE: ${{ secrets.TMNF_NOTARIZE }}
@@ -37,10 +140,6 @@ jobs:
           TMNF_APP_PASSWORD: ${{ secrets.TMNF_APP_PASSWORD }}
         run: |
           set -euo pipefail
-          version="$(tr -d '\r\n' < VERSION)"
-          tag="v${version}"
-          test "$GITHUB_REF_NAME" = "$tag" \
-            || { echo "Tag $GITHUB_REF_NAME does not match VERSION $version" >&2; exit 1; }
           # Without any signing secret the hub is ad-hoc signed and not notarized:
           # it still publishes, and users approve it once in Privacy & Security.
           # As soon as any signing secret is set, the full Developer ID and
@@ -49,7 +148,7 @@ jobs:
           signing_secrets="$APPLE_CERT_P12$TMNF_SIGN_IDENTITY$TMNF_NOTARIZE$APPLE_ID$TMNF_TEAM_ID$TMNF_APP_PASSWORD"
           has_signing=false
           if test -z "$signing_secrets"; then
-            echo "::warning title=Unsigned hub release::No signing secrets are set; $tag ships an ad-hoc signed, unnotarized hub that Gatekeeper will block until the user allows it."
+            echo "::warning title=Unsigned hub release::No signing secrets are set; $GITHUB_REF_NAME ships an ad-hoc signed, unnotarized hub that Gatekeeper will block until the user allows it."
           else
             test -n "$APPLE_CERT_P12" || { echo 'APPLE_CERT_P12 is required for a signed tag release.' >&2; exit 1; }
             test -n "$TMNF_SIGN_IDENTITY" || { echo 'TMNF_SIGN_IDENTITY is required for a signed tag release.' >&2; exit 1; }
@@ -59,42 +158,22 @@ jobs:
             has_signing=true
           fi
           echo "has_signing=$has_signing" >> "$GITHUB_OUTPUT"
-          staging="$(mktemp -d)"
-          trap 'rm -rf "$staging"' EXIT
-          # The runtime archive is what the hub installs. The source archive is the
-          # corresponding source for it; the hub does not build from it.
-          for kind in runtime source; do
-            asset="trackmania-mac-${version}-${kind}.tar.xz"
-            gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$staging" \
-              --pattern "$asset" --pattern "$asset.sha256"
-            test -s "$staging/$asset" && test -s "$staging/$asset.sha256" \
-              || { echo "Release $tag must contain $asset and $asset.sha256 before publishing the hub." >&2; exit 1; }
-            expected="$(awk 'NR == 1 { print $1 }' "$staging/$asset.sha256")"
-            actual="$(shasum -a 256 "$staging/$asset" | awk '{print $1}')"
-            expected="$(printf '%s' "$expected" | tr 'A-F' 'a-f')"
-            [[ "$expected" =~ ^[0-9a-f]{64}$ ]] && test "$expected" = "$actual" \
-              || { echo "Published checksum verification failed for $asset." >&2; exit 1; }
-            # The verified runtime digest is pinned into the hub being built.
-            if test "$kind" = runtime; then
-              echo "runtime_sha256=$expected" >> "$GITHUB_OUTPUT"
-            fi
-          done
       - name: Import Developer ID certificate
-        if: steps.verify.outputs.has_signing == 'true'
+        if: steps.signing.outputs.has_signing == 'true'
         env:
           APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
           APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
         run: |
           cert="$RUNNER_TEMP/tmnf-cert.p12"
+          trap 'rm -f "$cert"' EXIT
           echo "$APPLE_CERT_P12" | base64 --decode > "$cert"
           security create-keychain -p actions actions.keychain
           security default-keychain -s actions.keychain
           security unlock-keychain -p actions actions.keychain
           security import "$cert" -k actions.keychain -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions actions.keychain
-          rm "$cert"
       - name: Store notarytool credentials
-        if: steps.verify.outputs.has_signing == 'true'
+        if: steps.signing.outputs.has_signing == 'true'
         env:
           TMNF_NOTARY_PROFILE: tmnf-ci
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -103,26 +182,48 @@ jobs:
         run: |
           xcrun notarytool store-credentials "$TMNF_NOTARY_PROFILE" \
             --apple-id "$APPLE_ID" --team-id "$TMNF_TEAM_ID" --password "$TMNF_APP_PASSWORD"
-      - name: Build hub app archive
+      - name: Sign, notarize and zip hub app
         env:
-          TMNF_RUNTIME_PIN_SHA256: ${{ steps.verify.outputs.runtime_sha256 }}
-          # A tag build must carry the runtime pin; package-app.sh fails without it.
-          TMNF_REQUIRE_RUNTIME_PIN: ${{ env.IS_TAG_BUILD == 'true' && '1' || '0' }}
-          # Signing secrets are exposed only for tag builds that verified them.
-          TMNF_SIGN_IDENTITY: ${{ steps.verify.outputs.has_signing == 'true' && secrets.TMNF_SIGN_IDENTITY || '' }}
-          TMNF_NOTARIZE: ${{ steps.verify.outputs.has_signing == 'true' && secrets.TMNF_NOTARIZE || '' }}
+          # Signing settings are exposed only for tag builds that verified them.
+          TMNF_SIGN_IDENTITY: ${{ steps.signing.outputs.has_signing == 'true' && secrets.TMNF_SIGN_IDENTITY || '' }}
+          TMNF_NOTARIZE: ${{ steps.signing.outputs.has_signing == 'true' && secrets.TMNF_NOTARIZE || '' }}
           TMNF_NOTARY_PROFILE: tmnf-ci
-        run: ./src/shell/tools/package-app.sh all
+        run: ./src/shell/tools/package-app.sh sign
       - name: Upload app archive artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, pinned
         with:
           name: TrackMania-Mac-hub
           path: .build/dist/TrackMania-Mac-*.app.zip*
-      - name: Attach app archive to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" .build/dist/TrackMania-Mac-*.app.zip* --clobber
+          if-no-files-found: error
       - name: Remove signing keychain
         if: always()
         run: security delete-keychain actions.keychain || true
+
+  publish:
+    needs: [build, sign]
+    # Tag builds only; a manual run on a branch never publishes.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    # The only job allowed to write to the repository. It runs no repository
+    # code (no checkout), and uploads without --clobber so a re-run of a tag
+    # fails instead of replacing an asset that is already published.
+    permissions:
+      contents: write
+    steps:
+      - name: Download signed app archive
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0, pinned
+        with:
+          name: TrackMania-Mac-hub
+          path: dist
+      - name: Attach app archive to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          zip="TrackMania-Mac-${GITHUB_REF_NAME#v}.app.zip"
+          cd dist
+          test "$(find . -type f | wc -l | tr -d ' ')" = 2 \
+            && test -s "$zip" && test -s "$zip.sha256" \
+            || { echo "Expected exactly $zip and $zip.sha256 from the sign job." >&2; exit 1; }
+          sha256sum -c "$zip.sha256"
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "$zip" "$zip.sha256"

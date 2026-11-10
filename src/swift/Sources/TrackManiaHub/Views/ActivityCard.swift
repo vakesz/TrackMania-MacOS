@@ -3,6 +3,7 @@ import SwiftUI
 struct ActivityCard: View {
     let run: RunRecord
     @ObservedObject var model: HubViewModel
+    @ObservedObject var activity: InstallerActivity
     @State private var showDetails = false
 
     private var isRunning: Bool { run.outcome == nil }
@@ -20,15 +21,15 @@ struct ActivityCard: View {
                     Button(model.cancelling ? "Cancelling…" : "Cancel") { model.cancelRunning() }
                         .disabled(model.cancelling)
                 }
-                if !model.log.isEmpty {
+                if !activity.log.isEmpty {
                     Button("Copy Log") {
                         NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(model.log.text, forType: .string)
+                        NSPasteboard.general.setString(activity.log.text, forType: .string)
                     }
                 }
             }
             if isRunning {
-                if let fraction = model.progress.fraction {
+                if let fraction = activity.progress.fraction {
                     ProgressView(value: fraction)
                 } else {
                     ProgressView().progressViewStyle(.linear)
@@ -37,9 +38,9 @@ struct ActivityCard: View {
             if let path = run.reportPath {
                 Button("Show in Finder") { model.reveal(path: path) }
             }
-            if !model.log.isEmpty {
+            if !activity.log.isEmpty {
                 DisclosureGroup("Details", isExpanded: $showDetails) {
-                    if showDetails { LogConsole(model: model) }
+                    if showDetails { LogConsole(activity: activity) }
                 }
             }
         }
@@ -60,7 +61,7 @@ struct ActivityCard: View {
 
     private var detail: String? {
         switch run.outcome {
-        case nil: model.progress.stage ?? String(localized: "Working…")
+        case nil: activity.progress.stage ?? String(localized: "Working…")
         case let .failed(reason): reason
         case .succeeded, .cancelled: nil
         }
@@ -82,13 +83,13 @@ struct ActivityCard: View {
 
 /// Only built while the details are expanded, so output batches cost nothing when collapsed.
 private struct LogConsole: View {
-    @ObservedObject var model: HubViewModel
+    @ObservedObject var activity: InstallerActivity
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(model.log.text)
+                    Text(activity.log.text)
                         .font(.system(.caption, design: .monospaced))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
@@ -99,7 +100,7 @@ private struct LogConsole: View {
             .frame(minHeight: 120, maxHeight: 260)
             .background(.background, in: RoundedRectangle(cornerRadius: 8))
             .onAppear { proxy.scrollTo("end", anchor: .bottom) }
-            .onChange(of: model.logRevision) { proxy.scrollTo("end", anchor: .bottom) }
+            .onChange(of: activity.logRevision) { proxy.scrollTo("end", anchor: .bottom) }
         }
     }
 }

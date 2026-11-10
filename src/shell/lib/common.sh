@@ -177,13 +177,17 @@ readonly GAME_OPENAL="${GAME_DIR}/OpenAL32.dll"
 readonly GAME_OPENAL_CREATIVE="${GAME_DIR}/OpenAL32.creative.dll"
 readonly GAME_OPENAL_COPYING="${GAME_DIR}/OpenAL32.COPYING.txt"
 
+python_is_usable() {
+  { [[ "$TMNF_PYTHON" = */* ]] && test -x "$TMNF_PYTHON"; } \
+    || { [[ "$TMNF_PYTHON" != */* ]] && have "$TMNF_PYTHON"; }
+}
+
 # Lowercase hex digest only. hashlib streams several times faster than shasum
 # on large archives; shasum remains the fallback when no Python is usable here.
 # -I is not an option: it would drop the PYTHONPATH that locates the package.
 sha256_file() {
   local digest
-  if { [[ "$TMNF_PYTHON" = */* ]] && test -x "$TMNF_PYTHON"; } \
-    || { [[ "$TMNF_PYTHON" != */* ]] && have "$TMNF_PYTHON"; }; then
+  if python_is_usable; then
     if digest="$(PYTHONPATH="$TMNF_PYTHONPATH" "$TMNF_PYTHON" -m tmnf.install.hashing sha256 "$1" 2>/dev/null)" \
       && [[ "$digest" =~ ^[0-9a-f]{64}$ ]]; then
       printf '%s\n' "$digest"
@@ -191,6 +195,29 @@ sha256_file() {
     fi
   fi
   shasum -a 256 "$1" | awk '{print $1}'
+}
+
+# One lowercase digest per line for each PATH, from a single Python start. If that
+# fails for any reason, every path gets the shasum fallback; a path shasum cannot
+# read yields an empty line, which matches no expected digest.
+sha256_files() {
+  local digests digest path count
+  if python_is_usable; then
+    if digests="$(PYTHONPATH="$TMNF_PYTHONPATH" "$TMNF_PYTHON" -m tmnf.install.hashing sha256 "$@" 2>/dev/null)"; then
+      count=0
+      while IFS= read -r digest; do
+        [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || { count=-1; break; }
+        count=$((count + 1))
+      done <<<"$digests"
+      if test "$count" -eq "$#"; then
+        printf '%s\n' "$digests"
+        return 0
+      fi
+    fi
+  fi
+  for path in "$@"; do
+    printf '%s\n' "$(shasum -a 256 "$path" 2>/dev/null | awk '{print $1}')"
+  done
 }
 
 verify_file() {
@@ -203,11 +230,32 @@ verify_file() {
   test "$actual" = "$expected"
 }
 
+# Arguments are PATH EXPECTED_SHA256 pairs. Any missing file means no match; the
+# rest are hashed together, so a mismatch no longer skips the later files.
+verify_files() {
+  local -a paths=() wanted=()
+  local digests digest index=0
+  while test "$#" -ge 2; do
+    test -f "$1" || return 1
+    paths+=("$1")
+    wanted+=("$2")
+    shift 2
+  done
+  test "${#paths[@]}" -gt 0 || return 0
+  digests="$(sha256_files "${paths[@]}")"
+  while IFS= read -r digest; do
+    test "$digest" = "${wanted[index]}" || return 1
+    index=$((index + 1))
+  done <<<"$digests"
+  test "$index" -eq "${#paths[@]}"
+}
+
 competition_patch_is_current() {
-  verify_file "$TMLOADER_EXE" "$TMLOADER_EXE_SHA256" \
-    && verify_file "$TMCOMP_DLL" "$TMCOMP_DLL_SHA256" \
-    && verify_file "$TMLOADER_GAME_EXE" "$TMLOADER_GAME_SHA256" \
-    && verify_file "$TMLOADER_COREMOD_DLL" "$TMLOADER_COREMOD_SHA256"
+  verify_files \
+    "$TMLOADER_EXE" "$TMLOADER_EXE_SHA256" \
+    "$TMCOMP_DLL" "$TMCOMP_DLL_SHA256" \
+    "$TMLOADER_GAME_EXE" "$TMLOADER_GAME_SHA256" \
+    "$TMLOADER_COREMOD_DLL" "$TMLOADER_COREMOD_SHA256"
 }
 
 directx_is_current() {
@@ -414,8 +462,28 @@ require_owned_prefix() {
   tmnf_python -m tmnf.guard.managed_paths prefix "$TMNF_PREFIX"
 }
 
+# require_owned_prefix then validate_managed_layout, in one Python start. The
+# prefix is checked first and keeps its own message; exit status 3 means the
+# prefix passed and the layout did not.
+require_owned_managed_layout() {
+  local status=0
+  tmnf_python -m tmnf.guard.managed_paths prefix-layout \
+    "$TMNF_PREFIX" "$TMNF_RUNTIME" "$TMNF_LAUNCHER" "$TMNF_USERDATA" || status=$?
+  case "$status" in
+    0) ;;
+    3) die "Unsafe installation layout." ;;
+    *) die "A managed Wine prefix is required." ;;
+  esac
+}
+
 guard_prefix_operation() {
   validate_managed_layout || die "Unsafe installation layout."
+  hold_prefix_operation "$@"
+}
+
+# Takes the operation lock, or validates the inherited one. For callers that
+# have already checked the layout.
+hold_prefix_operation() {
   if test "${TMNF_OPERATION_FD+x}" != x; then
     mkdir -p "$(dirname "$TMNF_PREFIX")"
     # Process replacement (not a helper call) preserves lock FD inheritance.

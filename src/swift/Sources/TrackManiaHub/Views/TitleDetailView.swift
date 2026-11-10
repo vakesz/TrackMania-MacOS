@@ -17,7 +17,7 @@ struct TitleDetailView: View {
                 HeroHeaderView(title: title)
                 ActionBar(title: title, model: model, perform: perform)
                 if let run = model.run(for: title) {
-                    ActivityCard(run: run, model: model)
+                    ActivityCard(run: run, model: model, activity: model.activity)
                 }
                 if let message = model.message(for: title) {
                     Text(message).font(.callout).foregroundStyle(.secondary)

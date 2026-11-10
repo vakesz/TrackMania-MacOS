@@ -138,6 +138,107 @@ def _runtime(wine, prefix):
     return wine, server, env
 
 
+USER_REG_HEADER = "WINE REGISTRY Version 2"
+USER_REG_LIMIT = 16 * 1024 * 1024
+
+
+def _read_user_reg(prefix):
+    """The text of <prefix>/user.reg; raise if it is not the plain file Wine writes."""
+    fd = os.open(prefix / "user.reg", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid()
+            or info.st_size > USER_REG_LIMIT
+        ):
+            raise ValueError("Unexpected user.reg")
+        raw = stream.read(USER_REG_LIMIT + 1)
+    if len(raw) > USER_REG_LIMIT:
+        raise ValueError("Unexpected user.reg")
+    text = raw.decode("utf-8")
+    if text.split("\n", 1)[0] != USER_REG_HEADER:
+        raise ValueError("Unrecognized user.reg format")
+    return text
+
+
+def _settled_user_reg(prefix):
+    """user.reg, only if it is the registry's current state; otherwise None.
+
+    A running wineserver keeps the registry in memory and writes user.reg
+    lazily, so the file can lag the live registry. It is trusted only when the
+    same lock probe the operation guard uses finds no wineserver for this
+    prefix both before and after the read. A server that starts afterwards
+    loads exactly this file. Any doubt, including an unreadable or unrecognized
+    file, gives None and the caller keeps its registry writes.
+    """
+    try:
+        operation_guard.check_inactive(prefix)
+        text = _read_user_reg(prefix)
+        operation_guard.check_inactive(prefix)
+    except (OSError, ValueError, RuntimeError):
+        return None
+    return text
+
+
+def _user_reg_expectation(registry_args):
+    """The user.reg lines a `reg add` argument list writes, or None if unsure.
+
+    Wine writes `[Key\\\\Path] <timestamp>` for a key (backslashes doubled, case as
+    created), then `"Name"="text"` for REG_SZ and `"Name"=dword:%08x` for
+    REG_DWORD. Only the plain forms built in run() are recognized.
+    """
+    try:
+        command, action, key, v, name, t, kind, d, data, force = registry_args
+    except ValueError:
+        return None
+    if (
+        (command, action, v, t, d, force) != ("reg", "add", "/v", "/t", "/d", "/f")
+        or not key.startswith("HKCU\\")
+        or not re.fullmatch(r"[A-Za-z0-9_]+", name)
+    ):
+        return None
+    if kind == "REG_SZ" and re.fullmatch(r"[A-Za-z0-9_ ]*", data):
+        literal = '"{}"'.format(data)
+    elif kind == "REG_DWORD" and re.fullmatch(r"0x[0-9a-fA-F]{1,8}", data):
+        literal = "dword:{:08x}".format(int(data, 16))
+    else:
+        return None
+    header = "[" + key[len("HKCU\\") :].replace("\\", "\\\\") + "]"
+    return header, '"{}"='.format(name), literal
+
+
+def _user_reg_has(lines, header, name, literal):
+    """True only for exactly one such key holding exactly one such value."""
+    inside = False
+    keys = values = 0
+    for line in lines:
+        if line.startswith("["):
+            inside = line == header or line.startswith(header + " ")
+            keys += inside
+        elif inside and line.startswith(name):
+            if line != name + literal:
+                return False
+            values += 1
+    return keys == 1 and values == 1
+
+
+def _unapplied(prefix, preparation):
+    """Drop `reg add` commands whose value user.reg already holds, exactly."""
+    wanted = [(args, _user_reg_expectation(args)) for args in preparation]
+    if not any(expectation for _, expectation in wanted):
+        return preparation
+    text = _settled_user_reg(prefix)
+    if text is None:
+        return preparation
+    lines = text.split("\n")
+    return [
+        args
+        for args, expectation in wanted
+        if expectation is None or not _user_reg_has(lines, *expectation)
+    ]
+
+
 def _timeout(value):
     value = float(value)
     if not math.isfinite(value) or value <= 0:
@@ -328,7 +429,7 @@ def run(
                         preparation.append(
                             ["reg", "add", key, "/v", name, "/t", "REG_DWORD", "/d", value, "/f"]
                         )
-            for registry_args in preparation:
+            for registry_args in _unapplied(prefix, preparation):
                 _check_interrupt(interrupted)
                 if time.monotonic() >= startup_deadline:
                     raise TimeoutError("Wine preparation deadline expired")

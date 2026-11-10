@@ -46,8 +46,9 @@ command="${1:-help}"
 case "$command" in
   play|play-vanilla|configure|d9vk|uninstall|import)
     validate_launch_options
-    require_owned_prefix || die "A managed Wine prefix is required."
-    guard_prefix_operation "${TMNF_PROJECT_DIR}/src/shell/cli/tmnf" "$@"
+    # Ownership first, so no lock file is created in a prefix this user does not own.
+    require_owned_managed_layout
+    hold_prefix_operation "${TMNF_PROJECT_DIR}/src/shell/cli/tmnf" "$@"
     ;;
   update|app)
     validate_launch_options

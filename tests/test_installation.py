@@ -166,6 +166,102 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         self.assertFalse(self.log.exists())
         return project, game, loader, patch, target, coremod
 
+    def owned_prefix(self):
+        self.prefix.mkdir(parents=True)
+        (self.prefix / ".tmnf-prefix").write_text("tmnf:1\n")
+
+    def guard(self, command, paths, **overrides):
+        return self.shell(
+            ". ./src/shell/lib/common.sh; PYTHONPATH=src/python python3 -m tmnf.guard.managed_paths {} {}".format(
+                command, paths
+            ),
+            **overrides,
+        )
+
+    def test_prefix_layout_matches_the_two_separate_checks(self):
+        everything = '"$TMNF_PREFIX" "$TMNF_RUNTIME" "$TMNF_LAUNCHER" "$TMNF_USERDATA"'
+        inside = {"TMNF_USERDATA": str(self.prefix / "UserData")}
+        for name, create, overrides in (
+            ("missing prefix", False, {}),
+            ("overlapping layout", True, inside),
+            ("valid", True, {}),
+        ):
+            with self.subTest(name):
+                if create and not self.prefix.exists():
+                    self.owned_prefix()
+                combined = self.guard("prefix-layout", everything, **overrides)
+                prefix = self.guard("prefix", '"$TMNF_PREFIX"', **overrides)
+                layout = self.guard("layout", everything, **overrides)
+                if prefix.returncode != 0:
+                    expected = (prefix.returncode, prefix.stderr)
+                elif layout.returncode != 0:
+                    expected = (3, layout.stderr)
+                else:
+                    expected = (0, "")
+                self.assertEqual((combined.returncode, combined.stderr), expected)
+                self.assertEqual(combined.returncode == 0, name == "valid")
+
+    def test_prefix_failure_wins_when_both_checks_would_fail(self):
+        # No prefix, and userdata inside it: the prefix message alone, status 1.
+        result = self.guard(
+            "prefix-layout",
+            '"$TMNF_PREFIX" "$TMNF_RUNTIME" "$TMNF_LAUNCHER" "$TMNF_USERDATA"',
+            TMNF_USERDATA=str(self.prefix / "UserData"),
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Wine prefix is missing", result.stderr)
+        self.assertNotIn("overlap", result.stderr)
+
+    def test_require_owned_managed_layout_keeps_each_message(self):
+        run = ". ./src/shell/lib/common.sh; require_owned_managed_layout; echo ok"
+        result = self.shell(run)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Wine prefix is missing", result.stderr)
+        self.assertIn("error: A managed Wine prefix is required.", result.stderr)
+        self.assertNotIn("Unsafe installation layout", result.stderr)
+        self.owned_prefix()
+        result = self.shell(run)
+        self.assertEqual((result.returncode, result.stdout), (0, "ok\n"), result.stderr)
+        result = self.shell(run, TMNF_USERDATA=str(self.prefix / "UserData"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Managed paths overlap", result.stderr)
+        self.assertIn("error: Unsafe installation layout.", result.stderr)
+        self.assertNotIn("managed Wine prefix is required", result.stderr)
+        self.assertNotIn("ok", result.stdout)
+
+    def test_unowned_prefix_is_refused_before_a_lock_file_is_created(self):
+        self.prefix.mkdir(parents=True)
+        (self.prefix / "stranger").write_text("not ours")
+        result = self.shell("./src/shell/cli/tmnf play")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("error: A managed Wine prefix is required.", result.stderr)
+        self.assertEqual([path.name for path in self.prefix.iterdir()], ["stranger"])
+        self.assertEqual([path.name for path in self.prefix.parent.iterdir()], ["prefix"])
+        self.assertFalse(self.log.exists())
+
+    def test_play_python_starts(self):
+        project, *_ = self.modded_fixture()
+        shim = self.home / "pyshim"
+        starts = self.home / "starts.log"
+        shim.write_text(
+            '#!/bin/bash\nprintf "%s\\n" "$*" >>{}\nexec {} "$@"\n'.format(starts, sys.executable)
+        )
+        shim.chmod(0o755)
+        result = self.shell("./src/shell/cli/tmnf play", cwd=project, TMNF_PYTHON=str(shim))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        modules = [line.split()[1] for line in starts.read_text().splitlines()]
+        # The entry point and the process it re-enters under the lock each check
+        # the prefix and layout once; the four pinned files share one hashing start.
+        self.assertEqual(
+            modules.count("tmnf.guard.managed_paths"), 3
+        )  # 2 prefix-layout + play_target's prefix
+        self.assertEqual(modules.count("tmnf.install.hashing"), 1)
+        commands = [
+            line.split()[2] for line in starts.read_text().splitlines() if "managed_paths" in line
+        ]
+        self.assertEqual(sorted(commands), ["prefix", "prefix-layout", "prefix-layout"])
+        self.assertLessEqual(len(modules), 9)
+
     def test_protected_and_ambiguous_paths(self):
         for value in (
             "/",

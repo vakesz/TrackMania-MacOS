@@ -77,8 +77,22 @@ struct HubSidebar: View {
 
     private func rows(_ titles: [HubTitle]) -> some View {
         ForEach(titles) { title in
-            TitleListRow(title: title, isRunning: model.isRunning(title),
-                         fraction: model.isRunning(title) ? model.progress.fraction : nil)
+            if model.isRunning(title) {
+                RunningTitleRow(title: title, activity: model.activity)
+            } else {
+                TitleListRow(title: title)
+            }
         }
+    }
+}
+
+/// Only the running title's row follows the run's progress, so other rows and the sidebar
+/// itself are not invalidated by output batches.
+private struct RunningTitleRow: View {
+    let title: HubTitle
+    @ObservedObject var activity: InstallerActivity
+
+    var body: some View {
+        TitleListRow(title: title, isRunning: true, fraction: activity.progress.fraction)
     }
 }

@@ -634,6 +634,11 @@ def record_profile_baseline(prefix):
         os.fsync(stream.fileno())
 
 
+# Exit status of prefix-layout when the prefix is fine but the layout is not.
+# Any other failure (status 1) is a prefix failure, as for the `prefix` command.
+LAYOUT_FAILED = 3
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -647,6 +652,7 @@ def main():
             "uninstall",
             "setup-documents",
             "profile-baseline",
+            "prefix-layout",
         ),
     )
     parser.add_argument("paths", nargs="+")
@@ -665,6 +671,15 @@ def main():
             if len(args.paths) != 1:
                 raise ValueError("profile-baseline requires PREFIX")
             record_profile_baseline(args.paths[0])
+        elif args.command == "prefix-layout":
+            # `prefix PATHS[0]` then `layout PATHS`, in one process. The prefix is
+            # checked first, so its error wins exactly as it does for two calls.
+            check_prefix(args.paths[0])
+            try:
+                check_layout(args.paths)
+            except (OSError, ValueError, RuntimeError) as error:
+                print("error: {}".format(error), file=sys.stderr)
+                return LAYOUT_FAILED
         elif args.command in ("layout", "app-layout"):
             check_layout(args.paths, apps=args.command == "app-layout")
         elif args.command == "path":

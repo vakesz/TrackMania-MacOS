@@ -14,8 +14,7 @@ class ImportFlowTests(unittest.TestCase):
         . {str(ROOT / "src/shell/lib/common.sh")!r}
         . {str(ROOT / "src/shell/lib/commands/import.sh")!r}
         validate_launch_options() {{ :; }}
-        require_owned_prefix() {{ return 0; }}
-        validate_managed_layout() {{ return 0; }}
+        require_owned_managed_layout() {{ return 0; }}
         {wine_script}
         import_source "$1"
         """

@@ -484,6 +484,149 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         with self.assertRaises(ValueError):
             check_uninstall(self.prefix, self.home / 'userdata')
 
+    SHELL_FOLDERS = 'Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Explorer\\\\Shell Folders'
+    USER_SHELL_FOLDERS = SHELL_FOLDERS.replace('Shell Folders', 'User Shell Folders')
+
+    def write_user_reg(self, shell=None, user_shell=None, header=True):
+        """Write a user.reg in Wine's real format; values are raw text after "Personal"=."""
+        lines = ['WINE REGISTRY Version 2', ';; All keys relative to \\\\User\\\\S-1-5-21-0-0-0-1000',
+                 '', '#arch=win64', '']
+        for section, value in ((self.SHELL_FOLDERS, shell), (self.USER_SHELL_FOLDERS, user_shell)):
+            if value is None:
+                continue
+            lines += ['[{}] 1700000000'.format(section), '#time=1dc00000deadbeef',
+                      '"Desktop"=' + self.reg_string('C:\\users\\player\\Desktop'),
+                      '"Personal"=' + value, '']
+        (self.prefix / 'user.reg').write_text('\n'.join(lines if header else lines[5:]))
+
+    @staticmethod
+    def reg_string(path, expand=False):
+        return ('str(2):' if expand else '') + '"' + path.replace('\\', '\\\\') + '"'
+
+    def test_uninstall_checks_personal_redirected_inside_prefix(self):
+        self.documents_fixture()
+        saves = self.prefix / 'drive_c/MySaves'
+        saves.mkdir()
+        self.write_user_reg(shell=self.reg_string('C:\\MySaves'))
+        check_uninstall(self.prefix, self.home / 'userdata')
+        (saves / 'TmForever').mkdir()
+        (saves / 'TmForever/replay').write_text('keep')
+        for registry in ({'shell': self.reg_string('C:\\mysaves')},  # Windows names ignore case
+                         {'user_shell': self.reg_string('C:\\MySaves\\', expand=True)}):
+            with self.subTest(registry=registry):
+                self.write_user_reg(**registry)
+                with self.assertRaisesRegex(ValueError, 'Back up'):
+                    check_uninstall(self.prefix, self.home / 'userdata')
+                self.assertEqual((saves / 'TmForever/replay').read_text(), 'keep')
+
+    def test_uninstall_allows_empty_redirect_inside_prefix(self):
+        self.documents_fixture()
+        (self.prefix / 'drive_c/MySaves/Nested').mkdir(parents=True)
+        self.write_user_reg(shell=self.reg_string('C:\\MySaves'))
+        self.assertEqual(check_uninstall(self.prefix, self.home / 'userdata'), self.prefix)
+
+    def test_uninstall_ignores_redirect_to_missing_location(self):
+        self.documents_fixture()
+        self.write_user_reg(shell=self.reg_string('C:\\Gone\\Saves'),
+                            user_shell=self.reg_string('D:\\Saves', expand=True))
+        self.assertEqual(check_uninstall(self.prefix, self.home / 'userdata'), self.prefix)
+
+    def test_uninstall_redirect_outside_prefix_and_alias_back_inside(self):
+        self.documents_fixture()
+        outside = self.home / 'elsewhere'
+        (outside / 'TmForever').mkdir(parents=True)
+        (outside / 'TmForever/replay').write_text('keep')
+        (self.prefix / 'dosdevices').mkdir()
+        (self.prefix / 'dosdevices/e:').symlink_to(outside)
+        self.write_user_reg(shell=self.reg_string('E:\\'))
+        check_uninstall(self.prefix, self.home / 'userdata')
+        internal = self.prefix / 'drive_c/old-saves'
+        internal.mkdir()
+        (internal / 'settings').write_text('keep')
+        (outside / 'Config').symlink_to(internal)
+        with self.assertRaisesRegex(ValueError, 'Back up'):
+            check_uninstall(self.prefix, self.home / 'userdata')
+        self.assertEqual((outside / 'TmForever/replay').read_text(), 'keep')
+        self.assertEqual((internal / 'settings').read_text(), 'keep')
+
+    def test_uninstall_expands_userprofile_for_each_profile(self):
+        self.documents_fixture()
+        second = self.documents_fixture('second').parent
+        (second / 'Saved Games').mkdir()
+        (second / 'Saved Games/replay').write_text('keep')
+        self.write_user_reg(shell=self.reg_string('C:\\users\\player\\Documents'),
+                            user_shell=self.reg_string('%userprofile%\\Saved Games', expand=True))
+        with self.assertRaisesRegex(ValueError, 'Back up'):
+            check_uninstall(self.prefix, self.home / 'userdata')
+        self.assertEqual((second / 'Saved Games/replay').read_text(), 'keep')
+
+    def test_uninstall_maps_other_drive_letters_through_dosdevices(self):
+        self.documents_fixture()
+        target = self.prefix / 'drive_c/Games/saves'
+        target.mkdir(parents=True)
+        (target / 'replay').write_text('keep')
+        (self.prefix / 'dosdevices').mkdir()
+        (self.prefix / 'dosdevices/d:').symlink_to('../drive_c/Games')
+        self.write_user_reg(shell=self.reg_string('D:\\saves'))
+        with self.assertRaisesRegex(ValueError, 'Back up'):
+            check_uninstall(self.prefix, self.home / 'userdata')
+        self.assertEqual((target / 'replay').read_text(), 'keep')
+
+    def test_uninstall_reads_wine_escapes_and_hex_values(self):
+        self.documents_fixture()
+        saves = self.prefix / 'drive_c/Sp\u00e4\u00e9'
+        saves.mkdir()
+        (saves / 'replay').write_text('keep')
+        text = 'C:\\\\Sp\\xe4\\xe9'  # as Wine writes it: \\ for a backslash, \xe4 for a-umlaut
+        hexed = ','.join('{:02x}'.format(byte) for byte in 'C:\\Sp\u00e4\u00e9\0'.encode('utf-16-le'))
+        for value in ('"' + text + '"', 'str(2):"' + text + '"',
+                      'hex(2):' + hexed[:30] + '\\\n  ' + hexed[30:]):
+            with self.subTest(value=value):
+                self.write_user_reg(shell=value)
+                with self.assertRaisesRegex(ValueError, 'Back up'):
+                    check_uninstall(self.prefix, self.home / 'userdata')
+
+    def test_uninstall_without_user_reg_is_allowed(self):
+        self.documents_fixture()
+        self.assertFalse((self.prefix / 'user.reg').exists())
+        self.assertEqual(check_uninstall(self.prefix, self.home / 'userdata'), self.prefix)
+        self.write_user_reg()  # no Personal value anywhere is the Wine default too
+        self.assertEqual(check_uninstall(self.prefix, self.home / 'userdata'), self.prefix)
+
+    def test_uninstall_refuses_unreadable_personal_value(self):
+        self.documents_fixture()
+        keep = self.prefix / 'drive_c/MySaves/replay'
+        keep.parent.mkdir()
+        keep.write_text('keep')
+        bad_values = ['"C:\\\\Saves', 'dword:00000001', 'hex:43,00', 'str(2):"%APPDATA%\\\\Saves"',
+                      '"\\\\\\\\server\\\\share\\\\Saves"', '"Saves"', '"C:Saves"', '"C:\\\\..\\\\Saves"',
+                      '"C:\\\\Saves\\\\"junk', '"C:\\\\Saves\\\\\\xzz"', '"%USERPROFILE%x%USERPROFILE%"']
+        for section in ('shell', 'user_shell'):
+            for value in bad_values:
+                with self.subTest(section=section, value=value):
+                    self.write_user_reg(**{section: value})
+                    with self.assertRaisesRegex(ValueError, 'back up your saves manually'):
+                        check_uninstall(self.prefix, self.home / 'userdata')
+        self.write_user_reg(shell=self.reg_string('C:\\Documents'))
+        with open(self.prefix / 'user.reg', 'a') as stream:
+            stream.write('\n[Other\\\\Key] 1700000000\ngarbage\n')  # other sections are not interpreted
+        check_uninstall(self.prefix, self.home / 'userdata')
+        (self.prefix / 'user.reg').write_bytes(b'[Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Explorer'
+                                               b'\\\\Shell Folders]\n"Personal"="\xff\xfe\\x"\n')
+        with self.assertRaisesRegex(ValueError, 'back up your saves manually'):
+            check_uninstall(self.prefix, self.home / 'userdata')
+        (self.prefix / 'user.reg').unlink()
+        (self.prefix / 'user.reg').mkdir()
+        with self.assertRaisesRegex(ValueError, 'back up your saves manually'):
+            check_uninstall(self.prefix, self.home / 'userdata')
+        self.assertEqual(keep.read_text(), 'keep')
+        (self.prefix / 'user.reg').rmdir()
+        self.write_user_reg(shell='"C:\\\\Saves')
+        result = self.shell('PYTHONPATH=src/python python3 -m tmnf.guard.managed_paths uninstall "$TMNF_PREFIX" "$HOME/userdata"')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('back up your saves manually', result.stderr)
+        self.assertEqual(result.stdout, '')
+
     def test_save_checks_fail_closed_for_broken_and_cyclic_links(self):
         documents = self.documents_fixture()
         documents.rmdir()
@@ -708,7 +851,7 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
         self.assertFalse((self.home / 'userdata').exists())
         self.assertEqual((documents / 'replay').read_text(), 'keep')
 
-    def test_uninstall_cli_requires_owned_disjoint_paths_and_warns_about_registry(self):
+    def test_uninstall_cli_requires_owned_disjoint_paths(self):
         self.prefix.mkdir(parents=True)
         with self.assertRaises(ValueError):
             check_uninstall(self.prefix, self.home / 'userdata')
@@ -717,7 +860,8 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
             check_uninstall(self.prefix, self.prefix / 'userdata')
         result = self.shell('PYTHONPATH=src/python python3 -m tmnf.guard.managed_paths uninstall "$TMNF_PREFIX" "$HOME/userdata"')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('registry', result.stderr)
+        self.assertEqual(result.stdout.strip(), str(self.prefix))
+        self.assertEqual(result.stderr, '')
 
     def test_nonempty_documents_preflight_does_not_change_other_profiles(self):
         empty = self.documents_fixture('first')

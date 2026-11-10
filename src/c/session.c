@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+#include "session_settle.h"
 
 #define PATH_CAP 32768
 #define PROCESS_CAP 256
@@ -743,8 +744,38 @@ unverified:
         else if (live_targets) idle = 0;
         else
         {
+            int settled;
             if (!idle) { idle = 1; idle_since = now; }
-            if (now - idle_since >= SETTLE_MS)
+            settled = now - idle_since >= SETTLE_MS;
+            if (!settled && root && root->exited && !live_job && accounted && !ambiguous)
+            {
+                /* Only a finished root, an empty job and a fresh matching
+                 * count skip the handoff window; the settled branch below then
+                 * reports exactly what it would after the full wait. */
+                JOBOBJECT_BASIC_ACCOUNTING_INFORMATION fresh;
+                SettleFacts facts = {0};
+                facts.root_known = 1;
+                facts.root_exited = root->exited;
+                facts.live_targets = live_targets;
+                facts.live_job = live_job;
+                facts.ambiguous = ambiguous;
+                facts.accounted = accounted;
+                facts.known_job = known_job;
+                facts.job_query_ok = QueryInformationJobObject(s.job, JobObjectBasicAccountingInformation,
+                        &fresh, sizeof(fresh), NULL) != 0;
+                if (facts.job_query_ok)
+                {
+                    facts.active_processes = fresh.ActiveProcesses;
+                    facts.total_processes = fresh.TotalProcesses;
+                }
+                if (settle_may_end_early(&facts))
+                {
+                    settled = 1;
+                    fprintf(stderr, "session: job empty and root exited; skipping settle after %llums\n",
+                            (unsigned long long)(now - idle_since));
+                }
+            }
+            if (settled)
             {
                 if (!accounted) { s.reason = "unobserved_job_process"; goto done; }
                 if (ambiguous) { s.reason = "ambiguous_process_activity"; goto done; }

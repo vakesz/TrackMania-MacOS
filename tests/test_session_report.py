@@ -1,7 +1,9 @@
 """Offline checks for tmnf.session.report and tmnf.session.monitor (no Wine, game or MinGW)."""
 
 import contextlib
+import hashlib
 import io
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -83,6 +85,120 @@ class MonitorTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertIsNone(monitor.start_state_helper('/nonexistent', '/nonexistent', 'wine'))
         self.assertRegex(out.getvalue(), r'^tmnf-mon: tick=\d+\.\d{3} event=state_helper status=unavailable')
+
+
+FAKE_COMPILER = '''#!/bin/bash
+# Stands in for x86_64-w64-mingw32-gcc: records argv, then behaves like gcc by
+# writing the -o file only when the build succeeds.
+printf '%s\\n' call "$@" >>"$FAKE_CC_LOG"
+out=
+while test "$#" -gt 0; do
+  test "$1" != -o || out="$2"
+  shift
+done
+test -z "${FAKE_CC_FAIL:-}" || exit 1
+printf 'fake exe' >"$out"
+'''
+
+FAKE_WINE = '''#!/bin/bash
+printf '%s|%s\\n' "$WINEPREFIX" "$*" >>"$FAKE_WINE_LOG"
+'''
+
+
+class StateHelperBuildTests(unittest.TestCase):
+    """start_state_helper against a fake MinGW compiler and fake Wine on PATH; nothing real runs."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory(prefix='tmnf-state-helper-')
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name).resolve()
+        bin_dir = self.root / 'bin'
+        bin_dir.mkdir()
+        self.compiler = bin_dir / 'x86_64-w64-mingw32-gcc'
+        self.wine = bin_dir / 'wine'
+        for tool, body in ((self.compiler, FAKE_COMPILER), (self.wine, FAKE_WINE)):
+            tool.write_text(body)
+            tool.chmod(0o755)
+        self.cc_log, self.wine_log = self.root / 'cc.log', self.root / 'wine.log'
+        self.source = self.root / 'game-state.c'
+        self.source.write_text('int version_one;\n')
+        self.cache = self.root / 'cache'
+        # A real file: the helper's stdout is inherited by the child, and emit() writes here too.
+        self.output = open(self.root / 'output.log', 'w+')
+        self.addCleanup(self.output.close)
+        env = mock.patch.dict(os.environ, PATH=str(bin_dir), FAKE_CC_LOG=str(self.cc_log),
+                              FAKE_WINE_LOG=str(self.wine_log))
+        for patcher in (env, mock.patch.object(monitor, 'SOURCE', self.source),
+                        mock.patch.object(monitor.sys, 'stdout', self.output)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def start(self):
+        process = monitor.start_state_helper(self.cache, 'the-prefix', str(self.wine))
+        if process is not None:
+            self.assertEqual(process.wait(timeout=10), 0)
+        return process
+
+    def exe(self):
+        digest = hashlib.sha256(self.source.read_bytes()).hexdigest()[:16]
+        return self.cache / ('game-state-' + digest + '.exe')
+
+    def compiles(self):
+        if not self.cc_log.exists():
+            return []
+        return [call.splitlines() for call in self.cc_log.read_text().split('call\n')[1:]]
+
+    def events(self):
+        self.output.flush()
+        return (self.root / 'output.log').read_text()
+
+    def test_builds_with_strict_flags_and_runs_the_helper_in_the_game_prefix(self):
+        process = self.start()
+        self.assertIsNotNone(process)
+        partial = self.exe().with_suffix('.partial.exe')
+        self.assertEqual(self.compiles(), [['-O2', '-Wall', '-Wextra', '-Werror', str(self.source),
+                                            '-o', str(partial)]])
+        self.assertEqual(self.exe().read_text(), 'fake exe')
+        self.assertFalse(partial.exists())
+        self.assertEqual(self.wine_log.read_text(), 'the-prefix|{}\n'.format(self.exe()))
+
+    def test_unchanged_source_reuses_the_cached_build(self):
+        self.start()
+        self.start()
+        self.assertEqual(len(self.compiles()), 1)
+        self.assertEqual(len(self.wine_log.read_text().splitlines()), 2)
+
+    def test_changed_source_rebuilds_and_sweeps_old_digests(self):
+        self.cache.mkdir()
+        stale = self.cache / 'game-state-0123456789abcdef.exe'
+        stale.write_text('old build')
+        unrelated = [self.cache / 'notes.txt', self.cache / 'game-state.log']
+        for path in unrelated:
+            path.write_text('keep')
+        self.start()
+        first = self.exe()
+        self.assertTrue(first.is_file())
+        self.assertFalse(stale.exists())
+        self.source.write_text('int version_two;\n')
+        self.start()
+        second = self.exe()
+        self.assertNotEqual(first, second)
+        self.assertEqual(len(self.compiles()), 2)
+        self.assertEqual(sorted(self.cache.glob('game-state-*.exe')), [second])
+        for path in unrelated:
+            self.assertEqual(path.read_text(), 'keep')
+
+    def test_compile_failure_reports_unavailable_and_leaves_no_executable(self):
+        with mock.patch.dict(os.environ, FAKE_CC_FAIL='1'):
+            self.assertIsNone(self.start())
+        self.assertRegex(self.events(), r"event=state_helper status=unavailable reason='build failed'")
+        self.assertEqual(len(self.compiles()), 1)
+        self.assertEqual(list(self.cache.glob('game-state-*.exe')), [])
+        self.assertFalse(self.wine_log.exists())
+        # Nothing is remembered: the next start, with a working compiler, builds.
+        self.assertIsNotNone(self.start())
+        self.assertTrue(self.exe().is_file())
+        self.assertEqual(len(self.compiles()), 2)
 
 
 class TrackerTests(unittest.TestCase):

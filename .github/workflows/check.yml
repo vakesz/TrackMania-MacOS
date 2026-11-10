@@ -4,6 +4,11 @@ on:
   pull_request:
 permissions:
   contents: read
+# A newer push to a branch or pull request makes the older run stale. Every
+# commit on main keeps a complete result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   check:
     runs-on: macos-15
@@ -14,7 +19,97 @@ jobs:
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2, pinned
         with:
           version: 0.13.5
-      - name: Install validation tools
-        run: brew install shellcheck
+      - name: Install shellcheck
+        env:
+          SHELLCHECK_VERSION: v0.11.0
+          # SHA-256 of the official darwin.aarch64 .tar.xz release asset. It
+          # matches the digest GitHub shows for that asset. Recompute it when
+          # the version changes.
+          SHELLCHECK_SHA256: 56affdd8de5527894dca6dc3d7e0a99a873b0f004d7aabc30ae407d3f48b0a79
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/shellcheck.tar.xz"
+          curl -fsSL --retry 3 -o "$archive" \
+            "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.darwin.aarch64.tar.xz"
+          echo "${SHELLCHECK_SHA256}  ${archive}" | shasum -a 256 -c -
+          mkdir "${RUNNER_TEMP}/shellcheck"
+          tar -xJf "$archive" -C "${RUNNER_TEMP}/shellcheck" --strip-components=1
+          echo "${RUNNER_TEMP}/shellcheck" >>"$GITHUB_PATH"
+          "${RUNNER_TEMP}/shellcheck/shellcheck" --version
+      - name: Identify the Swift toolchain
+        id: swift
+        run: |
+          set -euo pipefail
+          echo "toolchain=$(swift --version 2>&1 | shasum -a 256 | cut -c1-16)" >>"$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0, pinned
+        with:
+          path: src/swift/.build
+          key: swift-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift.outputs.toolchain }}-${{ hashFiles('src/swift/Package.swift', 'src/swift/Package.resolved') }}
+          restore-keys: |
+            swift-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift.outputs.toolchain }}-
       - name: Validate
         run: make check
+  # The two MinGW helpers are only built by make build, which CI never runs.
+  # Compile them with the flags the build and the session monitor use, so a
+  # warning fails here and not on a user's machine.
+  c-helpers:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned
+        with:
+          persist-credentials: false
+      - name: Install mingw-w64
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        run: brew install mingw-w64
+      - name: Compile session.c
+        # Flags of session() in src/python/tmnf/build/runtime_builder.py.
+        run: |
+          set -euo pipefail
+          x86_64-w64-mingw32-gcc --version | head -1
+          x86_64-w64-mingw32-gcc -municode -O2 -Wall -Wextra -Werror \
+            "-ffile-prefix-map=${GITHUB_WORKSPACE}=/tmnf" \
+            src/c/session.c -o "${RUNNER_TEMP}/tmnf-session.exe"
+      - name: Compile game-state.c
+        # Flags of start_state_helper() in src/python/tmnf/session/monitor.py.
+        run: |
+          set -euo pipefail
+          x86_64-w64-mingw32-gcc -O2 -Wall -Wextra -Werror \
+            src/c/game-state.c -o "${RUNNER_TEMP}/game-state.exe"
+  # The one test make check skips off a prepared sidecar checkout: it compiles
+  # the patched lowerer natively and runs ARM code, which needs arm64 macOS.
+  x87-native:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2, pinned
+        with:
+          version: 0.13.5
+      - name: Fetch the pinned x87sidecar
+        run: |
+          set -euo pipefail
+          # The test archives exactly its own REVISION, which the build lock
+          # (config/sources.json) must agree with.
+          read -r url lock_revision < <(python3 -I -c \
+            "import json; s = json.load(open('config/sources.json'))['x87sidecar']; print(s['git'], s['revision'])")
+          revision="$(python3 -I -c \
+            "import re; print(re.search(r\"^REVISION = '([0-9a-f]{40})'\", open('tests/test_x87_patch.py').read(), re.M).group(1))")"
+          test "$revision" = "$lock_revision" \
+            || { echo "tests/test_x87_patch.py pins $revision but config/sources.json pins $lock_revision" >&2; exit 1; }
+          source="${RUNNER_TEMP}/x87sidecar"
+          git init -q "$source"
+          git -C "$source" fetch --depth=1 "$url" "$revision"
+          git -C "$source" checkout -q FETCH_HEAD
+          test "$(git -C "$source" rev-parse HEAD)" = "$revision"
+          echo "X87SIDECAR_SOURCE=${source}" >>"$GITHUB_ENV"
+      - name: Native pressure test
+        run: |
+          set -euo pipefail
+          # pytest exits 0 when the test skips, so require the passed line.
+          uv run --frozen --group test pytest -q -rs tests/test_x87_patch.py -k test_native_pressure_matches_lowerer \
+            | tee "${RUNNER_TEMP}/x87.log"
+          grep -Eq '^1 passed[ ,]' "${RUNNER_TEMP}/x87.log" \
+            || { echo 'The native x87 test did not run to a pass (skipped or deselected).' >&2; exit 1; }

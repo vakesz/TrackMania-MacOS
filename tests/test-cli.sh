@@ -130,14 +130,19 @@ fi
 
 # A prefix that is really busy degrades with the session message.
 OPERATION_LOCK="${FAKE_ROOT}/.prefix.tmnf-operation.lock"
+# The guard starts its command only once it holds the lock, so the command
+# creating this file proves the prefix is busy. The lock file itself is no
+# proof: the idle doctor above already left it behind.
+HOLDER_READY="${TEST_ROOT}/holder-ready"
+# shellcheck disable=SC2016  # $1 is expanded by the child shell, not here
 PYTHONPATH="${PROJECT_DIR}/src/python" /usr/bin/python3 -m tmnf.guard.operation_guard \
-  run "$FAKE_PREFIX" /bin/sleep 60 >/dev/null 2>&1 &
+  run "$FAKE_PREFIX" /bin/bash -c 'touch "$1" && exec /bin/sleep 60' _ "$HOLDER_READY" >/dev/null 2>&1 &
 holder=$!
-for _ in $(seq 1 50); do
-  test -e "$OPERATION_LOCK" && break
+for _ in $(seq 1 300); do
+  test -e "$HOLDER_READY" && break
   sleep 0.1
 done
-sleep 0.3
+test -e "$HOLDER_READY" || { echo 'the lock holder never took the prefix lock' >&2; exit 1; }
 busy_output="$("${PROJECT_DIR}/src/shell/cli/tmnf" doctor 2>&1)" || true
 printf '%s\n' "$busy_output" | grep -q 'A session owns the prefix right now'
 if printf '%s\n' "$busy_output" | grep -q 'WoW64:'; then

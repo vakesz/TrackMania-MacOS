@@ -291,7 +291,8 @@ def source_inventory(required=True):
     for name in LOCK:
         if required or (SOURCES / name).exists():
             status(f'upstream/{name}')
-            result[name] = inventory(SOURCES / name, lambda path: source_excluded(name, path))
+            # The lambda runs inside inventory(), before the loop moves on.
+            result[name] = inventory(SOURCES / name, lambda path: source_excluded(name, path))  # noqa: B023
     return result
 
 

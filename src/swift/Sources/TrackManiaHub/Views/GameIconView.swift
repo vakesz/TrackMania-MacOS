@@ -9,7 +9,7 @@ struct GameIconView: View {
             if let path = title.icon, let image = IconCache.shared.image(atPath: path) {
                 Image(nsImage: image)
                     .resizable()
-                    .aspectRatio(contentMode: .fit)
+                    .scaledToFit()
                     .padding(size * 0.08)
             } else {
                 Text(FallbackIcon.label(for: title))

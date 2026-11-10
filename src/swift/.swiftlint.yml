@@ -1,0 +1,10 @@
+# Keep the correctness and safety rules; switch off only rules that police
+# naming and layout. `make check` runs this with --strict from src/swift.
+disabled_rules:
+  - line_length
+  - type_name
+  - identifier_name
+  - todo
+
+excluded:
+  - .build

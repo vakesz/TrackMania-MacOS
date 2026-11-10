@@ -85,7 +85,7 @@ def parse(mangled):
                 p = end + 1
         return parts[0], p + 1
 
-    arg_types = []  # for argument back-references
+    arg_types: list = []  # for argument back-references
 
     def read_type(p, top=False):
         if rest[p].isdigit():
@@ -119,7 +119,7 @@ def parse(mangled):
     ret, pos = read_type(pos)
     if ret == 'buf':
         raise Unsupported('returns reference')
-    args = []
+    args: list = []
     if rest[pos:] in ('XZ', 'XZ@'):
         return method, cls, convention, ret, args
     while rest[pos] not in '@Z':
@@ -205,7 +205,8 @@ class Gate:
 
         With learn=True (stock Rosetta), a crash marks a function that needs game state
         the harness does not set up: it is added to the skip list and the table rebuilt."""
-        got, start = {}, 0
+        got: dict = {}
+        start = 0
         while True:
             status, text = self.run(sidecar, [str(self.calls), str(start)], 3600)
             got.update(((m[1], m[2]), m[3]) for m in

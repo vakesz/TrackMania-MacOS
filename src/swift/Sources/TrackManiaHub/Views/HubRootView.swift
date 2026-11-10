@@ -46,9 +46,9 @@ struct HubRootView: View {
             updates.checkIfNeeded(currentVersion: UpdateChecker.bundleVersion ?? model.snapshot?.hubVersion,
                                   enabled: checkForUpdates)
         }
-        .sheet(isPresented: $showWelcome, onDismiss: { didShowWelcome = true }) {
+        .sheet(isPresented: $showWelcome, onDismiss: { didShowWelcome = true }, content: {
             WelcomeView { showWelcome = false }
-        }
+        })
     }
 
     private func selectedTitle(in snapshot: HubSnapshot) -> HubTitle? {

@@ -337,7 +337,7 @@ def prepared_identity(name):
 
 
 def toolchain_identity(only=None):
-    tools = ('/usr/bin/clang', '/usr/bin/clang++', 'clang', 'clang++',
+    tools: tuple[str, ...] = ('/usr/bin/clang', '/usr/bin/clang++', 'clang', 'clang++',
              'i686-w64-mingw32-gcc', 'i686-w64-mingw32-g++',
              'x86_64-w64-mingw32-gcc', 'x86_64-w64-mingw32-g++',
              '/usr/bin/make', 'cmake', 'meson', 'ninja', 'bison', 'flex',
@@ -711,7 +711,7 @@ def verify_no_build_paths_in_archive(archive):
         for member in tar:
             if not member.isfile():
                 continue
-            with tar.extractfile(member) as stream:
+            with tar.extractfile(member) as stream:  # type: ignore[union-attr]  # isfile() members always have data
                 blob = stream.read()
             if str(ROOT).encode() in blob:
                 raise RuntimeError(

@@ -59,7 +59,7 @@ def build(output, baseline=False, arch="i386"):
         for variable in re.findall(r"\$\((\w+)\)", command):
             if variable not in {arch + "_CC", arch + "_CFLAGS", arch + "_LDFLAGS"}:
                 raise ValueError("unexpected variable " + variable)
-            command = command.replace("$(" + variable + ")", re.search(r"^" + variable + r" = (.*)$", text, re.M)[1])
+            command = command.replace("$(" + variable + ")", re.search(r"^" + variable + r" = (.*)$", text, re.M)[1])  # type: ignore[index]  # an undefined variable raises TypeError, not ValueError
         if "$" in command:
             raise ValueError("unsupported recipe expansion")
         return shlex.split(command)

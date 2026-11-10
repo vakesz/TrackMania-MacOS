@@ -92,7 +92,7 @@ def run(title_id: str, action_id: str, source: typing.Optional[str],
     if action_id == 'install-apps':
         _exec(cli, ['app'], title_id)
     if action_id == 'import':
-        _exec(cli, ['import', source], title_id)
+        _exec(cli, ['import', source], title_id)  # type: ignore[list-item]  # validated non-empty above
     if action_id == 'doctor':
         _exec(cli, ['doctor'], title_id)
     if action_id == 'diagnostics':

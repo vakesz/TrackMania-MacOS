@@ -207,7 +207,7 @@ final class HubBackend: Sendable {
     /// Runs `launcher` in a new session with stdout and stderr merged into one pipe.
     /// Returns once the child has exited and the pipe hit EOF, or shortly after exit if
     /// some other process still holds the pipe's write end.
-    static func execute(launcher: URL, arguments: [String],
+    static func execute(launcher: URL, arguments: [String], // swiftlint:disable:this cyclomatic_complexity function_body_length
                         handle: HubCommandHandle = HubCommandHandle(),
                         onOutput: @escaping @Sendable (String) -> Void = { _ in }) throws -> HubCommandResult {
         var fds: [Int32] = [0, 0]
@@ -274,6 +274,9 @@ final class HubBackend: Sendable {
             if count == 0 { break readLoop }
             let chunk = Data(buffer[0..<count])
             collector.append(chunk)
+            // Lossy on purpose: a chunk can end inside a multi-byte character, and the
+            // failable initializer would drop the whole chunk.
+            // swiftlint:disable:next optional_data_string_conversion
             onOutput(String(decoding: chunk, as: UTF8.self))
         }
         close(readFD)
@@ -284,6 +287,7 @@ final class HubBackend: Sendable {
         let signal = raw & 0x7f
         let status: Int32 = signal == 0 ? (raw >> 8) & 0xff : 128 + signal
         return HubCommandResult(status: status,
+                                // swiftlint:disable:next optional_data_string_conversion
                                 output: String(decoding: collector.value(), as: UTF8.self),
                                 cancelled: handle.isCancelled && status != 0)
     }

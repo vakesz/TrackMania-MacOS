@@ -1,3 +1,6 @@
+// The snapshot models share one decoding contract, so they stay in one file.
+// swiftlint:disable file_length
+
 import Foundation
 
 /// A string-backed value that never fails to decode: unrecognised raw values land in `unknown`.
@@ -304,7 +307,7 @@ extension HubTitle {
             item("Renderer", "display", state.renderer),
             item("Game files", "gamecontroller", state.game),
             item("Game app", "play.rectangle", state.gameApp),
-            item("Settings app", "gearshape", state.settingsApp),
+            item("Settings app", "gearshape", state.settingsApp)
         ]
     }
 

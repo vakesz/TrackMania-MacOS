@@ -64,8 +64,11 @@ check:
 	shellcheck $(SHELL_SOURCES) tests/test-cli.sh
 	@command -v uv >/dev/null 2>&1 || (echo 'error: uv is required (https://docs.astral.sh/uv/)' >&2; exit 1)
 	uv run --frozen --group lint ruff check src tests
+	uv run --frozen --group typecheck mypy
 	uv run --frozen --group test pytest -q
 	./tests/test-cli.sh
+	@command -v swiftlint >/dev/null 2>&1 || (echo 'error: swiftlint is required (brew install swiftlint on macOS)' >&2; exit 1)
+	cd src/swift && swiftlint lint --strict --quiet
 	swift test --package-path src/swift
 
 smoke:

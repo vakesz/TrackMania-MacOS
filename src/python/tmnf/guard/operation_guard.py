@@ -21,7 +21,7 @@ from pathlib import Path
 try:
     from .managed_paths import safe_path
 except ImportError:
-    from managed_paths import safe_path
+    from managed_paths import safe_path  # type: ignore[import-not-found,no-redef]  # script-mode fallback
 
 
 TOKEN = 'TMNF_OPERATION_FD'
@@ -66,7 +66,7 @@ def _open_directory(path, dir_fd=None, private=False):
         if private:
             trusted = info.st_uid == os.getuid() and not info.st_mode & 0o077
         else:
-            trusted = (info.st_uid in (0, os.getuid()) and
+            trusted = (info.st_uid in (0, os.getuid()) and  # type: ignore[assignment]  # only truthiness is used
                        (not info.st_mode & 0o022 or
                         (info.st_uid == 0 and info.st_mode & stat.S_ISVTX)))
         if not trusted:
@@ -307,8 +307,8 @@ def app_run(prefix, command):
 
 
 def _run(command, tokens, grace=INTERRUPT_GRACE):
-    handlers = {}
-    interrupted = []
+    handlers: dict = {}
+    interrupted: list[int] = []
 
     def interrupt(signum, frame):
         if not interrupted:
@@ -325,7 +325,7 @@ def _run(command, tokens, grace=INTERRUPT_GRACE):
             if interrupted:
                 # Keep the leader unreaped until the final group signal, so its
                 # process group ID cannot be recycled while we clean up.
-                for signum in (interrupted[0], signal.SIGCONT):
+                for signum in (interrupted[0], signal.SIGCONT):  # type: ignore[assignment]  # signum is an int at runtime
                     _signal_group(child.pid, signum)
                 deadline = time.monotonic() + grace
                 while time.monotonic() < deadline:

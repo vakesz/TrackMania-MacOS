@@ -37,12 +37,13 @@ class Handler(BaseHTTPRequestHandler):
 class Server(ThreadingHTTPServer):
     daemon_threads = True
     connections = 0
+    context: ssl.SSLContext  # assigned by serve() before the first request
 
     def server_bind(self):
         # HTTPServer.server_bind reverse-resolves the host with getfqdn, which
         # hangs in mDNS on GitHub's macOS runners; the name only feeds logging.
         socketserver.TCPServer.server_bind(self)
-        self.server_name, self.server_port = self.server_address[:2]
+        self.server_name, self.server_port = self.server_address[:2]  # type: ignore[assignment]  # AF_INET address is (str, int)
 
     def get_request(self):
         connection, address = super().get_request()
@@ -51,7 +52,7 @@ class Server(ThreadingHTTPServer):
         try:
             secured = self.context.wrap_socket(connection, server_side=True)
             self.connections += 1
-            secured.test_id = self.connections
+            secured.test_id = self.connections  # type: ignore[attr-defined]  # read back by Handler
             return secured, address
         except (OSError, ValueError) as error:
             connection.close()

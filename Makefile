@@ -64,6 +64,7 @@ check:
 	shellcheck $(SHELL_SOURCES) tests/test-cli.sh
 	@command -v uv >/dev/null 2>&1 || (echo 'error: uv is required (https://docs.astral.sh/uv/)' >&2; exit 1)
 	uv run --frozen --group lint ruff check src tests
+	uv run --frozen --group lint ruff format --check src tests
 	uv run --frozen --group typecheck mypy
 	uv run --frozen --group test pytest -q
 	./tests/test-cli.sh

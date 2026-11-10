@@ -19,10 +19,10 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-REVISION = '0b7c5e54dad37f6ed8374b91443e2d2083652452'
-PATCHES = sorted((ROOT / 'patches/x87sidecar').glob('*.patch'))
+REVISION = "0b7c5e54dad37f6ed8374b91443e2d2083652452"
+PATCHES = sorted((ROOT / "patches/x87sidecar").glob("*.patch"))
 
-HARNESS = r'''
+HARNESS = r"""
 #include <algorithm>
 #include <bit>
 #include <cassert>
@@ -216,60 +216,89 @@ int main() {
     }
     std::printf("%d native lowerer/pressure cases passed\n", cases);
 }
-'''
+"""
 
 
 class X87PatchTests(unittest.TestCase):
     def test_native_pressure_matches_lowerer(self):
-        source = Path(os.environ.get(
-            'X87SIDECAR_SOURCE', ROOT / '.build/release/sources/x87sidecar'))
-        compiler = shutil.which('clang++')
-        if sys.platform != 'darwin' or platform.machine() != 'arm64' or compiler is None:
-            self.skipTest('requires native arm64 macOS and clang++')
-        if not (source / '.git').exists():
-            self.skipTest('requires the pinned x87sidecar git checkout')
+        source = Path(
+            os.environ.get("X87SIDECAR_SOURCE", ROOT / ".build/release/sources/x87sidecar")
+        )
+        compiler = shutil.which("clang++")
+        if sys.platform != "darwin" or platform.machine() != "arm64" or compiler is None:
+            self.skipTest("requires native arm64 macOS and clang++")
+        if not (source / ".git").exists():
+            self.skipTest("requires the pinned x87sidecar git checkout")
 
-        with tempfile.TemporaryDirectory(prefix='x87-patch-test-') as directory:
+        with tempfile.TemporaryDirectory(prefix="x87-patch-test-") as directory:
             work = Path(directory)
             archive = subprocess.run(
-                ['git', '-C', str(source), 'archive', REVISION],
-                check=True, capture_output=True).stdout
-            subprocess.run(['tar', '-x', '-C', str(work)], input=archive, check=True)
+                ["git", "-C", str(source), "archive", REVISION], check=True, capture_output=True
+            ).stdout
+            subprocess.run(["tar", "-x", "-C", str(work)], input=archive, check=True)
             for patch in PATCHES:  # in order, as tmnf.build.runtime_builder applies them
-                subprocess.run(['git', 'apply', '--check', '--whitespace=error-all', str(patch)],
-                               cwd=work, check=True)
-                subprocess.run(['git', 'apply', str(patch)], cwd=work, check=True)
-            harness = work / 'pressure_test.cpp'
+                subprocess.run(
+                    ["git", "apply", "--check", "--whitespace=error-all", str(patch)],
+                    cwd=work,
+                    check=True,
+                )
+                subprocess.run(["git", "apply", str(patch)], cwd=work, check=True)
+            harness = work / "pressure_test.cpp"
             harness.write_text(HARNESS)
-            include = work / 'rosetta_core/include'
-            sources = work / 'rosetta_core/src'
-            flags = [compiler, '-std=c++23', '-O0', '-g', '-UNDEBUG', '-I', str(include)]
+            include = work / "rosetta_core/include"
+            sources = work / "rosetta_core/src"
+            flags = [compiler, "-std=c++23", "-O0", "-g", "-UNDEBUG", "-I", str(include)]
             objects = []
             # Only the lowerer and its emitter dependencies. No loader, hooks,
             # Wine, CMake configuration, or prepared build artifacts are used.
-            for name in ('X87IRLower', 'X87Precision', 'AssemblerHelpers',
-                         'AssemblerBuffer', 'TranslatorHelpers', 'TranslatorX87Helpers',
-                         'TranslatorX87Transcendental', 'TranscendentalHelper',
-                          'TranslatorX87', 'TranslatorX87Single', 'X87Cache', 'CoreConfig',
-                          'IRInstr', 'OpcodeCompatibility', 'TranslatorX87F80'):
-                obj = work / f'{name}.o'
-                extra = ['-Dalloc_free_fpr=x87_test_alloc_free_fpr'] if name == 'TranslatorHelpers' else []
-                subprocess.run([*flags, *extra, '-c', str(sources / f'{name}.cpp'),
-                                '-o', str(obj)], check=True)
+            for name in (
+                "X87IRLower",
+                "X87Precision",
+                "AssemblerHelpers",
+                "AssemblerBuffer",
+                "TranslatorHelpers",
+                "TranslatorX87Helpers",
+                "TranslatorX87Transcendental",
+                "TranscendentalHelper",
+                "TranslatorX87",
+                "TranslatorX87Single",
+                "X87Cache",
+                "CoreConfig",
+                "IRInstr",
+                "OpcodeCompatibility",
+                "TranslatorX87F80",
+            ):
+                obj = work / f"{name}.o"
+                extra = (
+                    ["-Dalloc_free_fpr=x87_test_alloc_free_fpr"]
+                    if name == "TranslatorHelpers"
+                    else []
+                )
+                subprocess.run(
+                    [*flags, *extra, "-c", str(sources / f"{name}.cpp"), "-o", str(obj)], check=True
+                )
                 objects.append(str(obj))
-            executable = work / 'pressure_test'
-            subprocess.run([*flags, str(harness), *objects, '-Wl,-dead_strip',
-                            '-o', str(executable)], check=True)
+            executable = work / "pressure_test"
+            subprocess.run(
+                [*flags, str(harness), *objects, "-Wl,-dead_strip", "-o", str(executable)],
+                check=True,
+            )
             subprocess.run([str(executable)], cwd=work, check=True)
-            if os.environ.get('X87SIDECAR_BUILD_PROOF') == '1':
-                build = work / 'build'
-                subprocess.run(['cmake', '-S', str(work), '-B', str(build),
-                                '-DCMAKE_OSX_ARCHITECTURES=arm64'], check=True)
-                subprocess.run(['cmake', '--build', str(build), '-j', '8'], check=True)
-                env = dict(os.environ, TMNF_X87_SRC=str(build), TMNF_X87_SOURCE_ONLY='1')
-                subprocess.run(['bash', str(ROOT / 'src/shell/tools/probes/smoke-x87sidecar.sh')],
-                               env=env, check=True, timeout=300)
+            if os.environ.get("X87SIDECAR_BUILD_PROOF") == "1":
+                build = work / "build"
+                subprocess.run(
+                    ["cmake", "-S", str(work), "-B", str(build), "-DCMAKE_OSX_ARCHITECTURES=arm64"],
+                    check=True,
+                )
+                subprocess.run(["cmake", "--build", str(build), "-j", "8"], check=True)
+                env = dict(os.environ, TMNF_X87_SRC=str(build), TMNF_X87_SOURCE_ONLY="1")
+                subprocess.run(
+                    ["bash", str(ROOT / "src/shell/tools/probes/smoke-x87sidecar.sh")],
+                    env=env,
+                    check=True,
+                    timeout=300,
+                )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

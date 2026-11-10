@@ -45,34 +45,76 @@ def trust(certificate=None):
 
 class TLSFixtures(unittest.TestCase):
     def test_combined_leaf_metadata_and_signatures(self):
-        self.assertEqual(set(TLS["CASES"]), {"valid", "untrusted", "expired", "hostname",
-                         "expired-untrusted", "hostname-untrusted", "expired-hostname", "expired-hostname-untrusted"})
+        self.assertEqual(
+            set(TLS["CASES"]),
+            {
+                "valid",
+                "untrusted",
+                "expired",
+                "hostname",
+                "expired-untrusted",
+                "hostname-untrusted",
+                "expired-hostname",
+                "expired-hostname-untrusted",
+            },
+        )
         self.assertEqual({path.name for path in FIXTURES.glob("*.key")}, {"server.key"})
-        self.assertEqual({path.stem for path in FIXTURES.glob("*.pem")}, {*TLS["CASES"], "ca", "untrusted-ca"})
+        self.assertEqual(
+            {path.stem for path in FIXTURES.glob("*.pem")}, {*TLS["CASES"], "ca", "untrusted-ca"}
+        )
         for case in TLS["CASES"]:
             with self.subTest(case=case):
                 leaf = FIXTURES / (case + ".pem")
                 # Metadata is checked separately from OpenSSL's first reported error.
                 metadata = ssl._ssl._test_decode_cert(str(leaf))
                 self.assertEqual(metadata["notBefore"], "Jan  1 00:00:00 2020 GMT")
-                self.assertEqual(metadata["notAfter"], "Jan  1 00:00:00 %s GMT" %
-                                 ("2021" if "expired" in case else "2040"))
-                self.assertEqual(metadata["subjectAltName"], (("DNS", "wrong-host.invalid"),) if "hostname" in case else
-                                 (("IP Address", "127.0.0.1"), ("DNS", "127.0.0.1")))
+                self.assertEqual(
+                    metadata["notAfter"],
+                    "Jan  1 00:00:00 %s GMT" % ("2021" if "expired" in case else "2040"),
+                )
+                self.assertEqual(
+                    metadata["subjectAltName"],
+                    (("DNS", "wrong-host.invalid"),)
+                    if "hostname" in case
+                    else (("IP Address", "127.0.0.1"), ("DNS", "127.0.0.1")),
+                )
                 ca = "untrusted-ca" if "untrusted" in case else "ca"
-                self.assertEqual(metadata["issuer"], ((("commonName", "MacTMNF PUBLIC TEST ONLY " + ca),),))
-                result = subprocess.run(["openssl", "verify", "-CAfile", str(FIXTURES / (ca + ".pem")),
-                                         "-attime", "1590969600", "-purpose", "sslserver", str(leaf)],
-                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(
+                    metadata["issuer"], ((("commonName", "MacTMNF PUBLIC TEST ONLY " + ca),),)
+                )
+                result = subprocess.run(
+                    [
+                        "openssl",
+                        "verify",
+                        "-CAfile",
+                        str(FIXTURES / (ca + ".pem")),
+                        "-attime",
+                        "1590969600",
+                        "-purpose",
+                        "sslserver",
+                        str(leaf),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                text = subprocess.check_output(["openssl", "x509", "-in", str(leaf), "-text", "-noout"], text=True)
-                for extension in ("Authority Information Access", "CRL Distribution Points", "OCSP"):
+                text = subprocess.check_output(
+                    ["openssl", "x509", "-in", str(leaf), "-text", "-noout"], text=True
+                )
+                for extension in (
+                    "Authority Information Access",
+                    "CRL Distribution Points",
+                    "OCSP",
+                ):
                     self.assertNotIn(extension, text)
 
     def test_keepalive_connection_ids_prove_reuse_and_new_connection(self):
         with TLS["serve"]() as urls:
             parsed = urlsplit(urls["valid"])
-            client = http.client.HTTPSConnection(parsed.hostname, parsed.port, context=trust(FIXTURES / "ca.pem"), timeout=3)
+            client = http.client.HTTPSConnection(
+                parsed.hostname, parsed.port, context=trust(FIXTURES / "ca.pem"), timeout=3
+            )
             try:
                 ids = []
                 for _ in range(2):
@@ -98,16 +140,22 @@ class TLSFixtures(unittest.TestCase):
         with TLS["serve"]() as urls:
             # The trusted control must work before any negative counts as evidence.
             with connect(urls["valid"], context) as connection:
-                self.assertEqual(connection.getpeercert()["subjectAltName"],
-                                 (("IP Address", "127.0.0.1"), ("DNS", "127.0.0.1")))
-                connection.sendall(b"HEAD / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+                self.assertEqual(
+                    connection.getpeercert()["subjectAltName"],
+                    (("IP Address", "127.0.0.1"), ("DNS", "127.0.0.1")),
+                )
+                connection.sendall(
+                    b"HEAD / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+                )
                 self.assertIn(b" 200 ", connection.recv(4096).split(b"\r\n")[0])
             for case, code in (("untrusted", 20), ("expired", 10), ("hostname", 64)):
                 with self.subTest(case=case):
                     with self.assertRaises(ssl.SSLCertVerificationError) as caught:
                         with connect(urls[case], context):
                             self.fail("invalid certificate accepted")
-                    self.assertEqual(caught.exception.verify_code, code, caught.exception.verify_message)
+                    self.assertEqual(
+                        caught.exception.verify_code, code, caught.exception.verify_message
+                    )
 
     def test_absent_root_breaks_control_and_untrusted_leaf_is_otherwise_valid(self):
         with TLS["serve"]() as urls:
@@ -125,8 +173,12 @@ class TLSFixtures(unittest.TestCase):
                 try:
                     with TLS["serve"]() as urls:
                         self.assertEqual(set(urls), set(TLS["CASES"]))
-                        self.assertEqual(len({urlsplit(url).port for url in urls.values()}), len(TLS["CASES"]))
-                        self.assertTrue(all(urlsplit(url).hostname == "127.0.0.1" for url in urls.values()))
+                        self.assertEqual(
+                            len({urlsplit(url).port for url in urls.values()}), len(TLS["CASES"])
+                        )
+                        self.assertTrue(
+                            all(urlsplit(url).hostname == "127.0.0.1" for url in urls.values())
+                        )
                         if fail:
                             raise RuntimeError("test interruption")
                 except RuntimeError:
@@ -163,8 +215,12 @@ class TLSFixtures(unittest.TestCase):
     def test_server_subprocess_readiness_and_signal_cleanup(self):
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             with self.subTest(signal=sig):
-                process = subprocess.Popen([sys.executable, "-X", "faulthandler", str(SERVER)], text=True,
-                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                process = subprocess.Popen(
+                    [sys.executable, "-X", "faulthandler", str(SERVER)],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
                 try:
                     if not select.select([process.stdout], [], [], 5)[0]:
                         # SIGABRT makes faulthandler dump every thread's stack, showing where it stalled.
@@ -198,30 +254,49 @@ class NetworkProbe(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown WinHTTP request mode"):
             arguments("invalid", control, case_url, "valid")
 
-
     def test_runtime_environment_does_not_inherit_caller_settings(self):
         runtime = runpy.run_path(str(ROOT / "tests/test_network_runtime.py"))
-        with mock.patch.dict(os.environ, {"WINEPREFIX": "/real-prefix", "HOME": "/real-home",
-                                          "MACTMNF_PREFIX": "/game", "ROSETTA_X87_PATH": "/hook",
-                                          "DYLD_LIBRARY_PATH": "/libraries", "https_proxy": "https://external"}):
-            env = runtime["fixture_environment"](Path("/runtime"), Path("/scratch/home"),
-                                                   Path("/scratch/prefix"), "a" * 64)
+        with mock.patch.dict(
+            os.environ,
+            {
+                "WINEPREFIX": "/real-prefix",
+                "HOME": "/real-home",
+                "MACTMNF_PREFIX": "/game",
+                "ROSETTA_X87_PATH": "/hook",
+                "DYLD_LIBRARY_PATH": "/libraries",
+                "https_proxy": "https://external",
+            },
+        ):
+            env = runtime["fixture_environment"](
+                Path("/runtime"), Path("/scratch/home"), Path("/scratch/prefix"), "a" * 64
+            )
         self.assertEqual(env["WINEPREFIX"], "/scratch/prefix")
         self.assertEqual(env["HOME"], "/scratch/home")
         self.assertEqual(env["WINESERVER"], "/runtime/bin/wineserver")
         self.assertEqual(env["WINEDLLOVERRIDES"], "mscoree,mshtml=")
         for name in ("MACTMNF_PREFIX", "ROSETTA_X87_PATH", "DYLD_LIBRARY_PATH", "https_proxy"):
             self.assertNotIn(name, env)
-        overlay_env = runtime["fixture_environment"](Path("/runtime"), Path("/scratch/home"),
-                                                       Path("/scratch/prefix"), "a" * 64, winhttp_overlay=True)
+        overlay_env = runtime["fixture_environment"](
+            Path("/runtime"),
+            Path("/scratch/home"),
+            Path("/scratch/prefix"),
+            "a" * 64,
+            winhttp_overlay=True,
+        )
         self.assertEqual(overlay_env["WINEDLLOVERRIDES"], "mscoree,mshtml=;winhttp=n")
         self.assertEqual(dict(overlay_env, WINEDLLOVERRIDES=env["WINEDLLOVERRIDES"]), env)
 
     def test_overlay_copy_checks_hash_architecture_and_native_marker(self):
         copy = runpy.run_path(str(ROOT / "tests/test_network_runtime.py"))["copy_winhttp_overlay"]
-        for arch, directory, machine in (("i686", "i386-windows", 0x14c), ("x86_64", "x86_64-windows", 0x8664)):
+        for arch, directory, machine in (
+            ("i686", "i386-windows", 0x14C),
+            ("x86_64", "x86_64-windows", 0x8664),
+        ):
             for failure in (None, "hash", "architecture", "builtin", "signature", "truncated"):
-                with self.subTest(architecture=arch, failure=failure), tempfile.TemporaryDirectory() as temp:
+                with (
+                    self.subTest(architecture=arch, failure=failure),
+                    tempfile.TemporaryDirectory() as temp,
+                ):
                     root = Path(temp)
                     source = root / "native" / directory / "winhttp.dll"
                     source.parent.mkdir(parents=True)
@@ -231,7 +306,9 @@ class NetworkProbe(unittest.TestCase):
                     data[:2] = b"MZ"
                     data[60:64] = (128).to_bytes(4, "little")
                     data[128:132] = b"PE\0\0"
-                    data[132:134] = (0 if failure == "architecture" else machine).to_bytes(2, "little")
+                    data[132:134] = (0 if failure == "architecture" else machine).to_bytes(
+                        2, "little"
+                    )
                     if failure == "builtin":
                         data[64:80] = b"Wine builtin DLL"
                     if failure == "signature":
@@ -241,9 +318,16 @@ class NetworkProbe(unittest.TestCase):
                     source.write_bytes(data)
                     source.chmod(0o444)
                     digest = hashlib.sha256(data).hexdigest()
-                    manifest = {"test_only": True, "revision": "a" * 40, "patch_sha256": "b" * 64,
-                                "artifacts": {"native/" + directory + "/winhttp.dll":
-                                              "0" * 64 if failure == "hash" else digest}}
+                    manifest = {
+                        "test_only": True,
+                        "revision": "a" * 40,
+                        "patch_sha256": "b" * 64,
+                        "artifacts": {
+                            "native/" + directory + "/winhttp.dll": "0" * 64
+                            if failure == "hash"
+                            else digest
+                        },
+                    }
                     (root / "build.json").write_text(json.dumps(manifest))
                     if failure is None:
                         copy(root / "native", appdir, arch)
@@ -263,9 +347,14 @@ class NetworkProbe(unittest.TestCase):
         good = "INFO: winhttp module=Z:\\private\\tmp\\mactmnf-tls-runtime-owned\\bin-i686\\winhttp.dll\n"
         check(good, appdir)
         check(good.replace("winhttp.dll", "WINHTTP.DLL"), appdir)
-        for output in ("", good + good, good.replace("bin-i686", "bin-x86_64"),
-                       good.replace("runtime-owned", "runtime-other"), good.replace("Z:\\", ""),
-                       "INFO: winhttp module=C:\\windows\\system32\\winhttp.dll\n"):
+        for output in (
+            "",
+            good + good,
+            good.replace("bin-i686", "bin-x86_64"),
+            good.replace("runtime-owned", "runtime-other"),
+            good.replace("Z:\\", ""),
+            "INFO: winhttp module=C:\\windows\\system32\\winhttp.dll\n",
+        ):
             with self.subTest(output=output), self.assertRaises(AssertionError):
                 check(output, appdir)
 
@@ -277,8 +366,11 @@ class NetworkProbe(unittest.TestCase):
             prefix.mkdir()
             identity = (prefix.stat().st_dev, prefix.stat().st_ino)
             check(root, prefix, identity)
-            for parent, path, owner in ((root, prefix, (0, 0)), (root.parent, prefix, identity),
-                                         (root, root / "game-prefix", identity)):
+            for parent, path, owner in (
+                (root, prefix, (0, 0)),
+                (root.parent, prefix, identity),
+                (root, root / "game-prefix", identity),
+            ):
                 with self.assertRaises(AssertionError):
                     check(parent, path, owner)
             moved = root / "moved"
@@ -303,8 +395,11 @@ class NetworkProbe(unittest.TestCase):
                 root_identity = (root.stat().st_dev, root.stat().st_ino)
                 with mock.patch.dict(cleanup.__globals__, run=mock.Mock()) as globals_:
                     run = globals_["run"]
-                    run.side_effect = ([AssertionError("kill timed out"), (0, "")] if failure == "kill" else
-                                       [(1, ""), (1 if failure == "wait" else 0, "")])
+                    run.side_effect = (
+                        [AssertionError("kill timed out"), (0, "")]
+                        if failure == "kill"
+                        else [(1, ""), (1 if failure == "wait" else 0, "")]
+                    )
                     if failure is None:
                         cleanup(Path("/runtime"), root, root_identity, owned)
                         self.assertFalse(root.exists())
@@ -314,73 +409,118 @@ class NetworkProbe(unittest.TestCase):
                         self.assertTrue(prefix.is_dir())
                     self.assertEqual(run.call_count, 0 if failure == "ownership" else 2)
                     if run.called:
-                        self.assertEqual(run.call_args_list,
-                                         [mock.call([Path("/runtime/bin/wineserver"), option], env, timeout=15)
-                                          for option in ("-k", "-w")])
+                        self.assertEqual(
+                            run.call_args_list,
+                            [
+                                mock.call(
+                                    [Path("/runtime/bin/wineserver"), option], env, timeout=15
+                                )
+                                for option in ("-k", "-w")
+                            ],
+                        )
 
     def test_smoke_forwards_local_arguments_without_trust_mutations(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for name in ("src/shell/tools/probes", "src/shell/lib", "src/python/tmnf/probes", "bin", "prefix"):
+            for name in (
+                "src/shell/tools/probes",
+                "src/shell/lib",
+                "src/python/tmnf/probes",
+                "bin",
+                "prefix",
+            ):
                 (root / name).mkdir(parents=True)
-            shutil.copyfile(ROOT / "src/shell/tools/probes/smoke-network.sh", root / "src/shell/tools/probes/smoke-network.sh")
+            shutil.copyfile(
+                ROOT / "src/shell/tools/probes/smoke-network.sh",
+                root / "src/shell/tools/probes/smoke-network.sh",
+            )
             (root / "prefix/system.reg").touch()
             (root / "src/shell/lib/common.sh").write_text(
                 'have() { command -v "$1" >/dev/null; }\n'
                 'die() { printf "%s\\n" "$*" >&2; exit 1; }\n'
                 'wine_binary() { printf "%s\\n" "$FAKE_WINE"; }\n'
-                'configure_translation() { :; }\n'
-                'tmnf_python() { PYTHONPATH="' + str(root / 'src/python') + '" python3 "$@"; }\n',
-                encoding="ascii")
+                "configure_translation() { :; }\n"
+                'tmnf_python() { PYTHONPATH="' + str(root / "src/python") + '" python3 "$@"; }\n',
+                encoding="ascii",
+            )
             stub = root / "bin/stub"
             stub.write_text(
                 "#!" + sys.executable + "\n"
                 "import json, os, sys\n"
                 "with open(os.environ['CALLS'], 'a') as log:\n"
                 "    log.write(json.dumps([os.path.basename(sys.argv[0]), sys.argv[1:], "
-                "os.getenv('WINEPREFIX')]) + '\\n')\n", encoding="utf-8")
+                "os.getenv('WINEPREFIX')]) + '\\n')\n",
+                encoding="utf-8",
+            )
             stub.chmod(0o755)
             for name in ("wine", "i686-w64-mingw32-gcc", "x86_64-w64-mingw32-gcc"):
                 (root / "bin" / name).symlink_to(stub)
             # Stub the process runner, not Wine itself in a real prefix.
             (root / "src/python/tmnf/probes/probe_runner.py").write_text(
-                "import subprocess, sys\nraise SystemExit(subprocess.call(sys.argv[2:]))\n", encoding="ascii")
+                "import subprocess, sys\nraise SystemExit(subprocess.call(sys.argv[2:]))\n",
+                encoding="ascii",
+            )
             (root / "src/python/tmnf/__init__.py").write_text("", encoding="ascii")
             (root / "src/python/tmnf/probes/__init__.py").write_text("", encoding="ascii")
             (root / "bin/python3").symlink_to(sys.executable)
             log = root / "calls.jsonl"
-            env = {"PATH": str(root / "bin") + ":/usr/bin:/bin", "HOME": directory,
-                   "TMPDIR": directory, "CALLS": str(log), "FAKE_WINE": str(root / "bin/wine"),
-                   "TMNF_PREFIX": str(root / "prefix"), "WINEPREFIX": "/must-not-use"}
+            env = {
+                "PATH": str(root / "bin") + ":/usr/bin:/bin",
+                "HOME": directory,
+                "TMPDIR": directory,
+                "CALLS": str(log),
+                "FAKE_WINE": str(root / "bin/wine"),
+                "TMNF_PREFIX": str(root / "prefix"),
+                "WINEPREFIX": "/must-not-use",
+            }
             local = ["--local", "https://127.0.0.1:12345/", "https://127.0.0.1:12346/", "expired"]
             for args in ([], ["--async"], local, ["--async", *local]):
                 with self.subTest(args=args):
                     log.write_text("")
-                    result = subprocess.run(["/bin/bash", str(root / "src/shell/tools/probes/smoke-network.sh"), *args],
-                                            env=env, capture_output=True, text=True, timeout=10)
+                    result = subprocess.run(
+                        ["/bin/bash", str(root / "src/shell/tools/probes/smoke-network.sh"), *args],
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
                     self.assertEqual(result.returncode, 0, result.stderr)
                     calls = [json.loads(line) for line in log.read_text().splitlines()]
-                    self.assertEqual([call[0] for call in calls], ["i686-w64-mingw32-gcc", "wine",
-                                                                 "x86_64-w64-mingw32-gcc", "wine"])
+                    self.assertEqual(
+                        [call[0] for call in calls],
+                        ["i686-w64-mingw32-gcc", "wine", "x86_64-w64-mingw32-gcc", "wine"],
+                    )
                     for _, argv, prefix in (call for call in calls if call[0] == "wine"):
                         self.assertEqual(argv[1:], args)
                         self.assertEqual(prefix, str(root / "prefix"))
-                    self.assertEqual(list((root / "prefix").iterdir()), [root / "prefix/system.reg"])
+                    self.assertEqual(
+                        list((root / "prefix").iterdir()), [root / "prefix/system.reg"]
+                    )
                     self.assertEqual(list(root.glob("mactmnf-network.*")), [])
 
     def test_invalid_arguments_fail_before_any_runtime_dependency(self):
         good = "https://127.0.0.1:12345/"
         cases = [["--unknown"], ["--local", good, good, "invalid"]]
-        for bad in ("https://example.com/", "http://127.0.0.1:12345/", "https://localhost:12345/",
-                    good + "?query", good + "#fragment", "https://user@127.0.0.1:12345/"):
+        for bad in (
+            "https://example.com/",
+            "http://127.0.0.1:12345/",
+            "https://localhost:12345/",
+            good + "?query",
+            good + "#fragment",
+            "https://user@127.0.0.1:12345/",
+        ):
             cases.extend((["--local", bad, good, "expired"], ["--local", good, bad, "expired"]))
         cases += [["--async", *args] for args in cases]
         with tempfile.TemporaryDirectory() as directory:
             for args in cases:
                 with self.subTest(args=args):
-                    result = subprocess.run(["/bin/bash", str(ROOT / "src/shell/tools/probes/smoke-network.sh"), *args],
-                                            env={"PATH": directory, "HOME": directory},
-                                            capture_output=True, text=True, timeout=5)
+                    result = subprocess.run(
+                        ["/bin/bash", str(ROOT / "src/shell/tools/probes/smoke-network.sh"), *args],
+                        env={"PATH": directory, "HOME": directory},
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
                     self.assertEqual(result.returncode, 2, result.stderr)
                     self.assertNotIn("Missing", result.stderr)
 

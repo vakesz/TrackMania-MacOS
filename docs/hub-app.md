@@ -19,7 +19,7 @@ The Swift interface is an adapter over exactly two shell commands:
 
 ```sh
 tmnf hub snapshot
-tmnf hub run TITLE ACTION [--source ABSOLUTE_PATH]
+tmnf hub run TITLE ACTION [--source ABSOLUTE_PATH] [--runtime download|build]
 ```
 
 `snapshot` is read-only and returns one versioned JSON document describing every
@@ -27,7 +27,9 @@ registered title, its install state, app paths and currently available actions.
 It never starts Wine. `run` validates the title, action and optional source path,
 then starts the normal CLI/installer in a fresh process with `TMNF_TITLE` set
 before title-dependent paths are calculated. This prevents one title from using
-another title's prefix or game path.
+another title's prefix or game path. Only the `install` and `install-platform`
+actions accept `--runtime`; it is the only way `run` sets `TMNF_RUNTIME_SOURCE`,
+which is never inherited from the hub's environment.
 
 Each title entry carries `icon` (an absolute path or `null`) and `iconSource`
 (`"game"`, `"bundled"` or `null`). The icon is chosen in this order: the `.icns`

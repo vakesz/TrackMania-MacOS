@@ -17,8 +17,16 @@ import threading
 
 ROOT = Path(__file__).resolve().parents[4]
 FIXTURES = ROOT / "tests/fixtures/tls"
-CASES = ("valid", "untrusted", "expired", "hostname", "expired-untrusted",
-         "hostname-untrusted", "expired-hostname", "expired-hostname-untrusted")
+CASES = (
+    "valid",
+    "untrusted",
+    "expired",
+    "hostname",
+    "expired-untrusted",
+    "hostname-untrusted",
+    "expired-hostname",
+    "expired-hostname-untrusted",
+)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -61,7 +69,7 @@ class Server(ThreadingHTTPServer):
             raise OSError(str(error)) from error
 
     def handle_error(self, request, client_address):
-        print('warning: TLS test server dropped a connection', file=sys.stderr)
+        print("warning: TLS test server dropped a connection", file=sys.stderr)
 
 
 @contextmanager
@@ -76,7 +84,9 @@ def serve(fixtures=FIXTURES):
             server = Server(("127.0.0.1", 0), Handler)
             cleanup.callback(server.server_close)
             server.context = context
-            thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+            thread = threading.Thread(
+                target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+            )
             thread.start()
             cleanup.callback(thread.join)
             cleanup.callback(server.shutdown)
@@ -90,12 +100,18 @@ def generate_fixtures(destination):
         work = Path(directory)
 
         def openssl(*args):
-            subprocess.run(["openssl", *map(str, args)], cwd=work, check=True,
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run(
+                ["openssl", *map(str, args)],
+                cwd=work,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
 
         (work / "index").touch()
         (work / "serial").write_text("01\n", encoding="ascii")
-        (work / "ca.cnf").write_text("""[ca]
+        (work / "ca.cnf").write_text(
+            """[ca]
 default_ca = test_ca
 [test_ca]
 database = index
@@ -125,43 +141,118 @@ keyUsage = critical,digitalSignature,keyEncipherment
 extendedKeyUsage = serverAuth
 subjectAltName = DNS:wrong-host.invalid
 authorityKeyIdentifier = keyid
-""", encoding="ascii")
-        openssl("genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", "server.key")
+""",
+            encoding="ascii",
+        )
+        openssl(
+            "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", "server.key"
+        )
         openssl("req", "-new", "-key", "server.key", "-subj", "/CN=127.0.0.1", "-out", "server.csr")
-        openssl("req", "-new", "-key", "server.key", "-subj", "/CN=wrong-host.invalid", "-out", "hostname.csr")
+        openssl(
+            "req",
+            "-new",
+            "-key",
+            "server.key",
+            "-subj",
+            "/CN=wrong-host.invalid",
+            "-out",
+            "hostname.csr",
+        )
         for ca in ("ca", "untrusted-ca"):
-            openssl("req", "-new", "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256",
-                    "-days", "7300", "-subj", "/CN=MacTMNF PUBLIC TEST ONLY " + ca,
-                    "-addext", "basicConstraints=critical,CA:true,pathlen:0",
-                    "-addext", "keyUsage=critical,keyCertSign,cRLSign",
-                    "-keyout", ca + ".key", "-out", ca + ".pem")
-            openssl("req", "-new", "-key", ca + ".key", "-subj",
-                    "/CN=MacTMNF PUBLIC TEST ONLY " + ca, "-out", ca + ".csr")
+            openssl(
+                "req",
+                "-new",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-nodes",
+                "-sha256",
+                "-days",
+                "7300",
+                "-subj",
+                "/CN=MacTMNF PUBLIC TEST ONLY " + ca,
+                "-addext",
+                "basicConstraints=critical,CA:true,pathlen:0",
+                "-addext",
+                "keyUsage=critical,keyCertSign,cRLSign",
+                "-keyout",
+                ca + ".key",
+                "-out",
+                ca + ".pem",
+            )
+            openssl(
+                "req",
+                "-new",
+                "-key",
+                ca + ".key",
+                "-subj",
+                "/CN=MacTMNF PUBLIC TEST ONLY " + ca,
+                "-out",
+                ca + ".csr",
+            )
             # Cover the expired leaf's entire lifetime too, avoiding time-nesting errors.
-            openssl("ca", "-selfsign", "-batch", "-notext", "-config", "ca.cnf",
-                    "-cert", ca + ".pem", "-keyfile", ca + ".key", "-in", ca + ".csr",
-                    "-out", ca + "-fixed.pem", "-extensions", "root",
-                    "-startdate", "20190101000000Z", "-enddate", "20410101000000Z")
+            openssl(
+                "ca",
+                "-selfsign",
+                "-batch",
+                "-notext",
+                "-config",
+                "ca.cnf",
+                "-cert",
+                ca + ".pem",
+                "-keyfile",
+                ca + ".key",
+                "-in",
+                ca + ".csr",
+                "-out",
+                ca + "-fixed.pem",
+                "-extensions",
+                "root",
+                "-startdate",
+                "20190101000000Z",
+                "-enddate",
+                "20410101000000Z",
+            )
             (work / (ca + "-fixed.pem")).replace(work / (ca + ".pem"))
         for name in CASES:
             ca = "untrusted-ca" if "untrusted" in name else "ca"
-            openssl("ca", "-batch", "-notext", "-config", "ca.cnf", "-cert", ca + ".pem",
-                    "-keyfile", ca + ".key", "-in", "hostname.csr" if "hostname" in name else "server.csr",
-                    "-out", name + ".pem",
-                    "-extensions", "hostname" if "hostname" in name else "server",
-                    "-startdate", "20200101000000Z", "-enddate",
-                    "20210101000000Z" if "expired" in name else "20400101000000Z")
+            openssl(
+                "ca",
+                "-batch",
+                "-notext",
+                "-config",
+                "ca.cnf",
+                "-cert",
+                ca + ".pem",
+                "-keyfile",
+                ca + ".key",
+                "-in",
+                "hostname.csr" if "hostname" in name else "server.csr",
+                "-out",
+                name + ".pem",
+                "-extensions",
+                "hostname" if "hostname" in name else "server",
+                "-startdate",
+                "20200101000000Z",
+                "-enddate",
+                "20210101000000Z" if "expired" in name else "20400101000000Z",
+            )
         # Publish only after openssl succeeded, replacing each file atomically,
         # so a failed regeneration leaves the existing fixtures untouched
         # instead of mixing half old and half new files.
         destination.mkdir(parents=True, exist_ok=True)
         try:
-            for name in ("ca.pem", "untrusted-ca.pem", "server.key", *(case + ".pem" for case in CASES)):
+            for name in (
+                "ca.pem",
+                "untrusted-ca.pem",
+                "server.key",
+                *(case + ".pem" for case in CASES),
+            ):
                 staging = destination / (name + ".partial")
                 staging.write_bytes((work / name).read_bytes())
                 staging.replace(destination / name)
         except BaseException:
-            for leftover in destination.glob('*.partial'):
+            for leftover in destination.glob("*.partial"):
                 leftover.unlink(missing_ok=True)
             raise
 
@@ -169,15 +260,21 @@ authorityKeyIdentifier = keyid
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fixtures", type=Path, default=FIXTURES)
-    parser.add_argument("--generate-fixtures", type=Path, metavar="DIRECTORY",
-                        help="write public test material using openssl, then exit; replaces existing fixtures")
+    parser.add_argument(
+        "--generate-fixtures",
+        type=Path,
+        metavar="DIRECTORY",
+        help="write public test material using openssl, then exit; replaces existing fixtures",
+    )
     args = parser.parse_args()
     if args.generate_fixtures is not None:
         generate_fixtures(args.generate_fixtures.resolve())
         return 0
     stop = threading.Event()
-    previous = {sig: signal.signal(sig, lambda signum, frame: stop.set())
-                for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
+    previous = {
+        sig: signal.signal(sig, lambda signum, frame: stop.set())
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+    }
     try:
         with serve(args.fixtures) as urls:
             print(json.dumps(urls, sort_keys=True), flush=True)

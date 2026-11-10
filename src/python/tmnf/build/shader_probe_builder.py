@@ -6,6 +6,7 @@ Never run make or modify the prepared source/work/runtime. --baseline uses the
 prepared vkd3d diff, for red/green comparison. DLLs are native-marked app-local
 diagnostic overlays, not installable runtime replacements.
 """
+
 import argparse
 import hashlib
 import io
@@ -30,14 +31,24 @@ def build(output, baseline=False, arch="i386"):
     env = dict(os.environ, GIT_OPTIONAL_LOCKS="0")
     for key in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
         env.pop(key, None)
+
     def git(*args):
         return subprocess.check_output(["git", *args], cwd=source, env=env)
+
     if git("rev-parse", "HEAD").decode().strip() != PIN:
         raise ValueError("unexpected Wine source pin")
     archive = git("archive", PIN, "libs/vkd3d")
-    patches = [git("diff", "HEAD", "--", "libs/vkd3d")] if baseline else [
-        (ROOT / "patches/wine" / name).read_bytes() for name in (
-            "0001-vkd3d-shader-lower-texm3x3.patch", "0006-vkd3d-hlsl-legacy-function-targets.patch")]
+    patches = (
+        [git("diff", "HEAD", "--", "libs/vkd3d")]
+        if baseline
+        else [
+            (ROOT / "patches/wine" / name).read_bytes()
+            for name in (
+                "0001-vkd3d-shader-lower-texm3x3.patch",
+                "0006-vkd3d-hlsl-legacy-function-targets.patch",
+            )
+        ]
+    )
     output.mkdir(mode=0o700)
     (output / "source").mkdir()
     (output / "tmp").mkdir()
@@ -45,12 +56,21 @@ def build(output, baseline=False, arch="i386"):
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
         tar.extractall(output / "source", filter="data")
     for patch in patches:
-        subprocess.run(["git", "apply", "--check", "-"], input=patch, cwd=output / "source", env=env, check=True)
-        subprocess.run(["git", "apply", "-"], input=patch, cwd=output / "source", env=env, check=True)
+        subprocess.run(
+            ["git", "apply", "--check", "-"],
+            input=patch,
+            cwd=output / "source",
+            env=env,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "apply", "-"], input=patch, cwd=output / "source", env=env, check=True
+        )
     text = (work / "Makefile").read_text().replace("\\\n", "")
     generated = "libs/vkd3d/libs/vkd3d-shader/hlsl.tab.c"
     library = f"libs/vkd3d/{arch}-windows/libvkd3d.a"
     dll = f"dlls/wined3d/{arch}-windows/wined3d.dll"
+
     def recipe(target):
         match = re.search(r"^" + re.escape(target) + r":[^\n]*\n\t([^\n]+)", text, re.M)
         if not match:
@@ -59,10 +79,13 @@ def build(output, baseline=False, arch="i386"):
         for variable in re.findall(r"\$\((\w+)\)", command):
             if variable not in {arch + "_CC", arch + "_CFLAGS", arch + "_LDFLAGS"}:
                 raise ValueError("unexpected variable " + variable)
-            command = command.replace("$(" + variable + ")", re.search(r"^" + variable + r" = (.*)$", text, re.M)[1])  # type: ignore[index]  # an undefined variable raises TypeError, not ValueError
+            # An undefined variable raises TypeError, not ValueError.
+            value = re.search(r"^" + variable + r" = (.*)$", text, re.M)[1]  # type: ignore[index]
+            command = command.replace("$(" + variable + ")", value)
         if "$" in command:
             raise ValueError("unsupported recipe expansion")
         return shlex.split(command)
+
     objects = [arg for arg in recipe(library) if arg.endswith(".o")]
     targets = [generated, *objects, library, dll]
     commands = []
@@ -85,12 +108,23 @@ def build(output, baseline=False, arch="i386"):
         if args.count("-o") != 1 or args[args.index("-o") + 1] != str(output / target):
             raise ValueError("output escaped scratch")
         commands.append(args)
-    (output / "build.json").write_text(json.dumps({"pin": PIN, "baseline": baseline,
-        "patch_sha256": [hashlib.sha256(p).hexdigest() for p in patches], "commands": commands}, indent=2))
+    (output / "build.json").write_text(
+        json.dumps(
+            {
+                "pin": PIN,
+                "baseline": baseline,
+                "patch_sha256": [hashlib.sha256(p).hexdigest() for p in patches],
+                "commands": commands,
+            },
+            indent=2,
+        )
+    )
     with (output / "build.log").open("w") as log:
         for command in commands:
             print(shlex.join(command), file=log, flush=True)
-            subprocess.run(command, cwd=output, env=env, stdout=log, stderr=subprocess.STDOUT, check=True)
+            subprocess.run(
+                command, cwd=output, env=env, stdout=log, stderr=subprocess.STDOUT, check=True
+            )
     print(output / dll)
 
 

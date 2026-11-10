@@ -17,92 +17,117 @@ from . import state
 SCHEMA = 2
 
 
-def _actions(title: registry.Title, items: typing.Dict[str, state.Probe],
-             session_active: bool = False) -> typing.List[dict]:
+def _actions(
+    title: registry.Title, items: typing.Dict[str, state.Probe], session_active: bool = False
+) -> typing.List[dict]:
     actions = _base_actions(title, items)
-    if items['prefix'].ready:
-        actions.append({'id': 'doctor', 'label': 'Run checks', 'primary': False,
-                        'kind': 'verify'})
-        actions.append({'id': 'diagnostics', 'label': 'Create diagnostics report',
-                        'primary': False, 'kind': 'maintenance'})
+    if items["prefix"].ready:
+        actions.append({"id": "doctor", "label": "Run checks", "primary": False, "kind": "verify"})
+        actions.append(
+            {
+                "id": "diagnostics",
+                "label": "Create diagnostics report",
+                "primary": False,
+                "kind": "maintenance",
+            }
+        )
         if session_active:
-            actions.append({'id': 'stop', 'label': 'Stop game', 'primary': False,
-                            'kind': 'maintenance'})
-        actions.append({'id': 'uninstall', 'label': 'Uninstall\u2026', 'primary': False,
-                        'kind': 'destructive'})
+            actions.append(
+                {"id": "stop", "label": "Stop game", "primary": False, "kind": "maintenance"}
+            )
+        actions.append(
+            {"id": "uninstall", "label": "Uninstall\u2026", "primary": False, "kind": "destructive"}
+        )
     return actions
 
 
-def _base_actions(title: registry.Title, items: typing.Dict[str, state.Probe]
-                  ) -> typing.List[dict]:
-    def action(action_id: str, label: str, *, primary: bool = False,
-               kind: str = 'build') -> dict:
-        return {'id': action_id, 'label': label, 'primary': primary, 'kind': kind}
+def _base_actions(title: registry.Title, items: typing.Dict[str, state.Probe]) -> typing.List[dict]:
+    def action(action_id: str, label: str, *, primary: bool = False, kind: str = "build") -> dict:
+        return {"id": action_id, "label": label, "primary": primary, "kind": kind}
 
-    prefix = items['prefix'].ready
-    game = items['game'].ready
+    prefix = items["prefix"].ready
+    game = items["game"].ready
     if title.downloads:
-        label = {'online': 'Install or repair',
-                 'online-retail': 'Download and install',
-                 'online-trial': 'Install trial'}[title.installer]
-        actions = [action('install', label, primary=True, kind='install')]
-        if prefix and title.installer == 'online':
-            actions.append(action('update', 'Check for updates', kind='verify'))
+        label = {
+            "online": "Install or repair",
+            "online-retail": "Download and install",
+            "online-trial": "Install trial",
+        }[title.installer]
+        actions = [action("install", label, primary=True, kind="install")]
+        if prefix and title.installer == "online":
+            actions.append(action("update", "Check for updates", kind="verify"))
         return actions
-    if title.installer in ('steam-copy', 'disk-image'):
+    if title.installer in ("steam-copy", "disk-image"):
         actions = []
-        platform_ready = all(items[name].ready for name in ('runtime', 'prefix', 'directx', 'renderer'))
+        platform_ready = all(
+            items[name].ready for name in ("runtime", "prefix", "directx", "renderer")
+        )
         if not platform_ready:
-            actions.append(action('install-platform', 'Install shared platform',
-                                  primary=True, kind='install'))
+            actions.append(
+                action("install-platform", "Install shared platform", primary=True, kind="install")
+            )
         if game:
-            if not (items['gameApp'].ready and items['settingsApp'].ready):
-                actions.append(action('install-apps', 'Install Game and Settings apps',
-                                      primary=not actions, kind='apps'))
+            if not (items["gameApp"].ready and items["settingsApp"].ready):
+                actions.append(
+                    action(
+                        "install-apps",
+                        "Install Game and Settings apps",
+                        primary=not actions,
+                        kind="apps",
+                    )
+                )
             return actions
         if platform_ready:
-            label = ('Copy from an existing Steam install'
-                     if title.installer == 'steam-copy' else 'Run a retail installer')
-            actions.append(action('import', label, primary=not actions, kind='import'))
+            label = (
+                "Copy from an existing Steam install"
+                if title.installer == "steam-copy"
+                else "Run a retail installer"
+            )
+            actions.append(action("import", label, primary=not actions, kind="import"))
         return actions
-    raise registry.RegistryError(f'Unhandled installer kind: {title.installer}')
+    raise registry.RegistryError(f"Unhandled installer kind: {title.installer}")
 
 
 def log_dir() -> pathlib.Path:
-    return pathlib.Path.home() / 'Library' / 'Logs' / 'TMNF'
+    return pathlib.Path.home() / "Library" / "Logs" / "TMNF"
 
 
 def _locations(paths: hub_paths.TitlePaths) -> dict:
-    return {'root': str(paths.root), 'prefix': str(paths.prefix),
-            'gameDir': str(paths.game_dir), 'userdata': str(paths.userdata),
-            'logs': str(log_dir())}
+    return {
+        "root": str(paths.root),
+        "prefix": str(paths.prefix),
+        "gameDir": str(paths.game_dir),
+        "userdata": str(paths.userdata),
+        "logs": str(log_dir()),
+    }
 
 
-def title_payload(title: registry.Title, paths: typing.Optional[hub_paths.TitlePaths] = None
-                  ) -> dict:
+def title_payload(
+    title: registry.Title, paths: typing.Optional[hub_paths.TitlePaths] = None
+) -> dict:
     resolved = paths if paths is not None else hub_paths.compute(title)
     items = state.probe(title, resolved)
     icon, icon_source = resolved.resolve_icon()
     # Fails safe: any probe error reads as inactive, which hides Stop game.
     active = state.session_active(resolved.prefix)
     return {
-        'id': title.id,
-        'name': title.name,
-        'shortName': title.short_name,
-        'status': title.status,
-        'engine': title.engine,
-        'kind': title.installer,
-        'notes': title.notes,
-        'requiresSerial': title.requires_serial,
-        'sourceSize': title.source_size,
-        'locations': _locations(resolved),
-        'sessionActive': active,
-        'error': None,
-        'icon': str(icon) if icon else None,
-        'iconSource': icon_source,
-        'state': {name: probe.payload() for name, probe in items.items()},
-        'apps': {'game': str(resolved.app), 'settings': str(resolved.settings_app)},
-        'actions': _actions(title, items, active),
+        "id": title.id,
+        "name": title.name,
+        "shortName": title.short_name,
+        "status": title.status,
+        "engine": title.engine,
+        "kind": title.installer,
+        "notes": title.notes,
+        "requiresSerial": title.requires_serial,
+        "sourceSize": title.source_size,
+        "locations": _locations(resolved),
+        "sessionActive": active,
+        "error": None,
+        "icon": str(icon) if icon else None,
+        "iconSource": icon_source,
+        "state": {name: probe.payload() for name, probe in items.items()},
+        "apps": {"game": str(resolved.app), "settings": str(resolved.settings_app)},
+        "actions": _actions(title, items, active),
     }
 
 
@@ -111,45 +136,47 @@ def contained_payload(title: registry.Title) -> dict:
         return title_payload(title)
     except (registry.RegistryError, OSError) as error:
         return {
-            'id': title.id,
-            'name': title.name,
-            'shortName': title.short_name,
-            'status': title.status if title.status in registry.STATUSES else 'provisional',
-            'engine': title.engine,
-            'kind': title.installer,
-            'notes': title.notes,
-            'requiresSerial': title.requires_serial,
-            'sourceSize': title.source_size,
-            'locations': {},
-            'sessionActive': False,
-            'error': f'{error}',
-            'icon': None,
-            'iconSource': None,
-            'state': {},
-            'apps': {'game': '', 'settings': ''},
-            'actions': [],
+            "id": title.id,
+            "name": title.name,
+            "shortName": title.short_name,
+            "status": title.status if title.status in registry.STATUSES else "provisional",
+            "engine": title.engine,
+            "kind": title.installer,
+            "notes": title.notes,
+            "requiresSerial": title.requires_serial,
+            "sourceSize": title.source_size,
+            "locations": {},
+            "sessionActive": False,
+            "error": f"{error}",
+            "icon": None,
+            "iconSource": None,
+            "state": {},
+            "apps": {"game": "", "settings": ""},
+            "actions": [],
         }
 
 
 def _error_placeholder(title_id: str, message: str) -> dict:
     # Swift decodes id, name, shortName, status and notes as non-optional
     # strings: a placeholder must never emit null for them.
-    payload: dict[str, object] = {key: None for key in ('engine', 'kind', 'icon', 'iconSource')}
-    payload.update({
-        'id': title_id,
-        'name': title_id,
-        'shortName': title_id,
-        'status': 'provisional',
-        'notes': '',
-        'requiresSerial': False,
-        'sourceSize': None,
-        'locations': {},
-        'sessionActive': False,
-        'error': message,
-        'state': {},
-        'apps': {'game': '', 'settings': ''},
-        'actions': [],
-    })
+    payload: dict[str, object] = {key: None for key in ("engine", "kind", "icon", "iconSource")}
+    payload.update(
+        {
+            "id": title_id,
+            "name": title_id,
+            "shortName": title_id,
+            "status": "provisional",
+            "notes": "",
+            "requiresSerial": False,
+            "sourceSize": None,
+            "locations": {},
+            "sessionActive": False,
+            "error": message,
+            "state": {},
+            "apps": {"game": "", "settings": ""},
+            "actions": [],
+        }
+    )
     return payload
 
 
@@ -157,7 +184,7 @@ def _hub_version() -> str:
     try:
         return hub_paths.runtime_version()
     except OSError:
-        return ''
+        return ""
 
 
 def snapshot() -> dict:
@@ -168,18 +195,17 @@ def snapshot() -> dict:
     try:
         titles, schema_errors, unreadable = registry.load_registry()
     except registry.RegistryError as failure:
-        return {'schema': SCHEMA, 'hubVersion': _hub_version(), 'titles': [],
-                'error': str(failure)}
+        return {"schema": SCHEMA, "hubVersion": _hub_version(), "titles": [], "error": str(failure)}
     payloads = []
     for title in titles:
         payloads.append(contained_payload(title))
     for stem, message in sorted(schema_errors.items()):
         payloads.append(_error_placeholder(stem, message))
-    notes = [f'{stem}: {message}' for stem, message in sorted(schema_errors.items())]
-    notes += [f'{path.name}: not valid JSON' for path in unreadable]
+    notes = [f"{stem}: {message}" for stem, message in sorted(schema_errors.items())]
+    notes += [f"{path.name}: not valid JSON" for path in unreadable]
     if notes:
-        error = '; '.join(notes)
-    payload = {'schema': SCHEMA, 'hubVersion': _hub_version(), 'titles': payloads}
+        error = "; ".join(notes)
+    payload = {"schema": SCHEMA, "hubVersion": _hub_version(), "titles": payloads}
     if error is not None:
-        payload['error'] = error
+        payload["error"] = error
     return payload

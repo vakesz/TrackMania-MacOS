@@ -24,28 +24,31 @@ except ImportError:
     from managed_paths import safe_path  # type: ignore[import-not-found,no-redef]  # script-mode fallback
 
 
-TOKEN = 'TMNF_OPERATION_FD'
-APP_TOKEN = 'TMNF_APP_OPERATION_FD'
-WINE_SERVER_ROOT = Path('/tmp')
+TOKEN = "TMNF_OPERATION_FD"
+APP_TOKEN = "TMNF_APP_OPERATION_FD"
+WINE_SERVER_ROOT = Path("/tmp")
 INTERRUPT_GRACE = 2.0
 
 
 def operation_lock_path(prefix):
     prefix = safe_path(str(prefix))
-    return prefix.with_name(f'.{prefix.name}.tmnf-operation.lock')
+    return prefix.with_name(f".{prefix.name}.tmnf-operation.lock")
 
 
 def app_lock_path(create=False):
     """One stable lock per canonical HOME, independent of prefix/app locations."""
-    value = os.environ.get('HOME', '')
+    value = os.environ.get("HOME", "")
     home = Path(value)
-    if (not home.is_absolute() or any(part in ('.', '..') for part in value.split('/')) or
-            any(ord(char) < 32 for char in value)):
-        raise ValueError('Unsafe app lock HOME')
+    if (
+        not home.is_absolute()
+        or any(part in (".", "..") for part in value.split("/"))
+        or any(ord(char) < 32 for char in value)
+    ):
+        raise ValueError("Unsafe app lock HOME")
     home = home.resolve(strict=True)
     fd = _open_directory(home)
     try:
-        for name in ('Library', 'Caches', 'TMNF'):
+        for name in ("Library", "Caches", "TMNF"):
             if create:
                 try:
                     os.mkdir(name, mode=0o700, dir_fd=fd)
@@ -56,7 +59,7 @@ def app_lock_path(create=False):
             fd = child
     finally:
         os.close(fd)
-    return home / 'Library/Caches/TMNF/.app-install.lock'
+    return home / "Library/Caches/TMNF/.app-install.lock"
 
 
 def _open_directory(path, dir_fd=None, private=False):
@@ -66,11 +69,12 @@ def _open_directory(path, dir_fd=None, private=False):
         if private:
             trusted = info.st_uid == os.getuid() and not info.st_mode & 0o077
         else:
-            trusted = (info.st_uid in (0, os.getuid()) and  # type: ignore[assignment]  # only truthiness is used
-                       (not info.st_mode & 0o022 or
-                        (info.st_uid == 0 and info.st_mode & stat.S_ISVTX)))
+            trusted = (
+                info.st_uid in (0, os.getuid())  # type: ignore[assignment]  # only truthiness is used
+                and (not info.st_mode & 0o022 or (info.st_uid == 0 and info.st_mode & stat.S_ISVTX))
+            )
         if not trusted:
-            raise ValueError(f'Unsafe lock directory: {path}')
+            raise ValueError(f"Unsafe lock directory: {path}")
         return fd
     except BaseException:
         os.close(fd)
@@ -78,9 +82,13 @@ def _open_directory(path, dir_fd=None, private=False):
 
 
 def _check_file(info, path):
-    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or
-            info.st_mode & 0o022 or info.st_nlink != 1):
-        raise ValueError(f'Unsafe lock file: {path}')
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_uid != os.getuid()
+        or info.st_mode & 0o022
+        or info.st_nlink != 1
+    ):
+        raise ValueError(f"Unsafe lock file: {path}")
 
 
 def _check_identity(fd, path, dir_fd=None):
@@ -88,11 +96,11 @@ def _check_identity(fd, path, dir_fd=None):
     try:
         named = os.stat(path, dir_fd=dir_fd, follow_symlinks=False)
     except FileNotFoundError as error:
-        raise ValueError(f'Lock file disappeared: {path}') from error
+        raise ValueError(f"Lock file disappeared: {path}") from error
     _check_file(opened, path)
     _check_file(named, path)
     if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
-        raise ValueError(f'Lock file identity changed: {path}')
+        raise ValueError(f"Lock file identity changed: {path}")
 
 
 def _check_dir_identity(fd, path, dir_fd=None):
@@ -100,10 +108,13 @@ def _check_dir_identity(fd, path, dir_fd=None):
     try:
         named = os.stat(path, dir_fd=dir_fd, follow_symlinks=False)
     except FileNotFoundError as error:
-        raise ValueError(f'Lock directory disappeared: {path}') from error
-    if (not stat.S_ISDIR(opened.st_mode) or not stat.S_ISDIR(named.st_mode) or
-            (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)):
-        raise ValueError(f'Lock directory identity changed: {path}')
+        raise ValueError(f"Lock directory disappeared: {path}") from error
+    if (
+        not stat.S_ISDIR(opened.st_mode)
+        or not stat.S_ISDIR(named.st_mode)
+        or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)
+    ):
+        raise ValueError(f"Lock directory identity changed: {path}")
 
 
 def _open_lock(path, dir_fd, create=False):
@@ -130,7 +141,7 @@ def _open_lock(path, dir_fd, create=False):
 
 def acquire(prefix):
     """Return an exclusively locked FD, owned by the caller. Never unlink it."""
-    return _acquire(operation_lock_path(prefix), f'Another operation is using prefix: {prefix}')
+    return _acquire(operation_lock_path(prefix), f"Another operation is using prefix: {prefix}")
 
 
 def _acquire(path, busy):
@@ -163,12 +174,12 @@ def app_held():
 
 
 def _held(path, token_name):
-    token = os.environ.get(token_name, '')
+    token = os.environ.get(token_name, "")
     if not token or not token.isascii() or not token.isdecimal() or len(token) > 10:
-        raise ValueError(f'Invalid {token_name}')
+        raise ValueError(f"Invalid {token_name}")
     fd = int(token)
-    if fd < 3 or fd > 0x7fffffff:
-        raise ValueError(f'Invalid {token_name}')
+    if fd < 3 or fd > 0x7FFFFFFF:
+        raise ValueError(f"Invalid {token_name}")
     parent = _open_directory(path.parent)
     try:
         _check_identity(fd, path.name, parent)
@@ -182,7 +193,7 @@ def _held(path, token_name):
                 if error.errno not in (errno.EACCES, errno.EAGAIN):
                     raise
             else:
-                raise ValueError('Operation token does not hold a lock')
+                raise ValueError("Operation token does not hold a lock")
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             _check_identity(fd, path)
         finally:
@@ -199,11 +210,14 @@ def wine_server_lock(prefix):
         info = prefix.lstat()
     except FileNotFoundError:
         return None
-    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or
-            info.st_mode & 0o022):
-        raise ValueError(f'Unsafe Wine prefix: {prefix}')
-    return (WINE_SERVER_ROOT / f'.wine-{os.getuid()}' /
-            f'server-{info.st_dev:x}-{info.st_ino:x}' / 'lock')
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
+        raise ValueError(f"Unsafe Wine prefix: {prefix}")
+    return (
+        WINE_SERVER_ROOT
+        / f".wine-{os.getuid()}"
+        / f"server-{info.st_dev:x}-{info.st_ino:x}"
+        / "lock"
+    )
 
 
 def check_inactive(prefix):
@@ -223,7 +237,7 @@ def check_inactive(prefix):
                 fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB, 1, 0, os.SEEK_SET)
             except OSError as error:
                 if error.errno in (errno.EACCES, errno.EAGAIN):
-                    raise ValueError(f'Wine is active for prefix: {prefix}') from error
+                    raise ValueError(f"Wine is active for prefix: {prefix}") from error
                 raise
             else:
                 fcntl.lockf(fd, fcntl.LOCK_UN, 1, 0, os.SEEK_SET)
@@ -232,10 +246,8 @@ def check_inactive(prefix):
             # the private chain survived the Wine create_server_dir layout,
             # which may legitimately remove and recreate its server directory
             # between our open and the probe.
-            _check_dir_identity(directories[-1], path.parent.name,
-                                directories[-2])
-            _check_dir_identity(directories[-2], path.parents[1].name,
-                                directories[-3])
+            _check_dir_identity(directories[-1], path.parent.name, directories[-2])
+            _check_dir_identity(directories[-2], path.parents[1].name, directories[-3])
         finally:
             os.close(fd)
     except FileNotFoundError:
@@ -258,9 +270,12 @@ def _signal_group(pid, signum):
         # ignore; propagate the original signal failure if exit is unproven.
         try:
             with closing(select.kqueue()) as queue:
-                event = select.kevent(pid, filter=select.KQ_FILTER_PROC,
-                                      flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
-                                      fflags=select.KQ_NOTE_EXIT)
+                event = select.kevent(
+                    pid,
+                    filter=select.KQ_FILTER_PROC,
+                    flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                    fflags=select.KQ_NOTE_EXIT,
+                )
                 try:
                     events = queue.control([event], 1, 0)
                 except ProcessLookupError:
@@ -284,7 +299,7 @@ def _signal_group(pid, signum):
 def run(prefix, command):
     """Run a command with the operation FD inherited; return shell exit status."""
     if not command:
-        raise ValueError('run requires a command')
+        raise ValueError("run requires a command")
     fd = acquire(prefix)
     try:
         check_inactive(prefix)
@@ -296,9 +311,9 @@ def run(prefix, command):
 def app_run(prefix, command):
     """Borrow the prefix FD; own only the app FD. Installer Wine may be active."""
     if not command:
-        raise ValueError('app-run requires a command')
+        raise ValueError("app-run requires a command")
     prefix_fd = held(prefix)
-    fd = _acquire(app_lock_path(create=True), 'Another app installation is in progress')
+    fd = _acquire(app_lock_path(create=True), "Another app installation is in progress")
     try:
         # Finish nested cleanup before the outer prefix runner's SIGKILL.
         return _run(command, {TOKEN: prefix_fd, APP_TOKEN: fd}, INTERRUPT_GRACE / 2)
@@ -320,7 +335,9 @@ def _run(command, tokens, grace=INTERRUPT_GRACE):
         for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             handlers[signum] = signal.signal(signum, interrupt)
         env = dict(os.environ, **{name: str(fd) for name, fd in tokens.items()})
-        child = subprocess.Popen(command, env=env, pass_fds=tuple(tokens.values()), start_new_session=True)
+        child = subprocess.Popen(
+            command, env=env, pass_fds=tuple(tokens.values()), start_new_session=True
+        )
         while True:
             if interrupted:
                 # Keep the leader unreaped until the final group signal, so its
@@ -357,25 +374,25 @@ def _run(command, tokens, grace=INTERRUPT_GRACE):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('run', 'held', 'app-run', 'app-held'))
-    parser.add_argument('prefix')
-    parser.add_argument('command', nargs=argparse.REMAINDER)
+    parser.add_argument("action", choices=("run", "held", "app-run", "app-held"))
+    parser.add_argument("prefix")
+    parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     try:
-        if args.action in ('held', 'app-held'):
+        if args.action in ("held", "app-held"):
             if args.command:
-                raise ValueError('held does not accept a command')
+                raise ValueError("held does not accept a command")
             held(args.prefix)
-            if args.action == 'app-held':
+            if args.action == "app-held":
                 app_held()
             return 0
-        if args.action == 'app-run':
+        if args.action == "app-run":
             return app_run(args.prefix, args.command)
         return run(args.prefix, args.command)
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
-        print(f'error: {error}', file=sys.stderr)
+        print(f"error: {error}", file=sys.stderr)
         return 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())

@@ -24,8 +24,10 @@ def main():
         parser.error("a finite positive timeout and a command are required")
 
     interrupted = []
-    previous = {sig: signal.signal(sig, lambda signum, frame: interrupted.append(signum))
-                for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
+    previous = {
+        sig: signal.signal(sig, lambda signum, frame: interrupted.append(signum))
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+    }
     # An inherited SIG_IGN would let the kernel reap the child automatically.
     previous[signal.SIGCHLD] = signal.signal(signal.SIGCHLD, signal.SIG_DFL)
     process = None
@@ -36,9 +38,18 @@ def main():
             process = subprocess.Popen(args.command, start_new_session=True)
             exited = False
             try:
-                queue.control([select.kevent(process.pid, filter=select.KQ_FILTER_PROC,
-                                            flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
-                                            fflags=select.KQ_NOTE_EXIT)], 0, 0)
+                queue.control(
+                    [
+                        select.kevent(
+                            process.pid,
+                            filter=select.KQ_FILTER_PROC,
+                            flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                            fflags=select.KQ_NOTE_EXIT,
+                        )
+                    ],
+                    0,
+                    0,
+                )
             except ProcessLookupError:
                 # Registration can return ESRCH for an already-exited child.
                 # It is still our unreaped zombie, so its PID cannot be reused.
@@ -57,14 +68,19 @@ def main():
                     grace = time.monotonic() + INTERRUPT_GRACE
                     while not exited and time.monotonic() < grace:
                         try:
-                            exited = bool(queue.control(None, 1, min(0.1, max(0.0, grace - time.monotonic()))))
+                            exited = bool(
+                                queue.control(None, 1, min(0.1, max(0.0, grace - time.monotonic())))
+                            )
                         except (OSError, ProcessLookupError):
                             break
                     return 128 + interrupted[0]
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    print("FAIL: probe exceeded %g seconds: %s" %
-                          (args.timeout, " ".join(args.command)), file=sys.stderr)
+                    print(
+                        "FAIL: probe exceeded %g seconds: %s"
+                        % (args.timeout, " ".join(args.command)),
+                        file=sys.stderr,
+                    )
                     return 124
                 exited = bool(queue.control(None, 1, min(remaining, 0.1)))
     except OSError as error:

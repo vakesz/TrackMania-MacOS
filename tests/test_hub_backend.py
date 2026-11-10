@@ -18,18 +18,29 @@ CLI = ROOT / "src/shell/cli/tmnf"
 
 class HubBackendTests(unittest.TestCase):
     def run_hub(self, *arguments, home, titles_dir=None):
-        env = {"PATH": "/usr/bin:/bin", "HOME": str(home),
-               "TMNF_APPS_DIR": str(Path(home) / "Applications")}
+        env = {
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(home),
+            "TMNF_APPS_DIR": str(Path(home) / "Applications"),
+        }
         if titles_dir is not None:
             env["TMNF_TITLES_DIR"] = str(titles_dir)
-        return subprocess.run(["/bin/bash", str(CLI), "hub", *arguments], cwd=ROOT,
-                              env=env, text=True, capture_output=True, timeout=30)
+        return subprocess.run(
+            ["/bin/bash", str(CLI), "hub", *arguments],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
 
     def test_snapshot_uses_each_titles_own_paths_without_running_wine(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
-            canyon_game = (home / "Games/TMNF/Canyon/prefix/drive_c/Program Files (x86)/ManiaPlanet"
-                           "/ManiaPlanet.exe")
+            canyon_game = (
+                home / "Games/TMNF/Canyon/prefix/drive_c/Program Files (x86)/ManiaPlanet"
+                "/ManiaPlanet.exe"
+            )
             canyon_game.parent.mkdir(parents=True)
             canyon_game.touch()
 
@@ -68,7 +79,6 @@ class HubBackendTests(unittest.TestCase):
             self.assertEqual(found["tmu"]["icon"], str(support / "icons/tmu.icns"))
             self.assertEqual(found["tmnf"]["iconSource"], "bundled")
 
-
     def test_run_validates_only_the_target_title(self):
         with tempfile.TemporaryDirectory() as directory:
             titles = Path(directory) / "titles"
@@ -76,8 +86,7 @@ class HubBackendTests(unittest.TestCase):
             for path in (ROOT / "config/titles").glob("*.json"):
                 (titles / path.name).write_text(path.read_text())
             (titles / "tm-turbo.json").write_text("{}")
-            with mock.patch.dict(os.environ, {"TMNF_TITLES_DIR": str(titles),
-                                              "HOME": directory}):
+            with mock.patch.dict(os.environ, {"TMNF_TITLES_DIR": str(titles), "HOME": directory}):
                 actions = hub_run.available_action_ids(registry.get("tmu"))
             self.assertEqual(actions, {"install"})
 
@@ -94,23 +103,36 @@ class HubBackendTests(unittest.TestCase):
             self.assertEqual(hub_run._scrubbed_env("tmu")["TMNF_TITLES_DIR"], "/private/tmp/t")
 
     def test_runtime_source_never_leaks_from_the_caller(self):
-        inherited = {"TMNF_RUNTIME_SOURCE": "build", "TMNF_RUNTIME_ARCHIVE": "/private/tmp/x.tar",
-                     "TMNF_RUNTIME_SHA256": "0" * 64}
+        inherited = {
+            "TMNF_RUNTIME_SOURCE": "build",
+            "TMNF_RUNTIME_ARCHIVE": "/private/tmp/x.tar",
+            "TMNF_RUNTIME_SHA256": "0" * 64,
+        }
         with mock.patch.dict(os.environ, inherited):
             self.assertFalse(set(inherited) & set(hub_run._scrubbed_env("tmu")))
-            self.assertFalse((set(inherited) - {"TMNF_RUNTIME_SOURCE"})
-                             & set(hub_run._scrubbed_env("tmu", "download")))
-            self.assertEqual(hub_run._scrubbed_env("tmu", "download")["TMNF_RUNTIME_SOURCE"], "download")
+            self.assertFalse(
+                (set(inherited) - {"TMNF_RUNTIME_SOURCE"})
+                & set(hub_run._scrubbed_env("tmu", "download"))
+            )
+            self.assertEqual(
+                hub_run._scrubbed_env("tmu", "download")["TMNF_RUNTIME_SOURCE"], "download"
+            )
 
     def test_runtime_flag_sets_env_for_install_actions(self):
-        cases = ((None, "install", []), ("build", "install", []),
-                 ("download", "install-platform", ["setup"]), (None, "install-platform", ["setup"]))
+        cases = (
+            (None, "install", []),
+            ("build", "install", []),
+            ("download", "install-platform", ["setup"]),
+            (None, "install-platform", ["setup"]),
+        )
         for runtime, action, extra in cases:
-            with self.subTest(runtime=runtime, action=action), \
-                    mock.patch.dict(os.environ, {"TMNF_RUNTIME_SOURCE": "build"}), \
-                    mock.patch.object(hub_run, "available_action_ids", return_value={action}), \
-                    mock.patch.object(hub_run.os, "execve", side_effect=KeyboardInterrupt) as execve, \
-                    self.assertRaises(KeyboardInterrupt):
+            with (
+                self.subTest(runtime=runtime, action=action),
+                mock.patch.dict(os.environ, {"TMNF_RUNTIME_SOURCE": "build"}),
+                mock.patch.object(hub_run, "available_action_ids", return_value={action}),
+                mock.patch.object(hub_run.os, "execve", side_effect=KeyboardInterrupt) as execve,
+                self.assertRaises(KeyboardInterrupt),
+            ):
                 hub_run.run("tmnf", action, None, runtime)
             command, env = execve.call_args.args[1], execve.call_args.args[2]
             self.assertTrue(command[1].endswith("src/shell/cli/install.sh"))
@@ -118,11 +140,19 @@ class HubBackendTests(unittest.TestCase):
             self.assertEqual(env.get("TMNF_RUNTIME_SOURCE"), runtime)
 
     def test_runtime_flag_is_rejected_for_other_actions_and_bad_values(self):
-        for action, runtime in (("update", "download"), ("import", "build"), ("install-apps", "build"),
-                                ("install", "auto"), ("install", "bogus"), ("install", "")):
-            with self.subTest(action=action, runtime=runtime), \
-                    mock.patch.object(hub_run.os, "execve") as execve, \
-                    self.assertRaises(SystemExit):
+        for action, runtime in (
+            ("update", "download"),
+            ("import", "build"),
+            ("install-apps", "build"),
+            ("install", "auto"),
+            ("install", "bogus"),
+            ("install", ""),
+        ):
+            with (
+                self.subTest(action=action, runtime=runtime),
+                mock.patch.object(hub_run.os, "execve") as execve,
+                self.assertRaises(SystemExit),
+            ):
                 hub_run.run("tmnf", action, "/tmp" if action == "import" else None, runtime)
             execve.assert_not_called()
 
@@ -135,8 +165,10 @@ class HubBackendTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"TMNF_SUPPORT": "/private/tmp/x/support"}, clear=False):
             for name in ("TMNF_LAUNCHER", "TMNF_TITLE"):
                 os.environ.pop(name, None)
-            launchers = {title_id: hub_paths.compute(registry.get(title_id)).launcher
-                         for title_id in ("tmnf", "tmu")}
+            launchers = {
+                title_id: hub_paths.compute(registry.get(title_id)).launcher
+                for title_id in ("tmnf", "tmu")
+            }
         self.assertEqual(launchers["tmnf"], Path("/private/tmp/x/support/launchers/tmnf"))
         self.assertEqual(launchers["tmu"], Path("/private/tmp/x/support/launchers/tmu"))
 
@@ -145,16 +177,13 @@ class HubBackendTests(unittest.TestCase):
             result = self.run_hub("snapshot", home=directory)
             self.assertEqual(result.returncode, 0, result.stderr)
             titles = {t["id"]: t for t in json.loads(result.stdout)["titles"]}
+            self.assertEqual({a["id"] for a in titles["tmnf"]["actions"]}, {"install"})
+            self.assertEqual({a["id"] for a in titles["tmu"]["actions"]}, {"install"})
+            self.assertEqual({a["id"] for a in titles["tm-canyon"]["actions"]}, {"install"})
+            self.assertEqual({a["id"] for a in titles["tm-turbo"]["actions"]}, {"install-platform"})
             self.assertEqual(
-                {a["id"] for a in titles["tmnf"]["actions"]}, {"install"})
-            self.assertEqual(
-                {a["id"] for a in titles["tmu"]["actions"]}, {"install"})
-            self.assertEqual(
-                {a["id"] for a in titles["tm-canyon"]["actions"]}, {"install"})
-            self.assertEqual(
-                {a["id"] for a in titles["tm-turbo"]["actions"]}, {"install-platform"})
-            self.assertEqual(
-                {a["id"] for a in titles["tm-original"]["actions"]}, {"install-platform"})
+                {a["id"] for a in titles["tm-original"]["actions"]}, {"install-platform"}
+            )
             for title in titles.values():
                 for action in title["actions"]:
                     self.assertEqual(action.keys(), {"id", "label", "primary", "kind"})
@@ -162,28 +191,34 @@ class HubBackendTests(unittest.TestCase):
     def test_game_ready_offers_apps_for_import_kinds(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
-            turbo = (home / "Games/TMNF/Turbo/prefix/drive_c/Program Files (x86)/TrackMania Turbo"
-                     "/TrackmaniaTurbo.exe")
+            turbo = (
+                home / "Games/TMNF/Turbo/prefix/drive_c/Program Files (x86)/TrackMania Turbo"
+                "/TrackmaniaTurbo.exe"
+            )
             turbo.parent.mkdir(parents=True)
             turbo.touch()
             result = self.run_hub("snapshot", home=home)
             self.assertEqual(result.returncode, 0, result.stderr)
             titles = {t["id"]: t for t in json.loads(result.stdout)["titles"]}
             actions = titles["tm-turbo"]["actions"]
-            self.assertEqual([action["id"] for action in actions],
-                             ["install-platform", "install-apps"])
+            self.assertEqual(
+                [action["id"] for action in actions], ["install-platform", "install-apps"]
+            )
             self.assertTrue(actions[0]["primary"])
             self.assertFalse(actions[1]["primary"])
 
     def test_imported_game_makes_app_wrappers_primary_after_platform_ready(self):
         title = registry.get("tm-turbo")
-        items = {name: state.Probe(True, "") for name in
-                 ("runtime", "prefix", "directx", "renderer", "game")}
-        items.update({"gameApp": state.Probe(False, ""),
-                      "settingsApp": state.Probe(False, "")})
+        items = {
+            name: state.Probe(True, "")
+            for name in ("runtime", "prefix", "directx", "renderer", "game")
+        }
+        items.update({"gameApp": state.Probe(False, ""), "settingsApp": state.Probe(False, "")})
         actions = snapshot._actions(title, items)
-        self.assertEqual([action["id"] for action in actions],
-                         ["install-apps", "doctor", "diagnostics", "uninstall"])
+        self.assertEqual(
+            [action["id"] for action in actions],
+            ["install-apps", "doctor", "diagnostics", "uninstall"],
+        )
         self.assertTrue(actions[0]["primary"])
 
     def test_unmanaged_or_symlinked_app_is_not_ready(self):
@@ -208,7 +243,6 @@ class HubBackendTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             titles = {t["id"]: t for t in json.loads(result.stdout)["titles"]}
             self.assertTrue(titles["tm-turbo"]["state"]["gameApp"]["ready"])
-
 
     def test_bad_registry_entry_is_contained_per_title(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -262,11 +296,20 @@ class HubBackendTests(unittest.TestCase):
         """A bad launch option must not break the whole hub UI (state probe only)."""
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
-            env = {"PATH": "/usr/bin:/bin", "HOME": str(home), "TMNF_AUDIO": "bogus",
-                   "TMNF_WINDOW_SIZE": "0x0"}
+            env = {
+                "PATH": "/usr/bin:/bin",
+                "HOME": str(home),
+                "TMNF_AUDIO": "bogus",
+                "TMNF_WINDOW_SIZE": "0x0",
+            }
             result = subprocess.run(
-                ["/bin/bash", str(CLI), "hub", "snapshot"], cwd=ROOT,
-                env=env, text=True, capture_output=True, timeout=30)
+                ["/bin/bash", str(CLI), "hub", "snapshot"],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)["schema"], 2)
 
@@ -294,12 +337,14 @@ class HubBackendTests(unittest.TestCase):
             for title in data["titles"]:
                 for key, kind in self.NEW_FIELDS.items():
                     self.assertIsInstance(title[key], kind, key)
-                self.assertEqual(set(title["locations"]),
-                                 {"root", "prefix", "gameDir", "userdata", "logs"})
+                self.assertEqual(
+                    set(title["locations"]), {"root", "prefix", "gameDir", "userdata", "logs"}
+                )
                 for value in title["locations"].values():
                     self.assertTrue(value.startswith("/"))
-                self.assertEqual(title["locations"]["logs"],
-                                 str(Path(directory) / "Library/Logs/TMNF"))
+                self.assertEqual(
+                    title["locations"]["logs"], str(Path(directory) / "Library/Logs/TMNF")
+                )
                 self.assertFalse(title["sessionActive"])
         placeholder = snapshot._error_placeholder("broken", "bad")
         self.assertEqual(placeholder["locations"], {})
@@ -308,24 +353,39 @@ class HubBackendTests(unittest.TestCase):
 
     def test_management_actions_need_a_ready_prefix(self):
         title = registry.get("tmnf")
-        items = {name: state.Probe(False, "") for name in
-                 ("runtime", "prefix", "directx", "renderer", "game", "gameApp", "settingsApp")}
+        items = {
+            name: state.Probe(False, "")
+            for name in (
+                "runtime",
+                "prefix",
+                "directx",
+                "renderer",
+                "game",
+                "gameApp",
+                "settingsApp",
+            )
+        }
+
         def ids(active=False):
             return [a["id"] for a in snapshot._actions(title, items, active)]
 
         self.assertEqual(ids(True), ["install"])
         items["prefix"] = state.Probe(True, "")
         self.assertEqual(ids(), ["install", "update", "doctor", "diagnostics", "uninstall"])
-        self.assertEqual(ids(True),
-                         ["install", "update", "doctor", "diagnostics", "stop", "uninstall"])
+        self.assertEqual(
+            ids(True), ["install", "update", "doctor", "diagnostics", "stop", "uninstall"]
+        )
         kinds = {a["id"]: a["kind"] for a in snapshot._actions(title, items, True)}
-        self.assertEqual((kinds["doctor"], kinds["diagnostics"], kinds["stop"], kinds["uninstall"]),
-                         ("verify", "maintenance", "maintenance", "destructive"))
+        self.assertEqual(
+            (kinds["doctor"], kinds["diagnostics"], kinds["stop"], kinds["uninstall"]),
+            ("verify", "maintenance", "maintenance", "destructive"),
+        )
 
     def test_session_active_is_safe(self):
         guard = state.operation_guard
-        with mock.patch.object(guard, "check_inactive",
-                               side_effect=ValueError("Wine is active for prefix: x")):
+        with mock.patch.object(
+            guard, "check_inactive", side_effect=ValueError("Wine is active for prefix: x")
+        ):
             self.assertTrue(state.session_active(Path("/x")))
         for error in (ValueError("Unsafe Wine prefix"), OSError("boom"), RuntimeError("x")):
             with mock.patch.object(guard, "check_inactive", side_effect=error):
@@ -349,10 +409,13 @@ class HubBackendTests(unittest.TestCase):
             lock.touch(mode=0o600)
             with mock.patch.object(state.operation_guard, "WINE_SERVER_ROOT", root):
                 self.assertFalse(state.session_active(prefix))
-                code = ("import fcntl,sys,time;f=open(sys.argv[1],'r+b');"
-                        "fcntl.lockf(f,fcntl.LOCK_EX,1,0,0);print('ok',flush=True);time.sleep(30)")
-                child = subprocess.Popen(["/usr/bin/python3", "-c", code, str(lock)],
-                                         stdout=subprocess.PIPE, text=True)
+                code = (
+                    "import fcntl,sys,time;f=open(sys.argv[1],'r+b');"
+                    "fcntl.lockf(f,fcntl.LOCK_EX,1,0,0);print('ok',flush=True);time.sleep(30)"
+                )
+                child = subprocess.Popen(
+                    ["/usr/bin/python3", "-c", code, str(lock)], stdout=subprocess.PIPE, text=True
+                )
                 try:
                     self.assertEqual(child.stdout.readline().strip(), "ok")
                     self.assertTrue(state.session_active(prefix))
@@ -362,13 +425,19 @@ class HubBackendTests(unittest.TestCase):
                 self.assertFalse(state.session_active(prefix))
 
     def test_new_actions_dispatch_to_the_cli(self):
-        cases = {"doctor": ["doctor"], "diagnostics": ["diagnostics"], "stop": ["stop"],
-                 "uninstall": ["uninstall", "--yes"]}
+        cases = {
+            "doctor": ["doctor"],
+            "diagnostics": ["diagnostics"],
+            "stop": ["stop"],
+            "uninstall": ["uninstall", "--yes"],
+        }
         for action, extra in cases.items():
-            with self.subTest(action=action), \
-                    mock.patch.object(hub_run, "available_action_ids", return_value={action}), \
-                    mock.patch.object(hub_run.os, "execve", side_effect=KeyboardInterrupt) as execve, \
-                    self.assertRaises(KeyboardInterrupt):
+            with (
+                self.subTest(action=action),
+                mock.patch.object(hub_run, "available_action_ids", return_value={action}),
+                mock.patch.object(hub_run.os, "execve", side_effect=KeyboardInterrupt) as execve,
+                self.assertRaises(KeyboardInterrupt),
+            ):
                 hub_run.run("tmnf", action, None)
             command = execve.call_args.args[1]
             self.assertTrue(command[1].endswith("src/shell/cli/tmnf"))
@@ -394,23 +463,27 @@ class HubBackendTests(unittest.TestCase):
                 os.utime(log, (1000 + index, 1000 + index))
             (logs / "big.log").write_text("x" * (diagnostics.LOG_TAIL_BYTES + 100) + f"END {home}")
             os.utime(logs / "big.log", (9000, 9000))
-            with mock.patch.dict(os.environ, {"HOME": str(home), "TMNF_TITLE": "tmnf"}), \
-                    mock.patch.object(diagnostics.getpass, "getuser", return_value="alice"):
+            with (
+                mock.patch.dict(os.environ, {"HOME": str(home), "TMNF_TITLE": "tmnf"}),
+                mock.patch.object(diagnostics.getpass, "getuser", return_value="alice"),
+            ):
                 target = diagnostics.build("tmnf", doctor_output=f"doctor says {home}\n")
             self.assertEqual(target.parent, logs)
             self.assertRegex(target.name, r"^diagnostics-tmnf-\d{8}-\d{6}\.zip$")
             with zipfile.ZipFile(target) as archive:
                 names = set(archive.namelist())
                 self.assertTrue({"summary.txt", "doctor.txt", "snapshot.json"} <= names)
-                self.assertEqual(len([n for n in names if n.startswith("logs/")]),
-                                 diagnostics.LOG_COUNT)
+                self.assertEqual(
+                    len([n for n in names if n.startswith("logs/")]), diagnostics.LOG_COUNT
+                )
                 self.assertIn("logs/big.log", names)
                 for name in names:
                     body = archive.read(name).decode()
                     self.assertNotIn(str(home), body, name)
                     self.assertNotIn("alice", body, name)
-                self.assertLessEqual(len(archive.read("logs/big.log")),
-                                     diagnostics.LOG_TAIL_BYTES + 100)
+                self.assertLessEqual(
+                    len(archive.read("logs/big.log")), diagnostics.LOG_TAIL_BYTES + 100
+                )
                 self.assertTrue(archive.read("logs/big.log").decode().endswith("END ~"))
                 self.assertEqual(json.loads(archive.read("snapshot.json"))["id"], "tmnf")
 

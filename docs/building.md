@@ -37,8 +37,8 @@ Generated runtime output belongs under `.build/` and is never a source input.
 make check
 ```
 
-This runs Bash syntax checks, ShellCheck, Ruff, Python tests, the shell CLI
-integration test and `swift test`.
+This runs Bash syntax checks, ShellCheck, Ruff (lint and format check), mypy,
+Python tests, the shell CLI integration test, SwiftLint and `swift test`.
 
 ## Build a runtime from source
 

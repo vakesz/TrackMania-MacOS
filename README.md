@@ -256,8 +256,8 @@ Python runtime, so it needs no developer tools. See
 
 ### Development
 
-`make check` runs shell checks, Ruff, Python tests, the CLI integration test and
-the Swift hub tests. Build, packaging, signing and release steps are in
+`make check` runs shell checks, Ruff, mypy, Python tests, the CLI integration
+test, SwiftLint and the Swift hub tests. Build, packaging, signing and release steps are in
 [docs/building.md](docs/building.md); patch details are in
 [docs/runtime.md](docs/runtime.md); contribution rules are in
 [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md). The project website lives in

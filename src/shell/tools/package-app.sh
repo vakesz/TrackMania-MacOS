@@ -4,6 +4,15 @@
 # for distribution; otherwise ad-hoc signs. Notarization of the zip is opt-in
 # via TMNF_NOTARIZE=1 with TMNF_NOTARY_PROFILE naming a notarytool keychain
 # profile (xcrun notarytool store-credentials); no password is passed on argv.
+#
+# Commands:
+#   build-unsigned  Build the unsigned .app (swift build, bundled Python, runtime
+#                   pin). Needs no signing identity or credentials.
+#   sign            Sign an already built .app, write the zip and its checksum,
+#                   and notarize when TMNF_NOTARIZE=1. Builds nothing, so it can
+#                   run in a separate process (or CI job) from build-unsigned.
+#   appbundle       build-unsigned, then sign the app.
+#   zip | all       build-unsigned, then sign (sign also writes the zip).
 set -euo pipefail
 
 PROJECT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -21,7 +30,10 @@ HUB_ICON_SOURCE="${PROJECT_DIR}/assets/branding/trackmania-mac-icon.svg"
 # shellcheck source=src/shell/lib/plist.sh
 . "${PROJECT_DIR}/src/shell/lib/plist.sh"
 
-# Scratch directories removed on any exit, including die().
+# Scratch directories this process created, removed on any exit including
+# die(). Each subcommand starts with its own empty list: build-unsigned and
+# sign may run in different processes, so nothing is shared between them
+# except the .app directory on disk.
 CLEANUP_DIRS=()
 cleanup() {
   local dir
@@ -249,8 +261,22 @@ sign_bundled_machos() {
   return 0
 }
 
+# `sign` may run in a fresh process (or CI job) on an app built elsewhere and
+# carried as a tar. Refuse a missing or mangled bundle up front: lost exec bits
+# would make sign_bundled_machos skip the bundled Python without any error.
+check_staged_app() {
+  test -d "$APP_DIR" || die "No app to sign at ${APP_DIR}; run build-unsigned first."
+  test -f "${APP_DIR}/Contents/Info.plist" \
+    || die "Staged app has no Info.plist: ${APP_DIR}"
+  test -x "${APP_DIR}/Contents/MacOS/${HUB_NAME}" \
+    || die "Staged app executable is missing or not executable: ${APP_DIR}/Contents/MacOS/${HUB_NAME}"
+  test -x "${APP_DIR}/Contents/Resources/launcher/python/bin/python3" \
+    || die "Staged app lost its bundled Python (missing or not executable)."
+}
+
 sign_appbundle() {
   local identity="${TMNF_SIGN_IDENTITY:-}"
+  check_staged_app
   sign_bundled_machos "${APP_DIR}/Contents/Resources/launcher/python"
   sign_one "${APP_DIR}/Contents/MacOS/${HUB_NAME}"
   sign_one "$APP_DIR"
@@ -292,13 +318,19 @@ build_zip() {
   (cd "$DIST_DIR" && shasum -a 256 "$ZIP_NAME" >"${ZIP_NAME}.sha256")
 }
 
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  command="${1:-all}"
+main() {
+  local command="${1:-all}"
   case "$command" in
+    build-unsigned) build_appbundle ;;
+    sign) sign_appbundle; build_zip ;;
     appbundle) build_appbundle; sign_appbundle ;;
     zip) build_appbundle; sign_appbundle; build_zip ;;
     all) build_appbundle; sign_appbundle; build_zip ;;
-    -h|--help) say 'Usage: package-app.sh [appbundle|zip|all]' ;;
+    -h|--help) say 'Usage: package-app.sh [build-unsigned|sign|appbundle|zip|all]' ;;
     *) die "Unknown package-app command: $command" ;;
   esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
 fi

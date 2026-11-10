@@ -69,6 +69,9 @@ PROJECT_ENTRIES = (
     "pyproject.toml",
     "uv.lock",
 )
+# Digests of the finished release archives, committed after they are built. It
+# cannot be a build input, or ship inside the source archive it hashes.
+RELEASE_HASH_FILE = Path("config/release-assets.sha256")
 
 
 def elapsed_text(seconds):
@@ -312,12 +315,16 @@ def source_excluded(name, path):
 
 
 def project_excluded(path):
-    return path.parts[0] not in PROJECT_ENTRIES or any(
-        part in (".build", ".venv", "__pycache__")
-        or part.endswith(".egg-info")
-        or part == ".DS_Store"
-        or part == "node_modules"
-        for part in path.parts
+    return (
+        path.parts[0] not in PROJECT_ENTRIES
+        or path == RELEASE_HASH_FILE
+        or any(
+            part in (".build", ".venv", "__pycache__")
+            or part.endswith(".egg-info")
+            or part == ".DS_Store"
+            or part == "node_modules"
+            for part in path.parts
+        )
     )
 
 
@@ -325,7 +332,7 @@ def build_path_excluded(relative_path):
     """True for local build intermediates that must never enter an input hash,
     a source snapshot or the shipped source archive. `.build/` and Swift's own
     `src/swift/.build/` churn constantly and carry maintainer paths."""
-    return any(
+    return relative_path == RELEASE_HASH_FILE or any(
         part in (".build", ".venv", "__pycache__")
         or part.endswith(".egg-info")
         or part == ".DS_Store"

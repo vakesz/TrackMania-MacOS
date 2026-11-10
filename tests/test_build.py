@@ -166,6 +166,17 @@ class BuildTests(unittest.TestCase):
         nested.unlink()
         self.assertNotIn("config/nested/input.json", build.build_inputs())
 
+    def test_release_hash_file_is_neither_build_input_nor_source_content(self):
+        relative = Path("config/release-assets.sha256")
+        hashes = self.root / relative
+        hashes.write_text("one")
+        before = build.build_inputs()
+        self.assertNotIn(str(relative), before)
+        hashes.write_text("two")
+        self.assertEqual(before, build.build_inputs())
+        self.assertTrue(build.project_excluded(relative))
+        self.assertFalse(build.project_excluded(Path("config/sources.json")))
+
     def test_prepared_identity_binds_ordered_patch_paths_and_hashes(self):
         patches = self.root / "patches/wine"
         patches.mkdir()

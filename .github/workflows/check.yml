@@ -112,8 +112,12 @@ jobs:
           # (config/sources.json) must agree with.
           read -r url lock_revision < <(python3 -I -c \
             "import json; s = json.load(open('config/sources.json'))['x87sidecar']; print(s['git'], s['revision'])")
+          # Parse the assignment instead of matching text, so formatting
+          # (quote style, spacing) can't break the lookup.
           revision="$(python3 -I -c \
-            "import re; print(re.search(r\"^REVISION = '([0-9a-f]{40})'\", open('tests/test_x87_patch.py').read(), re.M).group(1))")"
+            "import ast; print(next(n.value.value for n in ast.parse(open('tests/test_x87_patch.py').read()).body if isinstance(n, ast.Assign) and [getattr(t, 'id', None) for t in n.targets] == ['REVISION']))")"
+          [[ "$revision" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "tests/test_x87_patch.py has no 40-hex REVISION" >&2; exit 1; }
           test "$revision" = "$lock_revision" \
             || { echo "tests/test_x87_patch.py pins $revision but config/sources.json pins $lock_revision" >&2; exit 1; }
           source="${RUNNER_TEMP}/x87sidecar"

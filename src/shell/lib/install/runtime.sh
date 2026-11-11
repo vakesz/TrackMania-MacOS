@@ -249,7 +249,10 @@ install_wine_runtime() {
     if test ! -e "$TMNF_RUNTIME" && test ! -L "$TMNF_RUNTIME"; then
       runtime_is_complete "$source" || die "The runtime is incomplete or has the wrong version."
       without_operation_lock "${source}/bin/wine" --version || die "Wine runtime probe failed."
-      without_operation_lock "${source}/bin/x87sidecar" --probe || die "x87sidecar runtime probe failed."
+      # An unsupported Rosetta only costs speed, so it must not block the install.
+      if test "$TMNF_X87" = on && ! without_operation_lock "${source}/bin/x87sidecar" --probe; then
+        warn "$TMNF_X87_UNSUPPORTED_HINT"
+      fi
     fi
     tmnf_python -m tmnf.install.runtime_manifest publish "$source" "$TMNF_RUNTIME" "$RUNTIME_VERSION" \
       || die "Cannot publish runtime. Existing destinations are never replaced."

@@ -22,6 +22,9 @@ by you. They are not redistributed here.
 
 - A Mac with Apple Silicon (M1 or later) running macOS 14 Sonoma or later.
   Intel Macs are not supported.
+- macOS 15.4 or later for the fastest physics. On older versions the
+  x87sidecar accelerator can't hook Rosetta, so the game runs on stock Rosetta
+  and is slower. The installer warns when this happens.
 - An internet connection and a few gigabytes of free disk space.
 - Rosetta 2. If it's missing, the installer adds it for you.
 
@@ -182,7 +185,8 @@ of disk space and a substantial first build. Builds use every CPU core by
 default; use `TMNF_JOBS=4 make build` to leave some free.
 
 The deployment target is macOS 14. x87sidecar also depends on the installed
-Rosetta version; its compatibility probe must pass. See
+Rosetta version: it supports Rosetta from macOS 15.4 on, and on anything older
+the game runs without it. See
 [building and releasing](docs/building.md) for the tested host and limitations.
 
 ### Everyday commands

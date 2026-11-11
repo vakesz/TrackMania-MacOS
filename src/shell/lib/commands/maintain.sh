@@ -95,11 +95,14 @@ doctor() {
   fi
   say "Patched x87 translation: $TMNF_X87"
   if test "$TMNF_X87" = on; then
-    if test -x "$sidecar" && "$sidecar" --probe >/dev/null 2>&1; then
+    if ! test -x "$sidecar"; then
+      warn "Patched x87sidecar is missing; run make install or use TMNF_X87=off"
+      failures=$((failures + 1))
+    elif "$sidecar" --probe >/dev/null 2>&1; then
       say "x87sidecar: compatible with the installed Rosetta"
     else
-      warn "Patched x87sidecar is missing or incompatible with Rosetta; rebuild or use TMNF_X87=off"
-      failures=$((failures + 1))
+      # Not a failure: the game still runs, unhooked.
+      warn "$TMNF_X87_UNSUPPORTED_HINT"
     fi
   fi
   if rosetta_is_ready; then

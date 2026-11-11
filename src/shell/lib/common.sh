@@ -137,6 +137,9 @@ fi
 # Session diagnostics for make diag: game state, frame rate and CPU in the play log
 : "${TMNF_DIAG:=off}"
 : "${TMNF_X87:=on}"
+# x87sidecar hooks Rosetta builds from macOS 15.4 on. Wine starts it in
+# cooperative mode, which runs the game unhooked on any other Rosetta.
+TMNF_X87_UNSUPPORTED_HINT="x87sidecar does not support this Rosetta, so the game runs on stock Rosetta and is slower. x87 acceleration needs macOS 15.4 or later; set TMNF_X87=off to skip it."
 # Title-agnostic fallback: the hub commands never consume TMNF_ROOT themselves,
 # and title-aware commands set their own per-title default above.
 : "${TMNF_ROOT:=${HOME}/Games/TMNF}"

@@ -507,8 +507,31 @@ class RuntimeInstall(unittest.TestCase):
         (built / "lib/d9vk/d3d9.dll").write_bytes(b"damaged")
         self.assert_rejected(self.install(explicit=False))
 
+    def test_unsupported_rosetta_warns_and_installs(self):
+        (self.bundle / "bin/x87sidecar").write_text(
+            '#!/bin/bash\necho "sidecar $*" >>"$STUB_LOG"\nexit 1\n'
+        )
+        self.write_manifest()
+        self.package()
+        result = self.install(extra_env={"STUB_LOG": str(self.stub_log)})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("x87 acceleration needs macOS 15.4 or later", result.stderr)
+        self.assertEqual(self.stub_log.read_text(), "sidecar --probe\n")
+        self.assertTrue((self.destination / "bin/x87sidecar").is_file())
+
+    def test_x87_off_skips_the_sidecar_probe(self):
+        (self.bundle / "bin/x87sidecar").write_text(
+            '#!/bin/bash\necho "sidecar $*" >>"$STUB_LOG"\nexit 1\n'
+        )
+        self.write_manifest()
+        self.package()
+        result = self.install(extra_env={"STUB_LOG": str(self.stub_log), "TMNF_X87": "off"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("x87sidecar", result.stderr)
+        self.assertFalse(self.stub_log.exists())
+
     def test_probe_failure_cleans_only_its_own_staging_directory(self):
-        (self.bundle / "bin/x87sidecar").write_text("#!/bin/bash\nexit 1\n")
+        (self.bundle / "bin/wine").write_text("#!/bin/bash\nexit 1\n")
         self.write_manifest()
         self.package()
         other = self.destination.parent / ".runtime-install.other"

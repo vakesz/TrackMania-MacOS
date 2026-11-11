@@ -399,8 +399,26 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
             TMNF_SIDECAR=str(good),
             ROSETTA_X87_PATH=str(self.home / "missing"),
         )
-        self.assertIn("x87sidecar is missing or incompatible", result.stderr)
+        self.assertIn("x87sidecar is missing", result.stderr)
         self.assertNotIn("x87sidecar: compatible", result.stdout)
+
+    def test_doctor_reports_unsupported_rosetta_without_failing_it(self):
+        unsupported = self.runtime / "bin/sidecar"
+        unsupported.write_text("#!/bin/bash\nexit 1\n")
+        unsupported.chmod(0o755)
+        results = {}
+        for name, sidecar in (("unsupported", unsupported), ("missing", self.home / "missing")):
+            results[name] = self.shell(
+                "./src/shell/cli/tmnf doctor", TMNF_X87="on", TMNF_SIDECAR=str(sidecar)
+            )
+        self.assertIn("x87 acceleration needs macOS 15.4 or later", results["unsupported"].stderr)
+        self.assertNotIn("x87sidecar is missing", results["unsupported"].stderr)
+        # The missing sidecar adds one failure the unsupported one does not.
+        counts = [
+            int(re.search(r"(\d+) check\(s\) failed", results[name].stderr).group(1))
+            for name in ("unsupported", "missing")
+        ]
+        self.assertEqual(counts[1], counts[0] + 1)
 
     def test_invalid_launch_options_fail_before_wine(self):
         cases = [

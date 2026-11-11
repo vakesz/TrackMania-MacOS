@@ -213,9 +213,12 @@ reported without initializing it. These guards serialize commands from this
 launcher; external Wine invocations do not participate in its operation lock.
 
 - If settings need changing, close the game and open **TrackMania Settings**.
-- If a macOS update makes x87sidecar's compatibility probe fail, rebuild or use
-  `TMNF_X87=off make play` temporarily. Stock Rosetta can be substantially
-  slower on this game's math workload.
+- If x87sidecar's compatibility probe fails, the game still runs on stock
+  Rosetta, which can be substantially slower on this game's math workload.
+  x87sidecar supports Rosetta from macOS 15.4 on; macOS 14 through 15.3 ship
+  an older Rosetta it can't hook, so update macOS. If a newer macOS update
+  breaks the probe, rebuild against a newer x87sidecar. `TMNF_X87=off` skips
+  the sidecar entirely.
 - If sound is missing, check the game's audio settings and macOS output device.
   Run `./src/shell/tools/probes/smoke-audio.sh` from a source checkout to test Wine playback.
 - If textures are wrong after installing other DLLs, rerun `make install`.

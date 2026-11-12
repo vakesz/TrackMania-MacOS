@@ -30,25 +30,43 @@ INSTALLERS = frozenset(ONLINE_INSTALLERS + ("steam-copy", "disk-image"))
 ENGINES = frozenset({"tmf-classic", "maniaplanet", "turbo"})
 STATUSES = frozenset({"supported", "provisional"})
 
-_STRING_FIELDS = (
-    "id",
-    "name",
-    "short_name",
-    "engine",
-    "installer",
-    "status",
-    "prefix_subdir",
-    "prefix_marker",
-    "app_name",
-    "settings_app_name",
-    "bundle_id_game",
-    "bundle_id_settings",
-    "game_dir_name",
-    "game_exe",
-    "launcher_exe",
-    "user_subdir",
+
+class _Field(typing.NamedTuple):
+    """One registry key: its value kind and whether the entry must carry it."""
+
+    name: str
+    kind: str
+    required: bool
+
+
+# Every key a title entry may carry, in Title order. Unknown keys are rejected,
+# so a misspelt field fails loudly instead of silently taking its default.
+_FIELDS: typing.Tuple[_Field, ...] = (
+    _Field("id", "text", True),
+    _Field("name", "text", True),
+    _Field("short_name", "name", True),
+    _Field("engine", "text", True),
+    _Field("installer", "text", True),
+    _Field("status", "text", True),
+    _Field("prefix_subdir", "subpath", True),
+    _Field("prefix_marker", "text", True),
+    _Field("app_name", "name", True),
+    _Field("settings_app_name", "name", True),
+    _Field("bundle_id_game", "bundle", True),
+    _Field("bundle_id_settings", "bundle", True),
+    _Field("game_dir_name", "name", True),
+    _Field("game_exe", "name", True),
+    _Field("launcher_exe", "name", True),
+    _Field("user_subdir", "name", True),
+    _Field("save_dirs", "names", True),
+    _Field("needs_directx", "bool", True),
+    _Field("needs_tmloader", "bool", True),
+    _Field("source_url", "url", False),
+    _Field("source_sha256", "sha", False),
+    _Field("source_size", "size", False),
+    _Field("requires_serial", "bool", True),
+    _Field("notes", "notes", False),
 )
-_SWITCH_FIELDS = ("needs_directx", "needs_tmloader", "requires_serial")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _BUNDLE_ID = re.compile(r"^[A-Za-z0-9.-]+$")
 _URL = re.compile(r"^https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%\[\]-]+$")
@@ -132,90 +150,92 @@ def _plain_name(value: str) -> bool:
     )
 
 
+def _check_value(field: _Field, value: object, path: pathlib.Path) -> object:
+    """The validated value of one present key, or None for an empty optional one."""
+    kind, name = field.kind, field.name
+    if kind == "bool":
+        if not isinstance(value, bool):
+            raise RegistryError(f"{path}: {name} must be true or false")
+        return value
+    if kind == "notes":
+        if not isinstance(value, str):
+            raise RegistryError(f"{path}: {name} must be text")
+        return value
+    if kind == "names":
+        if (
+            not isinstance(value, list)
+            or not value
+            or not all(isinstance(item, str) and _plain_name(item) for item in value)
+        ):
+            raise RegistryError(f"{path}: {name} must be a list of plain folder names")
+        return tuple(value)
+    if kind == "size":
+        if value is None:
+            return None
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise RegistryError(f"{path}: {name} must be a positive integer or null")
+        return value
+    if not field.required and value in (None, ""):
+        return None
+    if not isinstance(value, str) or not value:
+        raise RegistryError(f"{path}: {name} must be non-empty text")
+    if kind == "name" and not _plain_name(value):
+        raise RegistryError(f"{path}: unsafe name field {name}")
+    if kind == "subpath" and not all(_plain_name(part) for part in value.split("/")):
+        raise RegistryError(f"{path}: unsafe {name}")
+    if kind == "bundle" and not _BUNDLE_ID.match(value):
+        raise RegistryError(f"{path}: {name} must match [A-Za-z0-9.-]+")
+    if kind == "url" and not _URL.match(value):
+        raise RegistryError(f"{path}: {name} must be an absolute http(s) URL")
+    if kind == "sha" and not _SHA256.match(value):
+        raise RegistryError(f"{path}: {name} must be a lowercase hex SHA-256")
+    return value
+
+
 def _validate(data: object, path: pathlib.Path) -> Title:
     if not isinstance(data, dict):
         raise RegistryError(f"{path}: registry entry must be a JSON object")
-    missing = [
-        field
-        for field in _STRING_FIELDS
-        if not isinstance(data.get(field), str) or not data.get(field)
-    ]
+    known = {field.name for field in _FIELDS}
+    unknown = sorted(str(key) for key in data if key not in known)
+    if unknown:
+        raise RegistryError(f"{path}: unknown fields: {', '.join(unknown)}")
+    missing = [field.name for field in _FIELDS if field.required and field.name not in data]
     if missing:
-        raise RegistryError(f"{path}: missing or empty text fields: {', '.join(missing)}")
-    for field in _SWITCH_FIELDS:
-        if not isinstance(data.get(field), bool):
-            raise RegistryError(f"{path}: {field} must be true or false")
-    if data["id"] != path.stem:
+        raise RegistryError(f"{path}: missing fields: {', '.join(missing)}")
+    values: typing.Dict[str, object] = {
+        field.name: _check_value(field, data[field.name], path)
+        if field.name in data
+        else ("" if field.kind == "notes" else None)
+        for field in _FIELDS
+    }
+
+    if values["id"] != path.stem:
         raise RegistryError(f"{path}: id does not match the file name")
-    if data["engine"] not in ENGINES:
-        raise RegistryError(f"{path}: unknown engine {data['engine']}")
-    if data["installer"] not in INSTALLERS:
-        raise RegistryError(f"{path}: unknown installer kind {data['installer']}")
-    if data["status"] not in STATUSES:
-        raise RegistryError(f"{path}: unknown status {data['status']}")
-    if not str(data["prefix_marker"]).endswith(":1"):
+    if values["engine"] not in ENGINES:
+        raise RegistryError(f"{path}: unknown engine {values['engine']}")
+    if values["installer"] not in INSTALLERS:
+        raise RegistryError(f"{path}: unknown installer kind {values['installer']}")
+    if values["status"] not in STATUSES:
+        raise RegistryError(f"{path}: unknown status {values['status']}")
+    if not str(values["prefix_marker"]).endswith(":1"):
         raise RegistryError(f"{path}: prefix_marker must end with ':1'")
-    if not str(data["app_name"]).endswith(".app"):
+    if not str(values["app_name"]).endswith(".app"):
         raise RegistryError(f"{path}: app_name must end with '.app'")
-    for field in (
-        "short_name",
-        "game_exe",
-        "launcher_exe",
-        "game_dir_name",
-        "app_name",
-        "settings_app_name",
-        "user_subdir",
-    ):
-        if not _plain_name(data[field]):
-            raise RegistryError(f"{path}: unsafe name field {field}")
-    if not all(_plain_name(part) for part in data["prefix_subdir"].split("/")):
-        raise RegistryError(f"{path}: unsafe prefix_subdir")
-    for field in ("bundle_id_game", "bundle_id_settings"):
-        if not _BUNDLE_ID.match(data[field]):
-            raise RegistryError(f"{path}: {field} must match [A-Za-z0-9.-]+")
-    save_dirs = data.get("save_dirs")
-    if (
-        not isinstance(save_dirs, list)
-        or not save_dirs
-        or not all(isinstance(item, str) and _plain_name(item) for item in save_dirs)
-    ):
-        raise RegistryError(f"{path}: save_dirs must be a list of plain folder names")
-    if data["user_subdir"] not in save_dirs:
+    if values["user_subdir"] not in typing.cast(tuple, values["save_dirs"]):
         raise RegistryError(f"{path}: user_subdir must be one of save_dirs")
 
-    url = data.get("source_url")
-    if isinstance(url, str) and url:
-        if not _URL.match(url):
-            raise RegistryError(f"{path}: source_url must be an absolute http(s) URL")
-    else:
-        url = None
-    sha = data.get("source_sha256")
-    if isinstance(sha, str) and sha and not _SHA256.match(sha):
-        raise RegistryError(f"{path}: source_sha256 must be a lowercase hex SHA-256")
-    sha = sha or None
-    size = data.get("source_size")
-    size = size if isinstance(size, int) and not isinstance(size, bool) and size > 0 else None
-    if url and url.startswith("http://") and not sha:
+    url, sha, size = values["source_url"], values["source_sha256"], values["source_size"]
+    if isinstance(url, str) and url.startswith("http://") and not sha:
         raise RegistryError(f"{path}: an http:// source_url requires source_sha256")
-    if data["installer"] in ONLINE_INSTALLERS:
+    if values["installer"] in ONLINE_INSTALLERS:
         if not url or not sha:
             raise RegistryError(
                 f"{path}: online installer kinds require source_url and source_sha256"
             )
     elif url or sha or size:
-        raise RegistryError(f"{path}: installer kind {data['installer']} must not carry pins")
+        raise RegistryError(f"{path}: installer kind {values['installer']} must not carry pins")
 
-    return Title(
-        save_dirs=tuple(save_dirs),
-        source_url=url,
-        source_sha256=sha,
-        source_size=size,
-        requires_serial=bool(data.get("requires_serial")),
-        notes=str(data.get("notes", "")),
-        **{field: data[field] for field in _STRING_FIELDS},
-        needs_directx=data["needs_directx"],
-        needs_tmloader=data["needs_tmloader"],
-    )
+    return Title(**values)  # type: ignore[arg-type]  # each value checked by kind above
 
 
 def load_registry(titles_dir_path=None):

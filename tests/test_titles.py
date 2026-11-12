@@ -1,66 +1,33 @@
 import json
-import re
 import subprocess
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TITLES = ROOT / "config/titles"
-REQUIRED = {
-    "id",
-    "name",
-    "engine",
-    "installer",
-    "status",
-    "prefix_subdir",
-    "prefix_marker",
-    "app_name",
-    "settings_app_name",
-    "game_exe",
-    "launcher_exe",
-    "user_subdir",
-    "save_dirs",
-    "needs_directx",
-    "needs_tmloader",
-}
-ENGINES = {"tmf-classic", "maniaplanet", "turbo"}
-INSTALLERS = {"online", "online-retail", "online-trial", "steam-copy", "disk-image"}
-DOWNLOADERS = {"online", "online-retail", "online-trial"}
-SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def load_registry():
+    import sys
+
+    sys.path.insert(0, str(ROOT / "src/python"))
+    from tmnf.hub import registry
+
+    return registry
 
 
 class TitleRegistryTests(unittest.TestCase):
     def test_allTitle_json_valid(self):
-        ids = set()
-        for path in sorted(TITLES.glob("*.json")):
-            with self.subTest(title=path.name):
-                data = json.loads(path.read_text())
-                self.assertTrue(REQUIRED <= set(data), data)
-                self.assertEqual(path.stem, data["id"])
-                self.assertIn(data["engine"], ENGINES)
-                self.assertIn(data["installer"], INSTALLERS)
-                self.assertIn(data["status"], ("supported", "provisional"))
-                self.assertTrue(data["prefix_marker"].endswith(":1"))
-                self.assertEqual(data["prefix_marker"], data["id"] + ":1")
-                self.assertTrue(data["app_name"].endswith(".app"))
-                self.assertTrue(data["save_dirs"], data)
-                self.assertIn(data["user_subdir"], data["save_dirs"])
-                self.assertTrue(
-                    all(
-                        isinstance(value, bool)
-                        for value in (data["needs_directx"], data["needs_tmloader"])
-                    )
-                )
-                if data["installer"] in DOWNLOADERS:
-                    self.assertTrue(data["source_url"].startswith("http"), data)
-                    self.assertRegex(data["source_sha256"], SHA256)
-                    size = data.get("source_size")
-                    self.assertTrue(size is None or size > 0, size)
-                else:
-                    for pin in ("source_url", "source_sha256", "source_size"):
-                        self.assertFalse(data.get(pin), (pin, data.get(pin)))
-                ids.add(data["id"])
-        self.assertEqual(ids, {"tmnf", "tmu", "tm-original", "tm-canyon", "tm-turbo"})
+        # The registry module is the only schema; this test does not restate it.
+        registry = load_registry()
+        titles = registry.load_all(TITLES)
+        self.assertEqual(
+            [title.id for title in titles], [path.stem for path in sorted(TITLES.glob("*.json"))]
+        )
+        # The one deliberate inventory: adding or removing a title is a visible change.
+        self.assertEqual(
+            {title.id for title in titles}, {"tmnf", "tmu", "tm-original", "tm-canyon", "tm-turbo"}
+        )
 
     def test_prefix_subdirs_are_unique(self):
         subdirs = {}
@@ -143,15 +110,6 @@ class TitleRegistryTests(unittest.TestCase):
                 (Path(directory) / "p/config/pins.json").read_text(),
                 (ROOT / "config/pins.json").read_text(),
             )
-
-    def test_installer_kinds_match_hub_registry(self):
-        sys_path_added = ROOT / "src/python"
-        import sys
-
-        sys.path.insert(0, str(sys_path_added))
-        from tmnf.hub import registry
-
-        self.assertEqual(registry.INSTALLERS, frozenset(INSTALLERS))
 
     def test_common_sh_title_defaults(self):
         result = subprocess.run(
@@ -339,6 +297,45 @@ class RegistryValidationTests(unittest.TestCase):
 
     def test_shipped_entry_is_valid(self):
         self.validate()
+
+    def test_unknown_fields_are_rejected(self):
+        with self.assertRaisesRegex(self.registry.RegistryError, "unknown fields: user_subdr"):
+            self.validate(user_subdr="TrackMania")
+
+    def test_title_fields_match_schema_table(self):
+        self.assertEqual(
+            self.registry.Title._fields, tuple(field.name for field in self.registry._FIELDS)
+        )
+
+    def test_optional_fields_take_their_defaults(self):
+        data = {
+            key: value
+            for key, value in self.data.items()
+            if key not in ("notes", "source_size", "source_url", "source_sha256")
+        }
+        data["installer"] = "steam-copy"
+        title = self.registry._validate(data, Path("/x/tmu.json"))
+        self.assertEqual(
+            (title.notes, title.source_url, title.source_sha256, title.source_size),
+            ("", None, None, None),
+        )
+
+    def test_value_types_are_checked(self):
+        for field, value in (
+            ("needs_tmloader", "yes"),
+            ("name", ""),
+            ("name", 5),
+            ("notes", 5),
+            ("source_size", -1),
+            ("source_size", True),
+            ("source_sha256", 5),
+            ("save_dirs", "TrackMania"),
+        ):
+            with (
+                self.subTest(field=field, value=value),
+                self.assertRaises(self.registry.RegistryError),
+            ):
+                self.validate(**{field: value})
 
     def test_unsafe_names_are_rejected(self):
         bad = [".", "..", "~root", "a\\b", "a\nb", "a\x00b", "a\x7fb", "a/b"]

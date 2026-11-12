@@ -15,7 +15,7 @@ install_openal() (
   esac
   if test "$TMNF_OPENAL" = creative; then
     if test "$current" = soft; then
-      verify_file "$GAME_OPENAL_CREATIVE" "$CREATIVE_OPENAL_SHA256" \
+      verify_file "$GAME_OPENAL_CREATIVE" "$TMNF_TITLE_CREATIVE_OPENAL_SHA256" \
         || die "Cannot restore Creative OpenAL: $GAME_OPENAL_CREATIVE is missing. Reinstall the game with update."
       cp "$GAME_OPENAL_CREATIVE" "$GAME_OPENAL"
       rm -f "$GAME_OPENAL_COPYING"

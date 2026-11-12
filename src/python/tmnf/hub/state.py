@@ -15,6 +15,7 @@ import typing
 from . import paths as hub_paths
 from . import registry
 from tmnf.guard import operation_guard
+from tmnf.install import modloader
 
 __all__ = ["probe", "session_active"]
 
@@ -61,7 +62,7 @@ def _pin_ok(path: pathlib.Path, expected: str) -> bool:
 
 
 def _loader_dir(prefix: pathlib.Path) -> pathlib.Path:
-    return prefix / "drive_c" / "Program Files" / "TMLoader"
+    return prefix / modloader.PREFIX_DIR
 
 
 def _runtime_ready(wine: typing.Optional[pathlib.Path]) -> Probe:
@@ -120,47 +121,10 @@ def _renderer_ready(prefix: pathlib.Path, wine: typing.Optional[pathlib.Path]) -
 def _competition_patch_ready(prefix: pathlib.Path) -> Probe:
     loader = _loader_dir(prefix)
     pin = registry.pins()
-    patches = (
-        (loader / "TMLoader.exe", pin["tmloader_exe_sha256"], "ModLoader executable"),
-        (
-            loader
-            / "database"
-            / "TmForever"
-            / "products"
-            / "Competition Patch"
-            / pin["tmcomp_version"]
-            / "TMCompPatch.dll",
-            pin["tmcomp_dll_sha256"],
-            f"Competition Patch {pin['tmcomp_version']}",
-        ),
-        (
-            loader
-            / "database"
-            / "TmForever"
-            / "products"
-            / "TmForever"
-            / pin["tmloader_game_version"]
-            / "TmForever.exe",
-            pin["tmloader_game_sha256"],
-            "ModLoader game runtime",
-        ),
-        (
-            loader
-            / "database"
-            / "TmForever"
-            / "products"
-            / "CoreMod"
-            / pin["tmloader_coremod_version"]
-            / "CoreMod.dll",
-            pin["tmloader_coremod_sha256"],
-            "CoreMod",
-        ),
-    )
-    for path, expected, label in patches:
-        if not _pin_ok(path, expected):
-            return Probe(False, f"{label} is missing or does not match the pinned release")
-    settings = loader / "database" / "TmForever" / "products" / "TmForever" / "settings.yaml"
-    profile = loader / "database" / "TmForever" / "profiles" / "competition.yaml"
+    for item in modloader.pinned_files(pin):
+        if not _pin_ok(loader / item.relpath, item.sha256):
+            return Probe(False, f"{item.label} is missing or does not match the pinned release")
+    settings, profile = (loader / relpath for relpath in modloader.config_files())
     if not (
         settings.is_file()
         and settings.stat().st_size
@@ -180,7 +144,7 @@ def _competition_patch_ready(prefix: pathlib.Path) -> Probe:
 def _game_ready(title: registry.Title, paths: hub_paths.TitlePaths, prefix: pathlib.Path) -> Probe:
     if not paths.game_exe.is_file():
         return Probe(False, f"{title.name} is not installed yet")
-    if title.needs_tmloader:
+    if "competition-patch" in title.components:
         return _competition_patch_ready(prefix)
     if title.requires_serial:
         return Probe(True, "Installed; the game asks for the serial key at first launch")

@@ -245,7 +245,7 @@ class TrackerTests(unittest.TestCase):
         return mock.patch.object(monitor.subprocess, "run", side_effect=run)
 
     def ticks(self, count, ps):
-        game = monitor.GameTracker(libproc=None, clock=lambda: self.now)
+        game = monitor.GameTracker("TmForever.exe", libproc=None, clock=lambda: self.now)
         front = monitor.FrontTracker()
         seen = []
         with (
@@ -257,6 +257,13 @@ class TrackerTests(unittest.TestCase):
                 pid = game.poll()
                 seen.append((pid, front.pid() if pid is not None else None))
         return seen
+
+    def test_game_pid_matches_only_the_given_exe(self):
+        ps = "  100 /sbin/launchd\n 4242 Z:\\Games\\TmForever.exe\n 4343 C:\\MP\\ManiaPlanet.exe -x\n"
+        with self.stub_run(ps):
+            self.assertEqual(monitor.game_pid("ManiaPlanet.exe"), 4343)
+            self.assertEqual(monitor.game_pid("TmForever.exe"), 4242)
+            self.assertIsNone(monitor.game_pid("Tm.orever.exe"))
 
     def test_running_game_costs_one_ps_spawn_over_many_ticks(self):
         seen = self.ticks(30, self.GAME_PS)
@@ -273,7 +280,7 @@ class TrackerTests(unittest.TestCase):
         self.assertNotIn(["lsappinfo", "front"], self.calls)  # no game: foreground is irrelevant
 
     def test_exited_game_is_noticed_at_once_and_rescan_is_throttled(self):
-        game = monitor.GameTracker(libproc=None, clock=lambda: self.now)
+        game = monitor.GameTracker("TmForever.exe", libproc=None, clock=lambda: self.now)
         with (
             self.stub_run(self.GAME_PS),
             mock.patch.object(monitor, "alive", side_effect=lambda _: self.alive),
@@ -288,7 +295,7 @@ class TrackerTests(unittest.TestCase):
 
     def test_reused_pid_is_not_mistaken_for_the_game(self):
         starts = iter([(1, 0), (2, 0)])
-        game = monitor.GameTracker(libproc=object(), clock=lambda: self.now)
+        game = monitor.GameTracker("TmForever.exe", libproc=object(), clock=lambda: self.now)
         with (
             self.stub_run(self.GAME_PS),
             mock.patch.object(monitor, "alive", return_value=True),

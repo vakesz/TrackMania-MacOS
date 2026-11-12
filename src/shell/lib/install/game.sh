@@ -142,21 +142,21 @@ install_game() {
 
   if test -f "$GAME_EXE" && test "${TMNF_REINSTALL:-0}" != "1" \
     && { test ! -f "$installer_log" || grep -Fq 'Installation process succeeded.' "$installer_log"; }; then
-    if verify_file "$GAME_EXE" "$TMNF_GAME_EXE_SHA256"; then
-      say "TMNF $TMNF_GAME_VERSION is already installed at $GAME_DIR"
+    if verify_file "$GAME_EXE" "$TMNF_TITLE_GAME_EXE_SHA256"; then
+      say "$TMNF_TITLE_SHORT_NAME $TMNF_TITLE_GAME_VERSION is already installed at $GAME_DIR"
     else
-      say "TMNF is already installed at $GAME_DIR"
-      warn "The executable differs from the official $TMNF_GAME_VERSION build; run src/shell/cli/tmnf update to replace it."
+      say "$TMNF_TITLE_SHORT_NAME is already installed at $GAME_DIR"
+      warn "The executable differs from the official $TMNF_TITLE_GAME_VERSION build; run src/shell/cli/tmnf update to replace it."
     fi
     return
   fi
 
   download_pinned_installer "$title_id"
   rm -f "$installer_log"
-  run_released_installer "$installer_path" "TrackMania Nations Forever"
-  wait_inno_setup "$TMNF_INSTALLER_PID" "$installer_log" "TrackMania Nations Forever"
-  verify_installed_game "$GAME_EXE" "$TMNF_GAME_EXE_SHA256" "TMNF"
-  say "Installed TMNF $TMNF_GAME_VERSION at $GAME_DIR"
+  run_released_installer "$installer_path" "$TMNF_TITLE_NAME"
+  wait_inno_setup "$TMNF_INSTALLER_PID" "$installer_log" "$TMNF_TITLE_NAME"
+  verify_installed_game "$GAME_EXE" "$TMNF_TITLE_GAME_EXE_SHA256" "$TMNF_TITLE_SHORT_NAME"
+  say "Installed $TMNF_TITLE_SHORT_NAME $TMNF_TITLE_GAME_VERSION at $GAME_DIR"
 }
 
 install_pinned_inno_game() {

@@ -61,9 +61,9 @@ qualified under Wine.
 | TrackMania 2 Canyon (`tm-canyon`) | pinned official ManiaPlanet trial | provisional |
 | Turbo (`tm-turbo`) | existing Steam game folder | provisional |
 
-`config/titles/*.json` is the sole authority for title paths, app names, bundle
-identifiers and prefix markers. The shell reads the registry; Swift only renders
-the machine-readable snapshot.
+`config/titles/*.json` is the sole authority for title paths, app names and
+bundle identifiers; each title's prefix marker is derived from its id. The shell
+reads the registry; Swift only renders the machine-readable snapshot.
 
 ## Retail import
 

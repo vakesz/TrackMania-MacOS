@@ -67,7 +67,7 @@ play_target() {
     debug="${WINEDEBUG:--all,+fps,+timestamp}"
     say "tmnf-run: version=$TMNF_VERSION title=$TMNF_TITLE macos=$(sw_vers -productVersion 2>/dev/null) model=$(sysctl -n hw.model 2>/dev/null) x87=$TMNF_X87 audio=$TMNF_AUDIO renderer=$TMNF_RENDERER target=${watch##*/}"
     without_operation_lock tmnf_python -m tmnf.session.monitor --parent "$$" --prefix "$TMNF_PREFIX" \
-      --wine "$wine_bin" --cache "$TMNF_CACHE" &
+      --wine "$wine_bin" --cache "$TMNF_CACHE" --game-exe "$TMNF_TITLE_GAME_EXE" &
   fi
   cd "$GAME_DIR" || die "Cannot enter game directory: $GAME_DIR"
   # Keep the operation descriptor in the host supervisor. Its child processes
@@ -100,12 +100,12 @@ install_d9vk() {
 }
 
 play_game() {
-  if test "$TMNF_TITLE_NEEDS_TMLOADER" != true; then
+  if ! title_has competition-patch; then
     play_vanilla "$@"
     return
   fi
   competition_patch_is_ready || die "Competition Patch is missing, outdated, or unconfigured. Run src/shell/cli/install.sh."
-  play_target "$TMLOADER_EXE" "$TMLOADER_GAME_EXE" run TmForever competition "$@"
+  play_target "$TMLOADER_EXE" "$TMLOADER_GAME_EXE" run "$TMLOADER_PROGRAM_ID" "$TMLOADER_PROFILE" "$@"
 }
 
 play_vanilla() {

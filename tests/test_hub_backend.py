@@ -50,7 +50,10 @@ class HubBackendTests(unittest.TestCase):
             snapshot = json.loads(result.stdout)
             self.assertEqual(snapshot["schema"], 2)
             titles = {title["id"]: title for title in snapshot["titles"]}
-            self.assertEqual(set(titles), {"tmnf", "tmu", "tm-original", "tm-canyon", "tm-turbo"})
+            # The shipped JSON files, not the registry the snapshot itself reads.
+            self.assertEqual(
+                set(titles), {path.stem for path in (ROOT / "config/titles").glob("*.json")}
+            )
             canyon = titles["tm-canyon"]
             self.assertEqual(canyon["state"]["game"]["ready"], True)
             self.assertEqual(canyon["kind"], "online-trial")

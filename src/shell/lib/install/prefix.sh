@@ -3,8 +3,11 @@
 
 # Seed the runtime's default graphics settings into the folder this title's game
 # reads (its UserSubDir). An existing file or link is the user's and stays.
+# The file is in the Forever engine's format, so only titles with the
+# system-config component get it.
 seed_system_config() {
   local config_dir
+  title_has system-config || return 0
   test -n "$TMNF_TITLE_USER_SUBDIR" || die "The title registry has no user_subdir."
   config_dir="${TMNF_USERDATA}/${TMNF_TITLE_USER_SUBDIR}/Config"
   mkdir -p "$config_dir"
@@ -28,7 +31,8 @@ initialize_prefix() {
       WINEDLLOVERRIDES='mscoree,mshtml=' run_wine wineboot --update
       # Repair seeds only when the game's Documents is this UserData; a legacy
       # Documents folder inside the prefix is left alone.
-      if tmnf_python -m tmnf.guard.managed_paths documents-linked "$TMNF_PREFIX" "$TMNF_USERDATA" 2>/dev/null; then
+      if title_has system-config \
+        && tmnf_python -m tmnf.guard.managed_paths documents-linked "$TMNF_PREFIX" "$TMNF_USERDATA" 2>/dev/null; then
         seed_system_config
       fi
       say "Prefix is up to date; nothing to repair."

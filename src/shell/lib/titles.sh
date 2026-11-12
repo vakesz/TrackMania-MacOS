@@ -14,6 +14,19 @@ tmnf_title_is_known() {
 # of TITLE plus the release pins (DIRECTX_*, TMLOADER_*, TMCOMP_*, OPENAL_SOFT_*). Without a
 # title only the pins are defined. The registry validates every value and
 # shell-quotes it, so evaluating the output is safe.
+# title_has COMPONENT — true when the loaded title has this install component.
+# The registry derives the list (Title.components); an unknown name is a bug.
+title_has() {
+  case "$1" in
+    competition-patch|openal|system-config) ;;
+    *) die "Unknown title component: $1" ;;
+  esac
+  case " ${TMNF_TITLE_COMPONENTS-} " in
+    *" $1 "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 tmnf_load_title() {
   local assignments
   assignments="$(TMNF_TITLES_DIR="$TMNF_TITLES_DIR" tmnf_python -m tmnf.hub.registry export "$@")" \

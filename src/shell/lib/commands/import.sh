@@ -15,8 +15,9 @@ import_source() {
 
   validate_launch_options
   test -n "${source:-}" || die "Usage: tmnf import <disk-image|.iso|.dmg|setup.exe|steam-game-folder>"
-  case "$TMNF_TITLE" in
-    tmnf) die "TMNF uses the free download flow (make install); import is for retail titles." ;;
+  case "$TMNF_TITLE_INSTALLER" in
+    online|online-retail|online-trial)
+      die "$TMNF_TITLE_NAME installs from its official download (src/shell/cli/install.sh); import is for Steam copies and retail disk images." ;;
   esac
   require_owned_managed_layout
 

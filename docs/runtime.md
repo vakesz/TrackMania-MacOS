@@ -159,8 +159,9 @@ the prefix user's `AppData/Roaming/alsoft.ini`.
 
 `TMNF_OPENAL=creative make install` restores Creative's library; later installs
 and updates keep that choice until `TMNF_OPENAL=soft make install`. A different
-`OpenAL32.dll` placed there by the user is left unchanged. Only TMNF's own
-library is replaced; other titles keep the OpenAL they ship.
+`OpenAL32.dll` placed there by the user is left unchanged. Only a library
+whose hash the title registry pins (`creative_openal_sha256`, today TMNF's) is
+replaced; other titles keep the OpenAL they ship.
 
 The original graphics launcher receives a known Nvidia PCI identity (GeForce
 8800 GT) for that executable only. The wined3d renderers read it from the

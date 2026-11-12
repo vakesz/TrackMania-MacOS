@@ -16,27 +16,27 @@ update_game() {
   esac
 
   local needs_patch=false
-  if test "$TMNF_TITLE_NEEDS_TMLOADER" = true; then
+  if title_has competition-patch; then
     needs_patch=true
   fi
   if test -f "$GAME_EXE"; then
     ensure_title_icon || warn "Could not extract the game icon for the hub."
   fi
-  if verify_file "$GAME_EXE" "$TMNF_GAME_EXE_SHA256" \
+  if verify_file "$GAME_EXE" "$TMNF_TITLE_GAME_EXE_SHA256" \
     && { test "$needs_patch" = false || competition_patch_is_ready; } \
     && directx_is_current && openal_is_current; then
     if test "$needs_patch" = true; then
-      say "$label $TMNF_GAME_VERSION, DirectX $DIRECTX_VERSION, Competition Patch $TMCOMP_VERSION and OpenAL are current."
+      say "$label $TMNF_TITLE_GAME_VERSION, DirectX $DIRECTX_VERSION, Competition Patch $TMCOMP_VERSION and OpenAL are current."
     else
-      say "$label $TMNF_GAME_VERSION and DirectX $DIRECTX_VERSION are current."
+      say "$label $TMNF_TITLE_GAME_VERSION and DirectX $DIRECTX_VERSION are current."
     fi
     return
   fi
 
-  if verify_file "$GAME_EXE" "$TMNF_GAME_EXE_SHA256"; then
+  if verify_file "$GAME_EXE" "$TMNF_TITLE_GAME_EXE_SHA256"; then
     exec "${TMNF_PROJECT_DIR}/src/shell/cli/install.sh"
   fi
-  say "Installing the official $label $TMNF_GAME_VERSION release and Competition Patch."
+  say "Installing the official $label $TMNF_TITLE_GAME_VERSION release and Competition Patch."
   TMNF_REINSTALL=1 exec "${TMNF_PROJECT_DIR}/src/shell/cli/install.sh"
 }
 
@@ -46,18 +46,13 @@ doctor() {
   local wine_version=""
   local wow64_version=""
   local sidecar="${ROSETTA_X87_PATH:-$TMNF_SIDECAR}"
-  local needs_patch title_name title_short game_expected_sha
+  local title_name title_short game_expected_sha
 
   validate_launch_options
   title_name="$TMNF_TITLE_NAME"
   title_short="$TMNF_TITLE_SHORT_NAME"
-  # TMNF_GAME_EXE_SHA256 pins the TMNF release only; other titles have no
-  # executable pin yet and get presence coverage instead.
-  game_expected_sha=""
-  if test "$TMNF_TITLE" = tmnf; then
-    game_expected_sha="${TMNF_GAME_EXE_SHA256:-}"
-  fi
-  needs_patch="$TMNF_TITLE_NEEDS_TMLOADER"
+  # Titles without a registry exe pin get presence coverage instead.
+  game_expected_sha="$TMNF_TITLE_GAME_EXE_SHA256"
 
   if test -f "${TMNF_PREFIX}/system.reg" && require_owned_prefix >/dev/null 2>&1; then
     if test "${TMNF_OPERATION_FD+x}" = x; then
@@ -84,7 +79,7 @@ doctor() {
   say "Title: $TMNF_TITLE ($title_name)"
   say "macOS: $(sw_vers -productVersion 2>/dev/null || echo unknown) ($(uname -m))"
   say "Audio on next launch: $TMNF_AUDIO (TMNF_AUDIO=off disables sound)"
-  if openal_applies && test -f "$GAME_EXE"; then
+  if title_has openal && test -f "$GAME_EXE"; then
     case "$(game_openal)" in
       soft) say "OpenAL: OpenAL Soft $OPENAL_SOFT_VERSION" ;;
       creative) say "OpenAL: the game's Creative OpenAL" ;;
@@ -157,7 +152,7 @@ doctor() {
     failures=$((failures + 1))
   fi
 
-  if test "$needs_patch" = true; then
+  if title_has competition-patch; then
     if competition_patch_is_ready; then
       say "Competition Patch: $TMCOMP_VERSION"
       say "ModLoader bundle: $TMLOADER_BUNDLE_VERSION"

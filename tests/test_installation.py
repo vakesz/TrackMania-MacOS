@@ -25,6 +25,14 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_D3DX9 = ("d3dx9_30", "d3dx9_31", "d3dx9_43")
 
 
+def set_title_pins(project, title_id, **pins):
+    """Point a copied project's registry entry at fixture payloads."""
+    path = Path(project) / "config/titles" / "{}.json".format(title_id)
+    data = json.loads(path.read_text())
+    data.update(pins)
+    path.write_text(json.dumps(data))
+
+
 class InstallationTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="tmnf-installation-")
@@ -123,14 +131,12 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         game, loader, patch, target, coremod = map(Path, result.stdout.splitlines())
-        common = project / "src/shell/lib/common.sh"
-        source = common.read_text()
         pins_file = project / "config/pins.json"
         pins = json.loads(pins_file.read_text())
         # Only this copy accepts fake payloads. Pin the base game too so update
         # repairs the profile without downloading the official installer.
         for constant, path in (
-            ("TMNF_GAME_EXE_SHA256", game),
+            ("TMNF_TITLE_GAME_EXE_SHA256", game),
             ("TMLOADER_EXE_SHA256", loader),
             ("TMCOMP_DLL_SHA256", patch),
             ("TMLOADER_GAME_SHA256", target),
@@ -140,15 +146,7 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
             path.write_text("fake pinned " + constant)
             if constant in pins_key_by_constant:
                 pins[pins_key_by_constant[constant]] = digest(path)
-                continue
-            source, count = re.subn(
-                r"^" + constant + r'="[0-9a-f]{64}"$',
-                '{}="{}"'.format(constant, digest(path)),
-                source,
-                flags=re.MULTILINE,
-            )
-            self.assertEqual(count, 1)
-        common.write_text(source)
+        set_title_pins(project, "tmnf", game_exe_sha256=digest(game))
         pins_file.write_text(json.dumps(pins))
         (game.parent / "TmForeverLauncher.exe").touch()
         (self.prefix / ".tmnf-prefix").write_text("tmnf:1\n")
@@ -480,15 +478,7 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         pins = json.loads(pins_file.read_text())
         pins.update(openal_soft_sha256=digest(archive), openal_soft_dll_sha256=digest(dll))
         pins_file.write_text(json.dumps(pins))
-        common = project / "src/shell/lib/common.sh"
-        source, count = re.subn(
-            r'^CREATIVE_OPENAL_SHA256="[0-9a-f]{64}"$',
-            'CREATIVE_OPENAL_SHA256="{}"'.format(digest(game_openal)),
-            common.read_text(),
-            flags=re.MULTILINE,
-        )
-        self.assertEqual(count, 1)
-        common.write_text(source)
+        set_title_pins(project, "tmnf", creative_openal_sha256=digest(game_openal))
         return project, game_openal
 
     def test_openal_soft_replaces_and_restores_creative(self):
@@ -539,10 +529,10 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         self.assertEqual(result.stdout.splitlines()[-1], "soft")
         self.assertFalse(self.log.exists())  # no Wine process is needed
 
-    def test_openal_is_tmnf_only(self):
+    def test_openal_needs_a_creative_pin(self):
         # Other titles ship their own OpenAL32.dll, whose checksum is not pinned.
         result = self.shell(
-            ". ./src/shell/lib/common.sh; openal_is_current; ! openal_applies",
+            ". ./src/shell/lib/common.sh; openal_is_current; ! title_has openal",
             TMNF_TITLE="tmu",
             TMNF_OPENAL="creative",
         )
@@ -659,6 +649,21 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(config.is_symlink())
         self.assertFalse(elsewhere.exists())
+
+    def test_seed_system_config_is_only_for_forever_titles(self):
+        # The runtime's file is in TmForever's format; other engines must not get it.
+        for title in ("tm-canyon", "tm-turbo", "tm-original"):
+            with self.subTest(title=title):
+                userdata = self.home / ("userdata-" + title)
+                result = self.shell(
+                    self.seed_command(), TMNF_TITLE=title, TMNF_USERDATA=str(userdata)
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse(userdata.exists())
+        userdata = self.home / "userdata-tmnf"
+        result = self.shell(self.seed_command(), TMNF_TITLE="tmnf", TMNF_USERDATA=str(userdata))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((userdata / "TmForever/Config/Default.SystemConfig.Gbx").is_file())
 
     def test_seed_system_config_refuses_an_empty_user_subdir(self):
         result = self.shell(

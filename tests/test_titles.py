@@ -6,61 +6,29 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TITLES = ROOT / "config/titles"
-REQUIRED = {
-    "id",
-    "name",
-    "engine",
-    "installer",
-    "status",
-    "prefix_subdir",
-    "prefix_marker",
-    "app_name",
-    "settings_app_name",
-    "game_exe",
-    "launcher_exe",
-    "user_subdir",
-    "save_dirs",
-    "needs_directx",
-    "needs_tmloader",
-}
-ENGINES = {"tmf-classic", "maniaplanet", "turbo"}
-INSTALLERS = {"online", "online-retail", "online-trial", "steam-copy", "disk-image"}
-DOWNLOADERS = {"online", "online-retail", "online-trial"}
-SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def load_registry():
+    import sys
+
+    sys.path.insert(0, str(ROOT / "src/python"))
+    from tmnf.hub import registry
+
+    return registry
 
 
 class TitleRegistryTests(unittest.TestCase):
     def test_allTitle_json_valid(self):
-        ids = set()
-        for path in sorted(TITLES.glob("*.json")):
-            with self.subTest(title=path.name):
-                data = json.loads(path.read_text())
-                self.assertTrue(REQUIRED <= set(data), data)
-                self.assertEqual(path.stem, data["id"])
-                self.assertIn(data["engine"], ENGINES)
-                self.assertIn(data["installer"], INSTALLERS)
-                self.assertIn(data["status"], ("supported", "provisional"))
-                self.assertTrue(data["prefix_marker"].endswith(":1"))
-                self.assertEqual(data["prefix_marker"], data["id"] + ":1")
-                self.assertTrue(data["app_name"].endswith(".app"))
-                self.assertTrue(data["save_dirs"], data)
-                self.assertIn(data["user_subdir"], data["save_dirs"])
-                self.assertTrue(
-                    all(
-                        isinstance(value, bool)
-                        for value in (data["needs_directx"], data["needs_tmloader"])
-                    )
-                )
-                if data["installer"] in DOWNLOADERS:
-                    self.assertTrue(data["source_url"].startswith("http"), data)
-                    self.assertRegex(data["source_sha256"], SHA256)
-                    size = data.get("source_size")
-                    self.assertTrue(size is None or size > 0, size)
-                else:
-                    for pin in ("source_url", "source_sha256", "source_size"):
-                        self.assertFalse(data.get(pin), (pin, data.get(pin)))
-                ids.add(data["id"])
-        self.assertEqual(ids, {"tmnf", "tmu", "tm-original", "tm-canyon", "tm-turbo"})
+        # The registry module is the only schema; this test does not restate it.
+        registry = load_registry()
+        titles = registry.load_all(TITLES)
+        self.assertEqual(
+            [title.id for title in titles], [path.stem for path in sorted(TITLES.glob("*.json"))]
+        )
+        # The one deliberate inventory: adding or removing a title is a visible change.
+        self.assertEqual(
+            {title.id for title in titles}, {"tmnf", "tmu", "tm-original", "tm-canyon", "tm-turbo"}
+        )
 
     def test_prefix_subdirs_are_unique(self):
         subdirs = {}
@@ -103,6 +71,56 @@ class TitleRegistryTests(unittest.TestCase):
             ):
                 self.assertNotIn(literal, (ROOT / source).read_text(), (source, literal))
 
+    def test_modloader_layout_is_unchanged_and_defined_once(self):
+        """The shell's ModLoader paths come from tmnf.install.modloader, byte for byte."""
+        pins = load_registry().pins()
+        result = subprocess.run(
+            [
+                "/bin/bash",
+                "-euc",
+                ". src/shell/lib/common.sh; "
+                'printf "%s\\n" "$TMLOADER_DIR" "$TMLOADER_EXE" "$TMCOMP_DLL" '
+                '"$TMLOADER_GAME_EXE" "$TMLOADER_COREMOD_DLL" "$TMLOADER_SETTINGS" '
+                '"$TMLOADER_PROFILE_FILE" "$TMLOADER_PROGRAM_ID" "$TMLOADER_PROFILE"',
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=15,
+            env={"PATH": "/usr/bin:/bin", "HOME": "/tmp/h", "TMNF_PREFIX": "/tmp/p"},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        loader = "/tmp/p/drive_c/Program Files/TMLoader"
+        database = loader + "/database/TmForever"
+        self.assertEqual(
+            result.stdout.splitlines(),
+            [
+                loader,
+                loader + "/TMLoader.exe",
+                "{}/products/Competition Patch/{}/TMCompPatch.dll".format(
+                    database, pins["tmcomp_version"]
+                ),
+                "{}/products/TmForever/{}/TmForever.exe".format(
+                    database, pins["tmloader_game_version"]
+                ),
+                "{}/products/CoreMod/{}/CoreMod.dll".format(
+                    database, pins["tmloader_coremod_version"]
+                ),
+                database + "/products/TmForever/settings.yaml",
+                database + "/profiles/competition.yaml",
+                "TmForever",
+                "competition",
+            ],
+        )
+        for source in (
+            "src/shell/lib/common.sh",
+            "src/shell/lib/install/patch.sh",
+            "src/shell/lib/commands/play.sh",
+            "src/python/tmnf/hub/state.py",
+        ):
+            self.assertNotIn("database/TmForever", (ROOT / source).read_text(), source)
+            self.assertNotIn('"database"', (ROOT / source).read_text(), source)
+
     def test_tmnf_installer_cache_path_is_historical(self):
         result = subprocess.run(
             [
@@ -143,15 +161,6 @@ class TitleRegistryTests(unittest.TestCase):
                 (Path(directory) / "p/config/pins.json").read_text(),
                 (ROOT / "config/pins.json").read_text(),
             )
-
-    def test_installer_kinds_match_hub_registry(self):
-        sys_path_added = ROOT / "src/python"
-        import sys
-
-        sys.path.insert(0, str(sys_path_added))
-        from tmnf.hub import registry
-
-        self.assertEqual(registry.INSTALLERS, frozenset(INSTALLERS))
 
     def test_common_sh_title_defaults(self):
         result = subprocess.run(
@@ -263,6 +272,65 @@ class TitleRegistryTests(unittest.TestCase):
                     result.stdout.strip(), "C:\\Program Files (x86)\\" + data["game_dir_name"]
                 )
 
+    def test_prefix_marker_is_derived_and_exported(self):
+        for path in sorted(TITLES.glob("*.json")):
+            with self.subTest(title=path.stem):
+                result = subprocess.run(
+                    [
+                        "/bin/bash",
+                        "-euc",
+                        '. src/shell/lib/common.sh; printf "%s" "$TMNF_TITLE_PREFIX_MARKER"',
+                    ],
+                    cwd=ROOT,
+                    text=True,
+                    capture_output=True,
+                    timeout=15,
+                    env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TMNF_TITLE": path.stem},
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, path.stem + ":1")
+        registry = load_registry()
+        self.assertEqual(registry.get("tmu", TITLES).prefix_marker, "tmu:1")
+
+    def test_components_per_title(self):
+        registry = load_registry()
+        components = {title.id: title.components for title in registry.load_all(TITLES)}
+        self.assertEqual(components["tmnf"], ("competition-patch", "openal", "system-config"))
+        self.assertEqual(components["tmu"], ("competition-patch", "system-config"))
+        for title_id in ("tm-canyon", "tm-turbo", "tm-original"):
+            self.assertEqual(components[title_id], (), title_id)
+
+    def test_shell_components_match_python(self):
+        registry = load_registry()
+        for title in registry.load_all(TITLES):
+            with self.subTest(title=title.id):
+                checks = "; ".join(
+                    "if title_has {0}; then echo {0}; fi".format(name)
+                    for name in registry.COMPONENTS
+                )
+                result = subprocess.run(
+                    ["/bin/bash", "-euc", ". src/shell/lib/common.sh; " + checks],
+                    cwd=ROOT,
+                    text=True,
+                    capture_output=True,
+                    timeout=15,
+                    env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TMNF_TITLE": title.id},
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(tuple(result.stdout.split()), title.components)
+
+    def test_title_has_rejects_unknown_components(self):
+        result = subprocess.run(
+            ["/bin/bash", "-euc", ". src/shell/lib/common.sh; title_has competition_patch"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=15,
+            env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TMNF_TITLE": "tmnf"},
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Unknown title component", result.stderr)
+
     def test_user_subdir_export_matches_each_title(self):
         for path in sorted(TITLES.glob("*.json")):
             data = json.loads(path.read_text())
@@ -308,8 +376,8 @@ class TitleRegistryTests(unittest.TestCase):
             timeout=15,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        for title_id in ("tmnf", "tmu", "tm-original", "tm-canyon", "tm-turbo"):
-            self.assertIn(title_id, result.stdout)
+        for path in sorted(TITLES.glob("*.json")):
+            self.assertIn(path.stem, result.stdout)
 
     def test_unknown_title_rejected(self):
         result = subprocess.run(
@@ -321,6 +389,72 @@ class TitleRegistryTests(unittest.TestCase):
             env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TMNF_TITLE": "nope"},
         )
         self.assertNotEqual(result.returncode, 0)
+
+
+# Title facts belong in config/titles/*.json. These patterns catch code that
+# branches on a title id instead; only the legacy migration shims may.
+TITLE_CONDITIONALS = (
+    re.compile(r'"?\$\{?TMNF_TITLE\}?"?\s+!?=\s'),
+    re.compile(r'\btest\s+"?\$\{?\w+\}?"?\s+!?=\s+"?tmnf"?(\s|;|$)'),
+    re.compile(r'case\s+"?\$\{?TMNF_TITLE\}?"?\s+in'),
+    re.compile(r'\btitle(_id|\.id)\s*[!=]=\s*["\']'),
+    re.compile(r"\btitle(_id|\.id)\s+(not\s+)?in\s*[(\[{]"),
+    re.compile(r'\$\{?\w+\}?"?\s*!?==?\s*"?tmnf"?\s*\]\]'),
+    re.compile(r"NEEDS_TMLOADER"),
+    re.compile(r"\bopenal_applies\b"),
+    re.compile(r"TmNationsForever"),
+)
+TITLE_CONDITIONAL_ALLOWLIST = (
+    # A pre-marker TMNF prefix from before multi-title support.
+    (
+        "src/python/tmnf/hub/state.py",
+        'if not identity and title.id == "tmnf" and (prefix / "system.reg").is_file():',
+    ),
+    ("src/python/tmnf/hub/state.py", 'if not identity and title.id == "tmnf":'),
+    # The single-title installer cache location existing downloads still use.
+    ("src/shell/lib/install/game.sh", 'if test "$title" = tmnf; then'),
+    # The shared pre-multi-title launcher only TMNF ever installed.
+    ("src/shell/lib/apps/wrappers.sh", 'test "$TMNF_TITLE" = tmnf || return 0'),
+)
+
+
+def source_files():
+    for path in sorted((ROOT / "src/shell").rglob("*")):
+        if path.is_file() and (path.suffix == ".sh" or path.parent.name == "cli"):
+            yield path
+    yield from sorted((ROOT / "src/python/tmnf").rglob("*.py"))
+
+
+class TitleConditionalTests(unittest.TestCase):
+    def test_no_title_id_conditionals(self):
+        allowed = {(file, line) for file, line in TITLE_CONDITIONAL_ALLOWLIST}
+        found = []
+        for path in source_files():
+            relative = str(path.relative_to(ROOT))
+            for number, line in enumerate(path.read_text().splitlines(), 1):
+                if any(pattern.search(line) for pattern in TITLE_CONDITIONALS):
+                    if (relative, line.strip()) not in allowed:
+                        found.append(f"{relative}:{number}: {line.strip()}")
+        self.assertEqual(found, [], "move the title fact into config/titles/*.json")
+
+    def test_allowlist_entries_still_exist(self):
+        for file, line in TITLE_CONDITIONAL_ALLOWLIST:
+            with self.subTest(file=file, line=line):
+                lines = [item.strip() for item in (ROOT / file).read_text().splitlines()]
+                self.assertIn(line, lines, "remove the stale allowlist entry")
+                self.assertTrue(any(pattern.search(line) for pattern in TITLE_CONDITIONALS))
+
+    def test_patterns_catch_common_spellings(self):
+        for line in (
+            'if test "$TMNF_TITLE" = tmu; then',
+            "if [[ $TMNF_TITLE == tmnf ]]; then",
+            'case "$TMNF_TITLE" in',
+            'if title.id == "tmu":',
+            'if title.id in ("tmnf", "tmu"):',
+            "if title_id not in {'tmnf'}:",
+        ):
+            with self.subTest(line=line):
+                self.assertTrue(any(pattern.search(line) for pattern in TITLE_CONDITIONALS))
 
 
 class RegistryValidationTests(unittest.TestCase):
@@ -339,6 +473,69 @@ class RegistryValidationTests(unittest.TestCase):
 
     def test_shipped_entry_is_valid(self):
         self.validate()
+
+    def test_unknown_fields_are_rejected(self):
+        with self.assertRaisesRegex(self.registry.RegistryError, "unknown fields: user_subdr"):
+            self.validate(user_subdr="TrackMania")
+
+    def test_title_fields_match_schema_table(self):
+        self.assertEqual(
+            self.registry.Title._fields, tuple(field.name for field in self.registry._FIELDS)
+        )
+
+    def test_optional_fields_take_their_defaults(self):
+        data = {
+            key: value
+            for key, value in self.data.items()
+            if key not in ("notes", "source_size", "source_url", "source_sha256")
+        }
+        data["installer"] = "steam-copy"
+        title = self.registry._validate(data, Path("/x/tmu.json"))
+        self.assertEqual(
+            (title.notes, title.source_url, title.source_sha256, title.source_size),
+            ("", None, None, None),
+        )
+
+    def test_release_pins_are_optional_but_consistent(self):
+        sha = "0" * 64
+        title = self.validate(game_version="1.0", game_exe_sha256=sha, creative_openal_sha256=sha)
+        self.assertEqual((title.game_version, title.game_exe_sha256), ("1.0", sha))
+        self.assertIsNone(self.validate().game_exe_sha256)
+        for changes in (
+            {"game_exe_sha256": sha},
+            {"game_version": "1.0", "game_exe_sha256": "ABC"},
+            {"creative_openal_sha256": "x" * 64},
+            {"game_version": "1.0; rm"},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(self.registry.RegistryError):
+                self.validate(**changes)
+
+    def test_online_installer_requires_an_exe_pin(self):
+        with self.assertRaisesRegex(self.registry.RegistryError, "requires game_exe_sha256"):
+            self.validate(installer="online")
+        self.validate(installer="online", game_version="1.0", game_exe_sha256="0" * 64)
+
+    def test_modloader_titles_must_run_the_forever_exe(self):
+        with self.assertRaisesRegex(self.registry.RegistryError, "needs_tmloader requires"):
+            self.validate(game_exe="ManiaPlanet.exe")
+        self.validate(game_exe="ManiaPlanet.exe", needs_tmloader=False)
+
+    def test_value_types_are_checked(self):
+        for field, value in (
+            ("needs_tmloader", "yes"),
+            ("name", ""),
+            ("name", 5),
+            ("notes", 5),
+            ("source_size", -1),
+            ("source_size", True),
+            ("source_sha256", 5),
+            ("save_dirs", "TrackMania"),
+        ):
+            with (
+                self.subTest(field=field, value=value),
+                self.assertRaises(self.registry.RegistryError),
+            ):
+                self.validate(**{field: value})
 
     def test_unsafe_names_are_rejected(self):
         bad = [".", "..", "~root", "a\\b", "a\nb", "a\x00b", "a\x7fb", "a/b"]
@@ -397,7 +594,6 @@ class RegistryValidationTests(unittest.TestCase):
                 name="$(touch pwned) `id` ' \" ; &",
                 notes="line1\nline2 $HOME \\ *",
                 short_name="a b$c",
-                prefix_marker="evil:1",
             )
             titles = Path(directory) / "titles"
             titles.mkdir()

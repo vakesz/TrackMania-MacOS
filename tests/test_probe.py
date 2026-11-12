@@ -189,6 +189,7 @@ class SmokeScripts(unittest.TestCase):
             "src/shell/lib",
             "src/python/tmnf/probes",
             "src/python/tmnf/hub",
+            "src/python/tmnf/install",
             "config/titles",
             "bin",
             "prefix",
@@ -206,10 +207,14 @@ class SmokeScripts(unittest.TestCase):
             ROOT / "src/python/tmnf/probes/__init__.py",
             self.root / "src/python/tmnf/probes/__init__.py",
         )
-        for module in ("__init__.py", "registry.py"):
-            shutil.copy2(
-                ROOT / "src/python/tmnf/hub" / module, self.root / "src/python/tmnf/hub" / module
-            )
+        # The registry export and the ModLoader layout it includes.
+        for module in (
+            "hub/__init__.py",
+            "hub/registry.py",
+            "install/__init__.py",
+            "install/modloader.py",
+        ):
+            shutil.copy2(ROOT / "src/python/tmnf" / module, self.root / "src/python/tmnf" / module)
         shutil.copy2(ROOT / "config/pins.json", self.root / "config/pins.json")
         shutil.copy2(ROOT / "src/shell/lib/common.sh", self.root / "src/shell/lib/common.sh")
         shutil.copy2(ROOT / "src/shell/lib/titles.sh", self.root / "src/shell/lib/titles.sh")

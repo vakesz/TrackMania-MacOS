@@ -951,7 +951,10 @@ class Reap(unittest.TestCase):
     def server_dir(self):
         self.prefix.mkdir(parents=True, exist_ok=True)
         directory = guard.wine_server_dir(self.prefix)
-        directory.mkdir(parents=True, mode=0o700)
+        # Wine creates both levels private to the user; reap refuses anything else.
+        directory.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        directory.parent.chmod(0o700)
+        directory.mkdir(mode=0o700)
         return directory
 
     def reap(self, grace=0.5):
@@ -980,6 +983,26 @@ class Reap(unittest.TestCase):
         count, _ = self.reap()
         self.assertEqual(count, 1)
         victim.wait(timeout=5)
+        self.assertIsNone(bystander.poll())
+
+    def test_refuses_a_server_dir_that_is_not_private_or_is_a_symlink(self):
+        # /tmp is shared: another user could plant the path to aim reap at a
+        # directory our unrelated processes hold open.
+        bystander_dir = self.root / "bystander"
+        bystander_dir.mkdir()
+        bystander = self.holder(bystander_dir)
+        self.prefix.mkdir(parents=True, exist_ok=True)
+        directory = guard.wine_server_dir(self.prefix)
+        directory.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        directory.parent.chmod(0o700)
+        directory.symlink_to(bystander_dir)
+        with self.assertRaises(OSError):
+            self.reap()
+        directory.unlink()
+        directory.mkdir(mode=0o700)
+        directory.parent.chmod(0o755)
+        with self.assertRaisesRegex(ValueError, "Unsafe lock directory"):
+            self.reap()
         self.assertIsNone(bystander.poll())
 
     def test_nothing_to_do_prints_nothing(self):

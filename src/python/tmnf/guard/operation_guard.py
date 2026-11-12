@@ -349,10 +349,39 @@ def reap(prefix, grace=INTERRUPT_GRACE):
     directory open, which names its prefix. Does not touch the operation lock.
     """
     directory = wine_server_dir(prefix)
-    if directory is None or not directory.is_dir():
+    if directory is None:
         return 0
-    excluded = _ancestors()
-    victims = _server_dir_holders(directory) - excluded
+    # /tmp is shared: open the chain like check_inactive (no symlinks, and
+    # .wine-<uid> and the server dir private to us) so another user cannot point
+    # this at a directory our unrelated processes hold open.
+    directories = []
+    try:
+        root = directory.parents[1].resolve()
+        directories.append(_open_directory(root))
+        directories.append(_open_directory(directory.parent.name, directories[-1], private=True))
+        directories.append(_open_directory(directory.name, directories[-1], private=True))
+    except FileNotFoundError:
+        for fd in reversed(directories):
+            os.close(fd)
+        return 0
+    except BaseException:
+        for fd in reversed(directories):
+            os.close(fd)
+        raise
+    try:
+        verified = root / directory.parent.name / directory.name
+        excluded = _ancestors()
+        victims = _server_dir_holders(verified) - excluded
+        # Signal only if the path still names the directory we validated.
+        _check_dir_identity(directories[-1], directory.name, directories[-2])
+        _check_dir_identity(directories[-2], directory.parent.name, directories[-3])
+        return _stop(verified, victims, excluded, grace)
+    finally:
+        for fd in reversed(directories):
+            os.close(fd)
+
+
+def _stop(directory, victims, excluded, grace):
     if not victims:
         return 0
     stopped = len(victims)

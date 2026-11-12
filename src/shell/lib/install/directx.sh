@@ -11,8 +11,8 @@ install_directx_runtime() (
   fi
 
   download_verified "$DIRECTX_URL" "$DIRECTX_ARCHIVE" "$DIRECTX_SHA256"
-  sweep_stale "$TMNF_CACHE" '*-extract.*'
-  extract_dir="$(mktemp -d "${TMNF_CACHE}/directx-extract.XXXXXX")"
+  sweep_stale "$TRACKMANIA_MAC_CACHE" '*-extract.*'
+  extract_dir="$(mktemp -d "${TRACKMANIA_MAC_CACHE}/directx-extract.XXXXXX")"
   printf -v cleanup 'rm -rf -- %q' "$extract_dir"
   # shellcheck disable=SC2064
   trap "$cleanup" EXIT
@@ -45,9 +45,9 @@ repair_runtime_dlls() {
       source="${wine_root}/lib/wine/${arch}-windows/${dll}.dll"
       test -f "$source" || die "The runtime is missing $source"
       if test "$arch" = i386; then
-        cp "$source" "${TMNF_PREFIX}/drive_c/windows/syswow64/${dll}.dll"
+        cp "$source" "${TRACKMANIA_MAC_PREFIX}/drive_c/windows/syswow64/${dll}.dll"
       else
-        cp "$source" "${TMNF_PREFIX}/drive_c/windows/system32/${dll}.dll"
+        cp "$source" "${TRACKMANIA_MAC_PREFIX}/drive_c/windows/system32/${dll}.dll"
       fi
     done
   done

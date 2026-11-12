@@ -1,7 +1,7 @@
 """Per-title uninstall: the guard plan, the shell removal and the hub preview.
 
 Every fixture lives under a temporary HOME in /private/tmp (a managed root);
-nothing here touches the real ~/Games, ~/Library or /Applications.
+nothing here touches the real ~/Library or /Applications.
 """
 
 import json
@@ -15,12 +15,12 @@ import tempfile
 import unittest
 from unittest import mock
 
-from tmnf.guard import operation_guard, uninstall
-from tmnf.hub import registry
+from trackmania_mac.guard import operation_guard, uninstall
+from trackmania_mac.hub import registry
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "src/shell/cli/tmnf"
+CLI = ROOT / "src/shell/cli/trackmania-mac"
 
 TITLES = {title.id: title for title in registry.load_all(ROOT / "config/titles")}
 
@@ -30,11 +30,11 @@ def make_app(path, bundle_id, marker=True):
     (contents / "MacOS").mkdir(parents=True)
     with (contents / "Info.plist").open("wb") as stream:
         plistlib.dump({"CFBundleIdentifier": bundle_id}, stream)
-    executable = contents / "MacOS/TMNF"
+    executable = contents / "MacOS/TrackManiaMac"
     executable.write_text("#!/bin/bash\n")
     executable.chmod(0o755)
     if marker:
-        (contents / ".tmnf-app").touch()
+        (contents / ".trackmania-mac-app").touch()
     return path
 
 
@@ -46,25 +46,26 @@ def faked_device(info, device):
 
 
 class Fixture:
-    """A HOME with an installed tmnf whose root also holds other titles' roots."""
+    """A HOME with the data folder layout: games/<id>, saves/<id>, cache and logs."""
 
     def __init__(self, home):
         self.home = home
-        self.support = home / "Library/Application Support/TMNF"
-        self.cache = home / "Library/Caches/TMNF"
-        self.logs = home / "Library/Logs/TMNF"
+        self.data = home / "Library/TrackManiaMacOS"
+        self.support = self.data
+        self.cache = self.data / "cache"
+        self.logs = self.data / "logs"
         self.apps = home / "Applications"
         for directory in (self.support / "runtime/1", self.cache, self.logs, self.apps):
             directory.mkdir(parents=True)
 
     def root(self, title_id):
-        return self.home / "Games" / TITLES[title_id].prefix_subdir
+        return self.data / "games" / title_id
 
     def prefix(self, title_id):
         return self.root(title_id) / "prefix"
 
     def userdata(self, title_id):
-        return self.root(title_id) / "UserData"
+        return self.data / "saves" / title_id
 
     def save(self, title_id):
         """The replay install(saves=True) writes, in the title's first save folder."""
@@ -75,7 +76,7 @@ class Fixture:
         prefix = self.prefix(title_id)
         documents = prefix / "drive_c/users/player/Documents"
         documents.parent.mkdir(parents=True)
-        (prefix / ".tmnf-prefix").write_text(title.prefix_marker + "\n")
+        (prefix / ".trackmania-mac-prefix").write_text(title.prefix_marker + "\n")
         (prefix / "system.reg").write_text("WINE REGISTRY Version 2\n")
         userdata = self.userdata(title_id)
         userdata.mkdir(parents=True)
@@ -89,7 +90,7 @@ class Fixture:
             make_app(self.apps / title.settings_app_name, title.bundle_id_settings)
             launcher = self.support / "launchers" / title_id
             launcher.mkdir(parents=True)
-            (launcher / ".tmnf-launcher").touch()
+            (launcher / ".trackmania-mac-launcher").touch()
         return prefix
 
     def arguments(self, title_id, **overrides):
@@ -109,18 +110,22 @@ class Fixture:
 
 class GuardPlanTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(dir="/private/tmp", prefix="tmnf-uninstall-")
+        temporary = tempfile.TemporaryDirectory(
+            dir="/private/tmp", prefix="trackmania-mac-uninstall-"
+        )
         self.addCleanup(temporary.cleanup)
         self.home = Path(temporary.name).resolve()
         self.fx = Fixture(self.home)
-        environment = {key: value for key, value in os.environ.items() if key != "TMNF_TITLES_DIR"}
-        environment.update(HOME=str(self.home), TMNF_TITLE="tmnf")
+        environment = {
+            key: value for key, value in os.environ.items() if key != "TRACKMANIA_MAC_TITLES_DIR"
+        }
+        environment.update(HOME=str(self.home), TRACKMANIA_MAC_TITLE="tmnf")
         patcher = mock.patch.dict(os.environ, environment, clear=True)
         patcher.start()
         self.addCleanup(patcher.stop)
 
     def plan(self, title_id="tmnf", include_saves=False, warnings=None, **overrides):
-        os.environ["TMNF_TITLE"] = title_id
+        os.environ["TRACKMANIA_MAC_TITLE"] = title_id
         return uninstall.plan(
             **self.fx.arguments(title_id, **overrides),
             include_saves=include_saves,
@@ -135,22 +140,22 @@ class GuardPlanTests(unittest.TestCase):
     def kept(entries):
         return {entry.path: entry for entry in entries if entry.verb == "keep"}
 
-    def test_tmnf_never_reaches_into_titles_nested_under_its_root(self):
+    def test_removal_never_reaches_another_titles_folders(self):
         self.fx.install("tmnf")
         for other in ("tmu", "tm-canyon"):
             self.fx.install(other)
         removed = self.removed(self.plan(include_saves=True))
         root = self.fx.root("tmnf")
         self.assertIn(root / "prefix", removed)
-        self.assertIn(root / "UserData", removed)
+        self.assertIn(self.fx.userdata("tmnf"), removed)
         self.assertNotIn(root, removed)
         for path in removed:
             for other in ("tmu", "tm-canyon"):
-                other_root = self.fx.root(other)
-                self.assertFalse(
-                    path == other_root or other_root in path.parents or path in other_root.parents,
-                    path,
-                )
+                for folder in (self.fx.root(other), self.fx.userdata(other)):
+                    self.assertFalse(
+                        path == folder or folder in path.parents or path in folder.parents,
+                        path,
+                    )
 
     def test_other_titles_stay_inside_their_own_root(self):
         self.fx.install("tmnf")
@@ -161,17 +166,18 @@ class GuardPlanTests(unittest.TestCase):
             if root in path.parents:
                 continue
             self.assertNotIn(self.fx.root("tmnf") / "prefix", [path, *path.parents])
-            self.assertNotIn(self.fx.root("tmnf") / "UserData", [path, *path.parents])
+            self.assertNotIn(self.fx.userdata("tmnf"), [path, *path.parents])
         self.assertIn(root / "prefix", removed)
-        self.assertIn(root / "UserData", removed)
+        self.assertIn(self.fx.userdata("tmu"), removed)
 
     def test_prefix_at_a_shared_root_is_refused(self):
         self.fx.install("tmu", apps=False)
         root = self.fx.root("tmnf")
-        (root / ".tmnf-prefix").write_text("tmnf:1\n")
+        root.mkdir(parents=True)
+        (root / ".trackmania-mac-prefix").write_text("tmnf:1\n")
         (root / "system.reg").write_text("x")
         elsewhere = self.home / "saves"
-        with self.assertRaisesRegex(ValueError, "Refusing to remove .*Games/TMNF:"):
+        with self.assertRaisesRegex(ValueError, "Refusing to remove .*games/tmnf:"):
             self.plan(prefix=str(root), userdata=str(elsewhere))
 
     def test_registry_nesting_and_broken_entries_fail_closed(self):
@@ -179,11 +185,11 @@ class GuardPlanTests(unittest.TestCase):
         titles = self.home / "titles"
         shutil.copytree(ROOT / "config/titles", titles)
         data = json.loads((titles / "tm-turbo.json").read_text())
-        os.environ["TMNF_TITLES_DIR"] = str(titles)
-        # Case differs: APFS would put this root inside tmnf's saves folder.
+        os.environ["TRACKMANIA_MAC_TITLES_DIR"] = str(titles)
+        # Case differs: APFS would put this old root inside tmnf's old saves folder.
         for subdir in ("TMNF/UserData/evil", "tmnf/userdata/evil", "tmnf/PREFIX/x", "tmnf"):
             with self.subTest(subdir=subdir):
-                data["prefix_subdir"] = subdir
+                data["legacy_prefix_subdir"] = subdir
                 (titles / "tm-turbo.json").write_text(json.dumps(data))
                 with self.assertRaisesRegex(ValueError, "Fix the title registry.*tm-turbo"):
                     self.plan(include_saves=True)
@@ -194,7 +200,7 @@ class GuardPlanTests(unittest.TestCase):
     def test_symlinked_prefix_or_saves_folder_is_refused(self):
         real = self.home / "real-prefix"
         real.mkdir()
-        (real / ".tmnf-prefix").write_text("tmnf:1\n")
+        (real / ".trackmania-mac-prefix").write_text("tmnf:1\n")
         (real / "system.reg").write_text("x")
         self.fx.root("tmnf").mkdir(parents=True)
         self.fx.prefix("tmnf").symlink_to(real)
@@ -203,6 +209,7 @@ class GuardPlanTests(unittest.TestCase):
         self.fx.prefix("tmnf").unlink()
         outside = self.home / "outside-saves"
         outside.mkdir()
+        self.fx.userdata("tmnf").parent.mkdir(parents=True, exist_ok=True)
         self.fx.userdata("tmnf").symlink_to(outside)
         with self.assertRaisesRegex(ValueError, "symlink"):
             self.plan(include_saves=True)
@@ -210,12 +217,12 @@ class GuardPlanTests(unittest.TestCase):
     def test_saves_folder_reached_through_a_link_out_of_home_is_refused(self):
         with tempfile.TemporaryDirectory() as foreign:  # $TMPDIR is not a managed root
             target = Path(foreign).resolve()
-            (target / "UserData").mkdir()
-            (self.home / "Games").mkdir()
-            (self.home / "Games/TMNF").symlink_to(target)
+            (target / "tmnf").mkdir()
+            self.fx.data.mkdir(parents=True, exist_ok=True)
+            (self.fx.data / "saves").symlink_to(target)
             with self.assertRaises(ValueError):
                 self.plan(include_saves=True)
-            self.assertTrue((target / "UserData").is_dir())
+            self.assertTrue((target / "tmnf").is_dir())
 
     def test_apps_that_are_not_ours_are_kept(self):
         self.fx.install("tmnf", apps=False)
@@ -227,7 +234,7 @@ class GuardPlanTests(unittest.TestCase):
         kept = self.kept(self.plan())
         self.assertIn("not an app this hub installed", kept[game].reason)
         self.assertIn("symlink", kept[self.fx.apps / title.settings_app_name].reason)
-        self.assertTrue((settings_target / "Contents/.tmnf-app").exists())
+        self.assertTrue((settings_target / "Contents/.trackmania-mac-app").exists())
 
     def test_other_titles_wrapper_renamed_or_legacy_launcher_is_kept(self):
         self.fx.install("tmnf", apps=False)
@@ -242,7 +249,7 @@ class GuardPlanTests(unittest.TestCase):
         marker = make_app(self.home / "x.app", title.bundle_id_game)
         shutil.rmtree(game)
         make_app(game, title.bundle_id_game, marker=False)
-        (game / "Contents/.tmnf-app").symlink_to(marker / "Contents/.tmnf-app")
+        (game / "Contents/.trackmania-mac-app").symlink_to(marker / "Contents/.trackmania-mac-app")
         self.assertIn(game, self.kept(self.plan()))
 
     def test_managed_apps_launcher_icon_and_logs_are_removed(self):
@@ -299,13 +306,13 @@ class GuardPlanTests(unittest.TestCase):
         self.fx.install("tmu", apps=False)
         outside = self.home / "outside"
         outside.mkdir()
-        (outside / ".tmnf-launcher").touch()
+        (outside / ".trackmania-mac-launcher").touch()
         (self.fx.support / "launchers").mkdir()
         (self.fx.support / "launchers/tmu").symlink_to(outside)
         (self.fx.cache / "games").mkdir()
         (self.fx.cache / "games/tmu").symlink_to(outside)
         (self.fx.support / "icons").mkdir()
-        (self.fx.support / "icons/tmu.icns").symlink_to(outside / ".tmnf-launcher")
+        (self.fx.support / "icons/tmu.icns").symlink_to(outside / ".trackmania-mac-launcher")
         entries = self.plan("tmu")
         kept = self.kept(entries)
         for path in ("launchers/tmu", "icons/tmu.icns"):
@@ -422,7 +429,7 @@ class GuardPlanTests(unittest.TestCase):
 
     def test_prefix_of_another_title_is_refused(self):
         self.fx.install("tmnf")
-        (self.fx.prefix("tmnf") / ".tmnf-prefix").write_text("tmu:1\n")
+        (self.fx.prefix("tmnf") / ".trackmania-mac-prefix").write_text("tmu:1\n")
         with self.assertRaisesRegex(ValueError, "another TrackMania title"):
             self.plan()
 
@@ -480,12 +487,12 @@ class GuardPlanTests(unittest.TestCase):
         self.fx.install("tmnf")
         root = self.fx.root("tmnf")
         # A removal that stopped after deleting the marker, before the rest.
-        tomb = root / ".prefix.tmnf-removing.0123abcd"
+        tomb = root / ".prefix.trackmania-mac-removing.0123abcd"
         self.fx.prefix("tmnf").rename(tomb)
-        (tomb / ".tmnf-prefix").unlink()
-        app_tomb = self.fx.apps / ".TrackMania Settings.app.tmnf-removing.89abcdef"
+        (tomb / ".trackmania-mac-prefix").unlink()
+        app_tomb = self.fx.apps / ".TrackMania Settings.app.trackmania-mac-removing.89abcdef"
         (self.fx.apps / TITLES["tmnf"].settings_app_name).rename(app_tomb)
-        foreign = root / ".prefix.tmnf-removing.notours"
+        foreign = root / ".prefix.trackmania-mac-removing.notours"
         foreign.mkdir()
         entries = self.plan()
         self.assertIn(tomb, self.removed(entries))
@@ -507,9 +514,9 @@ class GuardPlanTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 uninstall.remove(entries, report=lambda line: None)
         self.assertFalse(prefix.exists())
-        tombs = [n for n in os.listdir(self.fx.root("tmnf")) if "tmnf-removing" in n]
+        tombs = [n for n in os.listdir(self.fx.root("tmnf")) if "-removing." in n]
         self.assertEqual(len(tombs), 1)
-        self.assertRegex(tombs[0], r"^\.prefix\.tmnf-removing\.[0-9a-f]{8}$")
+        self.assertRegex(tombs[0], r"^\.prefix\.trackmania-mac-removing\.[0-9a-f]{8}$")
         shutil.rmtree(self.fx.root("tmnf") / tombs[0])
 
     def test_removal_refuses_a_parent_or_entry_changed_after_planning(self):
@@ -554,15 +561,16 @@ class GuardPlanTests(unittest.TestCase):
             self.skipTest("this volume is case-sensitive")
         self.fx.install("tmu", apps=False)
         root = self.fx.root("tmnf")
-        (root / ".tmnf-prefix").write_text("tmnf:1\n")
+        root.mkdir(parents=True)
+        (root / ".trackmania-mac-prefix").write_text("tmnf:1\n")
         (root / "system.reg").write_text("x")
-        case_changed = str(root).replace("Games/TMNF", "games/tmnf")
+        case_changed = str(root).replace("TrackManiaMacOS/games/tmnf", "trackmaniamacos/GAMES/TMNF")
         with self.assertRaisesRegex(ValueError, "Refusing to remove"):
             self.plan(prefix=case_changed, userdata=str(self.home / "saves"))
-        (root / ".tmnf-prefix").unlink()
+        (root / ".trackmania-mac-prefix").unlink()
         (root / "system.reg").unlink()
         self.fx.install("tmnf")
-        userdata = str(self.fx.userdata("tmnf")).replace("UserData", "userdata")
+        userdata = str(self.fx.userdata("tmnf")).replace("saves/tmnf", "SAVES/TMNF")
         removed = self.removed(self.plan(include_saves=True, userdata=userdata))
         self.assertTrue(any(os.path.samefile(path, self.fx.userdata("tmnf")) for path in removed))
 
@@ -598,7 +606,7 @@ class GuardPlanTests(unittest.TestCase):
 
         def stat(path, *args, **kwargs):
             info = real_stat(path, *args, **kwargs)
-            return faked_device(info, info.st_dev + 1) if path == "UserData" else info
+            return faked_device(info, info.st_dev + 1) if path == userdata.name else info
 
         with mock.patch.object(uninstall.os, "stat", side_effect=stat):
             with self.assertRaisesRegex(ValueError, "mounted volume"):
@@ -617,7 +625,10 @@ class GuardPlanTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 uninstall.remove([e for e in entries if e.kind == kind], report=lambda line: None)
         return [
-            self.fx.root("tmnf") / n for n in os.listdir(self.fx.root("tmnf")) if "removing" in n
+            folder / name
+            for folder in (self.fx.root("tmnf"), self.fx.userdata("tmnf").parent)
+            for name in os.listdir(folder)
+            if "removing" in name
         ]
 
     def test_keeping_saves_restores_an_unfinished_uninstalls_saves(self):
@@ -631,7 +642,7 @@ class GuardPlanTests(unittest.TestCase):
         self.assertTrue((self.fx.save("tmnf")).exists())
         self.assertFalse(tomb.exists())
         # With the saves folder back in place, a second tombstone is kept, not deleted.
-        second = self.fx.root("tmnf") / ".UserData.tmnf-removing.0123abcd"
+        second = self.fx.userdata("tmnf").parent / ".tmnf.trackmania-mac-removing.0123abcd"
         second.mkdir()
         kept = self.kept(self.plan())
         self.assertEqual(kept[second].reason, uninstall.UNFINISHED_SAVES)
@@ -643,9 +654,9 @@ class GuardPlanTests(unittest.TestCase):
         if not (self.home / "caseprobe").is_dir():
             self.skipTest("this volume is case-sensitive")
         self.fx.install("tmnf")
-        lower = str(self.fx.root("tmnf") / "userdata")
-        (tomb,) = self.interrupt(self.plan(include_saves=True, userdata=lower), "saves")
-        self.assertTrue(tomb.name.startswith(".userdata.tmnf-removing."))
+        upper = str(self.fx.userdata("tmnf").parent / "TMNF")
+        (tomb,) = self.interrupt(self.plan(include_saves=True, userdata=upper), "saves")
+        self.assertTrue(tomb.name.startswith(".TMNF.trackmania-mac-removing."))
         self.assertIn(tomb, self.removed(self.plan(include_saves=True)))
         restore = [e for e in self.plan() if e.verb == "restore"]
         self.assertEqual([e.path for e in restore], [tomb])
@@ -653,11 +664,13 @@ class GuardPlanTests(unittest.TestCase):
     def test_paths_pointed_at_another_titles_root_never_touch_it(self):
         canyon = self.fx.install("tm-canyon")
         root = self.fx.root("tm-canyon")
-        prefix_tomb = root / ".prefix.tmnf-removing.0123abcd"
+        prefix_tomb = root / ".prefix.trackmania-mac-removing.0123abcd"
         canyon.rename(prefix_tomb)
-        saves_tomb = root / ".UserData.tmnf-removing.89abcdef"
+        saves_tomb = (
+            self.fx.userdata("tm-canyon").parent / ".tm-canyon.trackmania-mac-removing.89abcdef"
+        )
         saves_tomb.mkdir()
-        launcher_tomb = self.fx.support / "launchers/.tm-canyon.tmnf-removing.11112222"
+        launcher_tomb = self.fx.support / "launchers/.tm-canyon.trackmania-mac-removing.11112222"
         launcher_tomb.mkdir()
         overrides = dict(
             prefix=str(canyon),
@@ -667,25 +680,32 @@ class GuardPlanTests(unittest.TestCase):
         removed = self.removed(self.plan(**overrides))
         for path in removed:
             self.assertFalse(root == path or root in path.parents, path)
+        self.assertNotIn(saves_tomb, removed)
         self.assertNotIn(launcher_tomb, removed)
         self.assertNotIn(self.fx.support / "launchers/tm-canyon", removed)
         with self.assertRaisesRegex(ValueError, "custom folder"):
             self.plan(include_saves=True, **overrides)
-        # Limits treats another title's root as foreign, unless it holds ours.
+        # Limits treats another title's root and saves folder as foreign.
         title, titles = uninstall.load_titles()
         bounds = uninstall.limits(
             title, titles, self.home, self.fx.support, self.fx.cache, self.fx.apps
         )
         with self.assertRaisesRegex(ValueError, "belongs to another title"):
             bounds.check(uninstall.Entry("remove", "prefix", prefix_tomb, identity=(0, 0)))
-        os.environ["TMNF_TITLE"] = "tmu"
+        os.environ["TRACKMANIA_MAC_TITLE"] = "tmu"
         self.fx.install("tmu", apps=False)
         title, titles = uninstall.load_titles()
         bounds = uninstall.limits(
             title, titles, self.home, self.fx.support, self.fx.cache, self.fx.apps
         )
-        prefix = self.fx.prefix("tmu")
-        bounds.check(uninstall._remove("prefix", prefix))  # inside tmnf's root: allowed
+        bounds.check(uninstall._remove("prefix", self.fx.prefix("tmu")))
+        # Saves folders share one parent: another title's saves tombstone there
+        # is neither removed nor restored, whichever saves folder is passed.
+        os.environ["TRACKMANIA_MAC_TITLE"] = "tmnf"
+        for include_saves in (False, True):
+            entries = self.plan(include_saves=include_saves, prefix=str(canyon))
+            self.assertNotIn(saves_tomb, [entry.path for entry in entries])
+        self.assertTrue(saves_tomb.is_dir())
 
     @unittest.skipIf(sys.version_info < (3, 11), "rmtree(dir_fd=) needs Python 3.11")
     def test_folders_are_deleted_through_the_parent_descriptor(self):
@@ -702,12 +722,12 @@ class GuardPlanTests(unittest.TestCase):
         self.assertTrue(calls)
         for path, kwargs in calls:
             self.assertIn("dir_fd", kwargs)
-            self.assertRegex(path, r"^\.[^/]+\.tmnf-removing\.[0-9a-f]{8}$")
+            self.assertRegex(path, r"^\.[^/]+\.trackmania-mac-removing\.[0-9a-f]{8}$")
 
     def test_names_with_a_trailing_newline_are_ignored(self):
         self.fx.install("tmnf")
         odd = [
-            self.fx.root("tmnf") / ".prefix.tmnf-removing.0123abcd\n",
+            self.fx.root("tmnf") / ".prefix.trackmania-mac-removing.0123abcd\n",
             self.fx.logs / "diagnostics-tmnf-20260101-120000.zip\n",
             self.fx.cache / "tmnationsforever_setup.exe.partial.Ab12Cd\n",
         ]
@@ -731,16 +751,17 @@ class GuardPlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unsafe path"):
             self.plan()
 
-    def test_registry_override_cannot_redefine_a_shipped_root(self):
+    def test_registry_override_cannot_move_a_title_root(self):
+        # Roots come from the id; an override's old root only matters to the migration.
         self.fx.install("tmnf")
         titles = self.home / "titles"
         shutil.copytree(ROOT / "config/titles", titles)
         data = json.loads((titles / "tmnf.json").read_text())
-        data["prefix_subdir"] = "Elsewhere/TMNF"
+        data["legacy_prefix_subdir"] = "Elsewhere/TMNF"
         (titles / "tmnf.json").write_text(json.dumps(data))
-        os.environ["TMNF_TITLES_DIR"] = str(titles)
-        with self.assertRaisesRegex(ValueError, "tmnf has prefix_subdir"):
-            self.plan()
+        os.environ["TRACKMANIA_MAC_TITLES_DIR"] = str(titles)
+        removed = self.removed(self.plan())
+        self.assertIn(self.fx.prefix("tmnf"), removed)
 
     def test_another_titles_documents_inside_the_prefix_block_its_removal(self):
         prefix = self.fx.install("tmnf")
@@ -760,7 +781,7 @@ class GuardPlanTests(unittest.TestCase):
         """The state an include-saves run leaves when it stops on the saves folder."""
         self.fx.install("tmnf")
         shutil.rmtree(self.fx.prefix("tmnf"))
-        tomb = self.fx.root("tmnf") / ".UserData.tmnf-removing.0123abcd"
+        tomb = self.fx.userdata("tmnf").parent / ".tmnf.trackmania-mac-removing.0123abcd"
         self.fx.userdata("tmnf").rename(tomb)
         return tomb
 
@@ -774,7 +795,7 @@ class GuardPlanTests(unittest.TestCase):
             key: value.replace(str(self.home), linked)
             for key, value in self.fx.arguments("tmnf").items()
         }
-        os.environ["TMNF_TITLE"] = "tmnf"
+        os.environ["TRACKMANIA_MAC_TITLE"] = "tmnf"
         entries = uninstall.plan(**arguments)
         uninstall.remove(entries, report=lambda line: None)
         self.assertFalse(tomb.exists())
@@ -786,12 +807,12 @@ class GuardPlanTests(unittest.TestCase):
         if not (self.home / "caseprobe").is_dir():
             self.skipTest("this volume is case-sensitive")
         tomb = self.unfinished_saves()
-        variant = str(self.fx.root("tmnf")).replace("Games/TMNF", "games/tmnf")
-        entries = self.plan(prefix=variant + "/prefix", userdata=variant + "/userdata")
+        variant = str(self.fx.data).replace("TrackManiaMacOS", "trackmaniamacos")
+        entries = self.plan(prefix=variant + "/GAMES/TMNF/prefix", userdata=variant + "/SAVES/TMNF")
         uninstall.remove(entries, report=lambda line: None)
         self.assertFalse(tomb.exists())
         # Restored under the canonical spelling.
-        self.assertIn("UserData", os.listdir(self.fx.root("tmnf")))
+        self.assertIn("tmnf", os.listdir(self.fx.userdata("tmnf").parent))
         self.assertTrue((self.fx.save("tmnf")).exists())
 
     def test_volume_mounted_inside_is_reported_before_any_rename(self):
@@ -828,7 +849,7 @@ class GuardPlanTests(unittest.TestCase):
         turbo = self.fx.root("tm-turbo")
         (turbo / "x").mkdir(parents=True)
         self.fx.root("tm-canyon").symlink_to(turbo)
-        os.environ["TMNF_TITLE"] = "tm-canyon"
+        os.environ["TRACKMANIA_MAC_TITLE"] = "tm-canyon"
         title, titles = uninstall.load_titles()
         bounds = uninstall.limits(
             title, titles, self.home, self.fx.support, self.fx.cache, self.fx.apps
@@ -842,7 +863,7 @@ class GuardPlanTests(unittest.TestCase):
         documents.unlink()
         (documents / "TmForever").mkdir(parents=True)
         (documents / "TmForever/settings").write_text("keep")
-        tomb = self.fx.root("tmnf") / ".prefix.tmnf-removing.0123abcd"
+        tomb = self.fx.root("tmnf") / ".prefix.trackmania-mac-removing.0123abcd"
         prefix.rename(tomb)
         with self.assertRaisesRegex(ValueError, "Back up"):
             self.plan()
@@ -886,18 +907,20 @@ class GuardPlanTests(unittest.TestCase):
 
 class ShellUninstallTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(dir="/private/tmp", prefix="tmnf-uninstall-cli-")
+        temporary = tempfile.TemporaryDirectory(
+            dir="/private/tmp", prefix="trackmania-mac-uninstall-cli-"
+        )
         self.addCleanup(temporary.cleanup)
         self.home = Path(temporary.name).resolve()
         self.fx = Fixture(self.home)
 
-    def tmnf(self, *arguments, title="tmnf"):
+    def run_cli(self, *arguments, title="tmnf"):
         environment = {
             "PATH": "/usr/bin:/bin",
             "HOME": str(self.home),
             "TMPDIR": str(self.home),
-            "TMNF_TITLE": title,
-            "TMNF_APPS_DIR": str(self.fx.apps),
+            "TRACKMANIA_MAC_TITLE": title,
+            "TRACKMANIA_MAC_APPS_DIR": str(self.fx.apps),
         }
         return subprocess.run(
             ["/bin/bash", str(CLI), *arguments],
@@ -914,7 +937,7 @@ class ShellUninstallTests(unittest.TestCase):
         self.fx.install("tmu")
         shared = self.fx.cache / "directx_Jun2010_redist.exe"
         shared.write_text("shared")
-        result = self.tmnf("uninstall", "--yes", "--include-saves")
+        result = self.run_cli("uninstall", "--yes", "--include-saves")
         self.assertEqual(result.returncode, 0, result.stderr)
         title = TITLES["tmnf"]
         for path in (
@@ -927,7 +950,7 @@ class ShellUninstallTests(unittest.TestCase):
             self.assertFalse(os.path.lexists(path), path)
         tmu = TITLES["tmu"]
         for path in (
-            self.fx.prefix("tmu") / ".tmnf-prefix",
+            self.fx.prefix("tmu") / ".trackmania-mac-prefix",
             self.fx.save("tmu"),
             self.fx.apps / tmu.app_name,
             self.fx.support / "launchers/tmu",
@@ -942,27 +965,27 @@ class ShellUninstallTests(unittest.TestCase):
         prefix = self.fx.install("tmnf")
         fd = operation_guard.acquire(prefix)
         try:
-            result = self.tmnf("uninstall", "--yes", "--include-saves")
+            result = self.run_cli("uninstall", "--yes", "--include-saves")
         finally:
             os.close(fd)
         # The guard exits 1, or 75 where it reports a busy prefix on its own.
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Another operation is using prefix", result.stderr)
-        self.assertTrue((prefix / ".tmnf-prefix").exists())
+        self.assertTrue((prefix / ".trackmania-mac-prefix").exists())
         self.assertTrue(self.fx.userdata("tmnf").is_dir())
         self.assertTrue((self.fx.apps / TITLES["tmnf"].app_name).is_dir())
 
     def test_apps_only_title_uninstalls_without_a_prefix(self):
         self.fx.install("tmu")
         shutil.rmtree(self.fx.prefix("tmu"))
-        result = self.tmnf("uninstall", "--yes", title="tmu")
+        result = self.run_cli("uninstall", "--yes", title="tmu")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse((self.fx.apps / TITLES["tmu"].app_name).exists())
         self.assertTrue(self.fx.userdata("tmu").is_dir())
 
     def test_unanswered_prompt_cancels(self):
         prefix = self.fx.install("tmnf")
-        result = self.tmnf("uninstall")
+        result = self.run_cli("uninstall")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Cancelled.", result.stdout)
         self.assertIn(str(prefix), result.stdout)
@@ -974,7 +997,7 @@ class ShellUninstallTests(unittest.TestCase):
         sentinel.write_text("keep")
         hostile = "x\nremove\tz\t{}\tq".format(self.home)
         app = make_app(self.fx.apps / TITLES["tmnf"].app_name, hostile)
-        result = self.tmnf("uninstall", "--yes")
+        result = self.run_cli("uninstall", "--yes")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(sentinel.read_text(), "keep")
         self.assertTrue(app.is_dir())
@@ -984,10 +1007,10 @@ class ShellUninstallTests(unittest.TestCase):
     def test_cli_finishes_an_interrupted_uninstall_without_a_prefix(self):
         self.fx.install("tmu")
         root = self.fx.root("tmu")
-        tomb = root / ".prefix.tmnf-removing.0123abcd"
+        tomb = root / ".prefix.trackmania-mac-removing.0123abcd"
         self.fx.prefix("tmu").rename(tomb)
-        (tomb / ".tmnf-prefix").unlink()
-        result = self.tmnf("uninstall", "--yes", title="tmu")
+        (tomb / ".trackmania-mac-prefix").unlink()
+        result = self.run_cli("uninstall", "--yes", title="tmu")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(tomb.exists())
         self.assertIn("Removed {}".format(tomb), result.stdout)
@@ -995,14 +1018,14 @@ class ShellUninstallTests(unittest.TestCase):
     def test_cancel_then_keep_saves_never_deletes_unfinished_saves(self):
         self.fx.install("tmnf")
         save = self.fx.save("tmnf")
-        tomb = self.fx.root("tmnf") / ".UserData.tmnf-removing.0123abcd"
+        tomb = self.fx.userdata("tmnf").parent / ".tmnf.trackmania-mac-removing.0123abcd"
         # An include-saves run that removed the prefix and stopped on the saves.
         shutil.rmtree(self.fx.prefix("tmnf"))
         self.fx.userdata("tmnf").rename(tomb)
-        cancelled = self.tmnf("uninstall")
+        cancelled = self.run_cli("uninstall")
         self.assertIn("Cancelled.", cancelled.stdout)
         self.assertIn("moved back to", cancelled.stdout)
-        result = self.tmnf("uninstall", "--yes")
+        result = self.run_cli("uninstall", "--yes")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(save.exists())
         self.assertFalse(tomb.exists())
@@ -1015,16 +1038,16 @@ class ShellUninstallTests(unittest.TestCase):
             with self.subTest(title=title.id):
                 script = (
                     'die() { echo "$*" >&2; exit 1; }; . "$1/src/shell/lib/titles.sh"; '
-                    '_cache_installer_path "$TMNF_TITLE"'
+                    '_cache_installer_path "$TRACKMANIA_MAC_TITLE"'
                 )
                 result = subprocess.run(
                     ["/bin/bash", "-c", script, "bash", str(ROOT)],
                     env={
                         "PATH": "/usr/bin:/bin",
-                        "TMNF_PROJECT_DIR": str(ROOT),
-                        "TMNF_TITLE": title.id,
-                        "TMNF_TITLE_SOURCE_URL": title.source_url,
-                        "TMNF_CACHE": str(self.fx.cache),
+                        "TRACKMANIA_MAC_PROJECT_DIR": str(ROOT),
+                        "TRACKMANIA_MAC_TITLE": title.id,
+                        "TRACKMANIA_MAC_TITLE_SOURCE_URL": title.source_url,
+                        "TRACKMANIA_MAC_CACHE": str(self.fx.cache),
                     },
                     text=True,
                     capture_output=True,
@@ -1039,12 +1062,16 @@ class ShellUninstallTests(unittest.TestCase):
 
 class PreviewTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(dir="/private/tmp", prefix="tmnf-preview-")
+        temporary = tempfile.TemporaryDirectory(
+            dir="/private/tmp", prefix="trackmania-mac-preview-"
+        )
         self.addCleanup(temporary.cleanup)
         self.home = Path(temporary.name).resolve()
         self.fx = Fixture(self.home)
-        environment = {key: value for key, value in os.environ.items() if key != "TMNF_TITLES_DIR"}
-        environment.update(HOME=str(self.home), TMNF_APPS_DIR=str(self.fx.apps))
+        environment = {
+            key: value for key, value in os.environ.items() if key != "TRACKMANIA_MAC_TITLES_DIR"
+        }
+        environment.update(HOME=str(self.home), TRACKMANIA_MAC_APPS_DIR=str(self.fx.apps))
         patcher = mock.patch.dict(os.environ, environment, clear=True)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -1054,10 +1081,10 @@ class PreviewTests(unittest.TestCase):
 
     @staticmethod
     def preview_for(fixture, title_id):
-        from tmnf.hub import paths as hub_paths
+        from trackmania_mac.hub import paths as hub_paths
 
         title = TITLES[title_id]
-        with mock.patch.dict(os.environ, {"TMNF_APPS_DIR": str(fixture.apps)}):
+        with mock.patch.dict(os.environ, {"TRACKMANIA_MAC_APPS_DIR": str(fixture.apps)}):
             return uninstall.preview(title, hub_paths.compute(title))
 
     def test_preview_lists_what_exists(self):
@@ -1083,7 +1110,7 @@ class PreviewTests(unittest.TestCase):
 
     def test_preview_skips_other_titles_prefix_and_foreign_apps(self):
         self.fx.install("tmnf", apps=False)
-        (self.fx.prefix("tmnf") / ".tmnf-prefix").write_text("tmu:1\n")
+        (self.fx.prefix("tmnf") / ".trackmania-mac-prefix").write_text("tmu:1\n")
         make_app(self.fx.apps / TITLES["tmnf"].app_name, "com.example.other", marker=False)
         kinds = [item["kind"] for item in self.preview("tmnf")["items"]]
         self.assertNotIn("prefix", kinds)

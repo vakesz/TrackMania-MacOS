@@ -13,9 +13,9 @@ install_openal() (
       warn "Leaving $GAME_OPENAL unchanged: it is neither the game's Creative OpenAL nor OpenAL Soft $OPENAL_SOFT_VERSION"
       return ;;
   esac
-  if test "$TMNF_OPENAL" = creative; then
+  if test "$TRACKMANIA_MAC_OPENAL" = creative; then
     if test "$current" = soft; then
-      verify_file "$GAME_OPENAL_CREATIVE" "$TMNF_TITLE_CREATIVE_OPENAL_SHA256" \
+      verify_file "$GAME_OPENAL_CREATIVE" "$TRACKMANIA_MAC_TITLE_CREATIVE_OPENAL_SHA256" \
         || die "Cannot restore Creative OpenAL: $GAME_OPENAL_CREATIVE is missing. Reinstall the game with update."
       cp "$GAME_OPENAL_CREATIVE" "$GAME_OPENAL"
       rm -f "$GAME_OPENAL_COPYING"
@@ -40,8 +40,8 @@ install_openal() (
     esac
   done < <(unzip -Z1 "$OPENAL_SOFT_ARCHIVE")
 
-  sweep_stale "$TMNF_CACHE" '*-extract.*'
-  extract_dir="$(mktemp -d "${TMNF_CACHE}/openal-extract.XXXXXX")"
+  sweep_stale "$TRACKMANIA_MAC_CACHE" '*-extract.*'
+  extract_dir="$(mktemp -d "${TRACKMANIA_MAC_CACHE}/openal-extract.XXXXXX")"
   printf -v cleanup 'rm -rf -- %q' "$extract_dir"
   # shellcheck disable=SC2064
   trap "$cleanup" EXIT
@@ -50,12 +50,12 @@ install_openal() (
   verify_file "${extract_dir}/openal-soft-${OPENAL_SOFT_VERSION}-bin/bin/Win32/soft_oal.dll" "$OPENAL_SOFT_DLL_SHA256" \
     || die "OpenAL Soft library verification failed."
 
-  # Keep the original, so TMNF_OPENAL=creative restores it without a game reinstall.
+  # Keep the original, so TRACKMANIA_MAC_OPENAL=creative restores it without a game reinstall.
   cp "$GAME_OPENAL" "$GAME_OPENAL_CREATIVE"
   cp "${extract_dir}/openal-soft-${OPENAL_SOFT_VERSION}-bin/bin/Win32/soft_oal.dll" "$GAME_OPENAL"
   cp "${extract_dir}/openal-soft-${OPENAL_SOFT_VERSION}-bin/COPYING" "$GAME_OPENAL_COPYING"
 
   openal_soft_is_installed || die "OpenAL Soft installation failed."
   printf 'soft\n' >"$OPENAL_MARKER"
-  say "Installed OpenAL Soft $OPENAL_SOFT_VERSION as the game's OpenAL32.dll (TMNF_OPENAL=creative restores the original)"
+  say "Installed OpenAL Soft $OPENAL_SOFT_VERSION as the game's OpenAL32.dll (TRACKMANIA_MAC_OPENAL=creative restores the original)"
 )

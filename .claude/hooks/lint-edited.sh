@@ -12,7 +12,7 @@ case "$rel" in
   *.py)
     uv run --frozen --group lint ruff format -q "$rel" >/dev/null 2>&1
     out=$(uv run --frozen --group lint ruff check -q "$rel" 2>&1); rc=$? ;;
-  *.sh|src/shell/cli/tmnf)
+  *.sh|src/shell/cli/trackmania-mac)
     out=$({ bash -n "$rel" && shellcheck -x "$rel"; } 2>&1); rc=$? ;;
   src/swift/*.swift)
     command -v swiftlint >/dev/null || exit 0

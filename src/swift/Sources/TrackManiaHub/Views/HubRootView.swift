@@ -10,7 +10,9 @@ struct HubRootView: View {
     var body: some View {
         Group {
             if let snapshot = model.snapshot {
-                if snapshot.titles.isEmpty {
+                if let migration = snapshot.migration, migration.waiting || model.migrating {
+                    MigrationView(model: model, migration: migration)
+                } else if snapshot.titles.isEmpty {
                     ContentUnavailableView {
                         Label("No titles available", systemImage: "exclamationmark.triangle")
                     } description: {

@@ -1,5 +1,5 @@
 /* x87 workloads shaped like TMNF's per-frame math, timed under a CPU translator.
- * Built as a 32-bit x87 program by tmnf.probes.x87_bench.
+ * Built as a 32-bit x87 program by trackmania_mac.probes.x87_bench.
  *
  * Usage: x87-bench.exe WORKLOAD ITERATIONS [24|53]
  *   mat4    4x4 float matrix multiply chain (like the game's GmMat4/GmIso4 math)

@@ -23,10 +23,10 @@ private final class OutputProbe: @unchecked Sendable {
 final class HubModelsTests: XCTestCase {
     func testDecodesVersionedSnapshot() throws {
         let data = Data("""
-        {"schema":2,"titles":[{"id":"tmnf","name":"TrackMania Nations Forever","shortName":"TMNF","status":"supported","notes":"Ready","engine":"tmf-classic","kind":"online","icon":"/tmp/tmnf.icns","error":null,"requiresSerial":false,"state":{"runtime":{"ready":true,"note":"Wine present"},"prefix":{"ready":true},"directx":{"ready":true},"renderer":{"ready":true},"game":{"ready":true},"gameApp":{"ready":true},"settingsApp":{"ready":true}},"apps":{"game":"/Applications/Game.app","settings":"/Applications/Settings.app"},"actions":[{"id":"update","label":"Check for updates","primary":false,"kind":"verify"}]}]}
+        {"schema":3,"titles":[{"id":"tmnf","name":"TrackMania Nations Forever","shortName":"TMNF","status":"supported","notes":"Ready","engine":"tmf-classic","kind":"online","icon":"/tmp/tmnf.icns","error":null,"requiresSerial":false,"state":{"runtime":{"ready":true,"note":"Wine present"},"prefix":{"ready":true},"directx":{"ready":true},"renderer":{"ready":true},"game":{"ready":true},"gameApp":{"ready":true},"settingsApp":{"ready":true}},"apps":{"game":"/Applications/Game.app","settings":"/Applications/Settings.app"},"actions":[{"id":"update","label":"Check for updates","primary":false,"kind":"verify"}]}]}
         """.utf8)
         let snapshot = try JSONDecoder().decode(HubSnapshot.self, from: data)
-        XCTAssertEqual(snapshot.schema, 2)
+        XCTAssertEqual(snapshot.schema, 3)
         XCTAssertEqual(snapshot.titles.single?.summary.count, 7)
         XCTAssertEqual(snapshot.titles.single?.summary.allSatisfy(\.ready), true)
         XCTAssertEqual(snapshot.titles.single?.kind, .online)
@@ -46,7 +46,7 @@ final class HubModelsTests: XCTestCase {
         let snapshot = try JSONDecoder().decode(
             HubSnapshot.self,
             from: Data("""
-            {"schema":2,"titles":[],"error":"No valid title definitions found."}
+            {"schema":3,"titles":[],"error":"No valid title definitions found."}
             """.utf8)
         )
 
@@ -78,7 +78,7 @@ final class HubModelsTests: XCTestCase {
 
     func testRemovalPreviewDecodesAndToleratesBadItems() throws {
         let snapshot = try HubBackend.decodeSnapshot(Data("""
-            {"schema":2,"titles":[
+            {"schema":3,"titles":[
               {"id":"a","name":"A","status":"supported","notes":"",
                "removal":{"items":[{"kind":"prefix","label":"Wine prefix and game files","path":"/p"},
                                    {"kind":"logs"}],
@@ -169,7 +169,7 @@ final class HubTolerantDecodingTests: XCTestCase {
 
     func testMalformedTitleIsSkippedAndReported() throws {
         let snapshot = try decode("""
-        {"schema":2,"titles":[{"name":"No id"},{"id":"ok","name":"Fine"},{"id":"bad","actions":"nope","state":7}]}
+        {"schema":3,"titles":[{"name":"No id"},{"id":"ok","name":"Fine"},{"id":"bad","actions":"nope","state":7}]}
         """)
         XCTAssertEqual(snapshot.titles.map(\.id), ["ok", "bad"])
         XCTAssertEqual(snapshot.skippedTitles.count, 1)
@@ -178,7 +178,7 @@ final class HubTolerantDecodingTests: XCTestCase {
     }
 
     func testMissingFieldsGetDefaults() throws {
-        let title = try XCTUnwrap(decode(#"{"schema":2,"titles":[{"id":"x"}]}"#).titles.first)
+        let title = try XCTUnwrap(decode(#"{"schema":3,"titles":[{"id":"x"}]}"#).titles.first)
         XCTAssertEqual(title.name, "x")
         XCTAssertEqual(title.notes, "")
         XCTAssertEqual(title.status, .unknown(""))
@@ -188,7 +188,7 @@ final class HubTolerantDecodingTests: XCTestCase {
 
     func testUnknownValuesRoundTripAndExtraKeysAreIgnored() throws {
         let title = try XCTUnwrap(decode("""
-        {"schema":2,"future":1,"titles":[{"id":"x","status":"beta","kind":"cloud","iconSource":"web","newField":[1],
+        {"schema":3,"future":1,"titles":[{"id":"x","status":"beta","kind":"cloud","iconSource":"web","newField":[1],
          "actions":[{"id":"a","label":"A","primary":true,"kind":"teleport","extra":1},{"id":"b","kind":"online-trial"}]}]}
         """).titles.first)
         XCTAssertEqual(title.status, .unknown("beta"))
@@ -204,15 +204,43 @@ final class HubTolerantDecodingTests: XCTestCase {
         XCTAssertEqual(InstallerKind.parse("online-retail"), .onlineRetail)
         XCTAssertEqual(ActionKind.parse("build"), .build)
         XCTAssertEqual(TitleStatus.parse("provisional"), .provisional)
-        let source = try XCTUnwrap(decode(#"{"schema":2,"titles":[{"id":"x","iconSource":"bundled"}]}"#).titles.first)
+        let source = try XCTUnwrap(decode(#"{"schema":3,"titles":[{"id":"x","iconSource":"bundled"}]}"#).titles.first)
         XCTAssertEqual(source.iconSource, .bundled)
-        let none = try XCTUnwrap(decode(#"{"schema":2,"titles":[{"id":"x","iconSource":null}]}"#).titles.first)
+        let none = try XCTUnwrap(decode(#"{"schema":3,"titles":[{"id":"x","iconSource":null}]}"#).titles.first)
         XCTAssertNil(none.iconSource)
     }
 
+    func testMigrationDecodesAndToleratesOldAndUnknownValues() throws {
+        let pending = try decode(#"""
+        {"schema":3,"migration":{"state":"pending","reason":null,
+         "from":["/Users/me/Games/TMNF"],"to":"/Users/me/Library/TrackManiaMacOS"},"titles":[]}
+        """#)
+        XCTAssertEqual(pending.migration, HubMigration(state: .pending, from: ["/Users/me/Games/TMNF"],
+                                                       to: "/Users/me/Library/TrackManiaMacOS"))
+        XCTAssertEqual(pending.migration?.waiting, true)
+        XCTAssertEqual(pending.migration?.partial, false)
+        let resumed = try decode(#"{"schema":3,"migration":{"state":"blocked","partial":true},"titles":[]}"#)
+        XCTAssertEqual(resumed.migration?.partial, true)
+        XCTAssertTrue(MigrationView.footer(for: try XCTUnwrap(resumed.migration)).hasPrefix("Part of the move"))
+        XCTAssertTrue(MigrationView.footer(for: try XCTUnwrap(pending.migration)).hasPrefix("Nothing was moved"))
+        let blocked = try decode(#"{"schema":3,"migration":{"state":"blocked","reason":"Quit it"},"titles":[]}"#)
+        XCTAssertEqual(blocked.migration?.state, .blocked)
+        XCTAssertEqual(blocked.migration?.reason, "Quit it")
+        XCTAssertEqual(blocked.migration?.from, [])
+        let none = try decode(#"{"schema":3,"migration":{"state":"none","from":[],"to":"/x"},"titles":[]}"#)
+        XCTAssertEqual(none.migration?.waiting, false)
+        let future = try decode(#"{"schema":3,"migration":{"state":"later"},"titles":[]}"#)
+        XCTAssertEqual(future.migration?.state, .unknown("later"))
+        XCTAssertNil(try decode(#"{"schema":3,"titles":[]}"#).migration)
+    }
+
+    func testMigrateArgumentsNameNoTitle() {
+        XCTAssertEqual(HubBackend.migrateArguments, ["hub", "migrate"])
+    }
+
     func testSchemaMismatchIsReported() {
-        XCTAssertThrowsError(try HubBackend.decodeSnapshot(Data(#"{"schema":3,"titles":[]}"#.utf8))) { error in
-            guard case HubBackendError.schemaMismatch(3) = error else { return XCTFail("\(error)") }
+        XCTAssertThrowsError(try HubBackend.decodeSnapshot(Data(#"{"schema":2,"titles":[]}"#.utf8))) { error in
+            guard case HubBackendError.schemaMismatch(2) = error else { return XCTFail("\(error)") }
         }
     }
 

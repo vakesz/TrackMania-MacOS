@@ -17,16 +17,18 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tmnf.build import runtime_builder as build
-from tmnf.install.runtime_manifest import REQUIRED_FILES
+from trackmania_mac.build import runtime_builder as build
+from trackmania_mac.install.runtime_manifest import REQUIRED_FILES
 
 
 ROOT = Path(__file__).resolve().parents[1]
+# A fixture pyproject.toml: a version and a dependency group, like the real one.
+PYPROJECT = '[project]\nname = "fixture"\nversion = "{version}"\n\n[dependency-groups]\nlint = ["ruff>=0.17"]\n'
 
 
 class BuildTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="mactmnf-build-test-")
+        temporary = tempfile.TemporaryDirectory(prefix="trackmania-mac-build-test-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         release = self.root / ".build/release"
@@ -46,7 +48,7 @@ class BuildTests(unittest.TestCase):
                 "moltenvk": {"url": "fixture", "sha256": "b"},
             },
             ENV={"MACOSX_DEPLOYMENT_TARGET": "14.0"},
-            FILE_PREFIX_MAP=f"-ffile-prefix-map={self.root}=/tmnf",
+            FILE_PREFIX_MAP=f"-ffile-prefix-map={self.root}=/trackmania-mac",
         )
         patcher = mock.patch.multiple(build, **overrides)
         patcher.start()
@@ -75,7 +77,7 @@ class BuildTests(unittest.TestCase):
         (self.root / "src/shell/cli").mkdir(parents=True)
         (self.root / "src/shell/cli/install.sh").write_text("fixture installer\n")
         (self.root / "docs/building.md").write_text("fixture documentation\n")
-        (self.root / "VERSION").write_text("test\n")
+        (self.root / "pyproject.toml").write_text(PYPROJECT.format(version="test"))
         (self.root / "config/sources.json").write_text(json.dumps(build.LOCK))
         (self.root / "config/settings.json").write_text("{}\n")
         patcher = mock.patch.object(
@@ -96,7 +98,7 @@ class BuildTests(unittest.TestCase):
             path = build.RUNTIME / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"fixture payload")
-        (build.RUNTIME / ".tmnf-runtime").write_text("test\n")
+        (build.RUNTIME / ".trackmania-mac-runtime").write_text("test\n")
         self.manifest()
         self.complete = build.BUILD / "build-inputs.json"
 
@@ -107,7 +109,7 @@ class BuildTests(unittest.TestCase):
             if name == "moltenvk":
                 (source / "External").mkdir(exist_ok=True)
             (source / "source.c").write_text("original\n")
-            (source / ".mactmnf-source.json").write_text(
+            (source / ".trackmania-mac-source.json").write_text(
                 json.dumps(build.prepared_identity(name), sort_keys=True)
             )
 
@@ -131,7 +133,7 @@ class BuildTests(unittest.TestCase):
     def main(self, *args, jobs="3"):
         with (
             mock.patch.object(sys, "argv", ["build.py", *args]),
-            mock.patch.dict(os.environ, TMNF_JOBS=jobs),
+            mock.patch.dict(os.environ, TRACKMANIA_MAC_JOBS=jobs),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             build.main()
@@ -150,8 +152,10 @@ class BuildTests(unittest.TestCase):
 
     def test_inputs_include_root_license_and_recursive_config(self):
         original = build.build_inputs()
-        self.assertIn("src/python/tmnf/install/runtime_manifest.py", original)
-        (self.root / "src/python/tmnf/install/runtime_manifest.py").write_text("changed verifier")
+        self.assertIn("src/python/trackmania_mac/install/runtime_manifest.py", original)
+        (self.root / "src/python/trackmania_mac/install/runtime_manifest.py").write_text(
+            "changed verifier"
+        )
         self.assertNotEqual(original, build.build_inputs())
         original = build.build_inputs()
         (self.root / "LICENSE").write_text("new license")
@@ -165,6 +169,16 @@ class BuildTests(unittest.TestCase):
         self.assertNotEqual(before, build.build_inputs())
         nested.unlink()
         self.assertNotIn("config/nested/input.json", build.build_inputs())
+
+    def test_only_the_pyproject_version_is_a_build_input(self):
+        pyproject = self.root / "pyproject.toml"
+        before = build.build_inputs()
+        self.assertNotIn("pyproject.toml", before)
+        self.assertEqual(before["pyproject.toml [project] version"], "test")
+        pyproject.write_text(PYPROJECT.format(version="test").replace("ruff>=0.17", "ruff>=9"))
+        self.assertEqual(before, build.build_inputs())
+        pyproject.write_text(PYPROJECT.format(version="test2"))
+        self.assertNotEqual(before, build.build_inputs())
 
     def test_release_hash_file_is_neither_build_input_nor_source_content(self):
         relative = Path("config/release-assets.sha256")
@@ -220,7 +234,7 @@ class BuildTests(unittest.TestCase):
                 apply.assert_called_once()
                 self.assertEqual((source / "source.c").read_text(), "bundled")
                 self.assertEqual(
-                    json.loads((source / ".mactmnf-source.json").read_text()),
+                    json.loads((source / ".trackmania-mac-source.json").read_text()),
                     build.prepared_identity("wine"),
                 )
 
@@ -246,7 +260,7 @@ class BuildTests(unittest.TestCase):
 
     def test_old_and_missing_source_stamps_reprepare_the_tree(self):
         source = build.SOURCES / "wine"
-        stamp = source / ".mactmnf-source.json"
+        stamp = source / ".trackmania-mac-source.json"
         shipped = self.root / "upstream/wine"
         shipped.mkdir(parents=True)
         (shipped / "source.c").write_text("bundled")
@@ -305,7 +319,7 @@ class BuildTests(unittest.TestCase):
         with mock.patch.object(build, "apply_patches") as apply:
             build.fetch("wine")
         apply.assert_called_once()
-        stamp = json.loads((source / ".mactmnf-source.json").read_text())
+        stamp = json.loads((source / ".trackmania-mac-source.json").read_text())
         self.assertEqual(stamp, build.prepared_identity("wine"))
         (source / "source.c").write_text("local edit")
         (shipped / "source.c").write_text("new upstream")
@@ -332,7 +346,7 @@ class BuildTests(unittest.TestCase):
 
                 def fail(*args):
                     self.assertFalse(self.complete.exists())
-                    with (build.BUILD / ".mactmnf.lock").open() as lock:
+                    with (build.BUILD / ".trackmania-mac.lock").open() as lock:
                         with self.assertRaises(BlockingIOError):
                             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     raise RuntimeError("fixture failure")
@@ -348,7 +362,7 @@ class BuildTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, "fixture failure"):
                         self.main(*(["--only", only] if only else []))
                 self.assertFalse(self.complete.exists())
-                with (build.BUILD / ".mactmnf.lock").open() as lock:
+                with (build.BUILD / ".trackmania-mac.lock").open() as lock:
                     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
     def test_full_build_cleans_deps_but_keeps_configure_paths_and_work(self):
@@ -417,7 +431,7 @@ class BuildTests(unittest.TestCase):
                     self.actions() as actions,
                 ):
                     partial = build.WORK / "wine/partial-object"
-                    stamp = build.WORK / ".mactmnf-work.json"
+                    stamp = build.WORK / ".trackmania-mac-work.json"
 
                     def fail():
                         self.assertTrue(stamp.is_file())
@@ -468,7 +482,7 @@ class BuildTests(unittest.TestCase):
                 with self.subTest(action=action, relative=relative), self.actions() as actions:
                     path = self.root / relative
                     partial = build.WORK / "partial-object"
-                    stamp = build.WORK / ".mactmnf-work.json"
+                    stamp = build.WORK / ".trackmania-mac-work.json"
                     checkpoint = []
 
                     def edit():
@@ -504,7 +518,7 @@ class BuildTests(unittest.TestCase):
 
     def test_dependency_materialization_checkpoint_survives_wine_timeout(self):
         header = build.SOURCES / "moltenvk/External/dependency/header.h"
-        stamp = build.WORK / ".mactmnf-work.json"
+        stamp = build.WORK / ".trackmania-mac-work.json"
         partial = build.WORK / "partial-object"
 
         def materialize():
@@ -542,7 +556,7 @@ class BuildTests(unittest.TestCase):
                 only = "session" if action == "session" else None
                 args = ["--only", only] if only else []
                 work = build.WORK / "session" if only else build.WORK
-                stamp = work / ".mactmnf-work.json"
+                stamp = work / ".trackmania-mac-work.json"
                 partial = work / "partial-object"
                 checkpoint = []
 
@@ -580,7 +594,8 @@ class BuildTests(unittest.TestCase):
                 ):
                     self.main()
                 self.assertEqual(
-                    json.loads((build.WORK / ".mactmnf-work.json").read_text())["sources"], before
+                    json.loads((build.WORK / ".trackmania-mac-work.json").read_text())["sources"],
+                    before,
                 )
                 self.assertFalse(self.complete.exists())
                 actions["dependencies"].side_effect = lambda: self.assertFalse(partial.exists())
@@ -604,7 +619,7 @@ class BuildTests(unittest.TestCase):
         )
 
     def test_session_compiles_unicode_64_bit_helper_and_copies_to_runtime(self):
-        binary = build.WORK / "session/tmnf-session.exe"
+        binary = build.WORK / "session/trackmania-mac-session.exe"
 
         def compile(*args, **kwargs):
             self.assertTrue(binary.parent.is_dir())
@@ -627,14 +642,14 @@ class BuildTests(unittest.TestCase):
             title="session: x86_64-w64-mingw32-gcc session.c",
         )
         self.assertEqual(
-            (build.RUNTIME / "libexec/tmnf-session.exe").read_bytes(), binary.read_bytes()
+            (build.RUNTIME / "libexec/trackmania-mac-session.exe").read_bytes(), binary.read_bytes()
         )
 
     def test_failed_session_compile_does_not_copy_stale_output(self):
-        binary = build.WORK / "session/tmnf-session.exe"
+        binary = build.WORK / "session/trackmania-mac-session.exe"
         binary.parent.mkdir(parents=True)
         binary.write_bytes(b"stale compiler output")
-        installed = build.RUNTIME / "libexec/tmnf-session.exe"
+        installed = build.RUNTIME / "libexec/trackmania-mac-session.exe"
         original = installed.read_bytes()
         with mock.patch.object(build, "run", side_effect=RuntimeError("compiler failed")):
             with self.assertRaisesRegex(RuntimeError, "compiler failed"):
@@ -684,7 +699,7 @@ class BuildTests(unittest.TestCase):
         ):
             build.toolchain_identity.side_effect = toolchain_identity
             self.main()
-            full_stamp = build.WORK / ".mactmnf-work.json"
+            full_stamp = build.WORK / ".trackmania-mac-work.json"
             original_stamp = full_stamp.read_bytes()
             cached = build.WORK / "wine/Makefile"
             cached.parent.mkdir()
@@ -715,10 +730,10 @@ class BuildTests(unittest.TestCase):
     def test_session_identity_changes_only_discard_session_work(self):
         with self.actions():
             self.main()
-            full_stamp = build.WORK / ".mactmnf-work.json"
+            full_stamp = build.WORK / ".trackmania-mac-work.json"
             original_stamp = full_stamp.read_bytes()
             self.main("--only", "session")
-            stamp = build.WORK / "session/.mactmnf-work.json"
+            stamp = build.WORK / "session/.trackmania-mac-work.json"
             cached = build.WORK / "session/cached-object"
             cached.write_text("cached helper output")
             self.main("--only", "session")
@@ -753,7 +768,7 @@ class BuildTests(unittest.TestCase):
             self.main("--only", "session")
             before = build.inventory(build.WORK, lambda path: path.parts[0] == "session")
             self.complete_build()
-            stamp = build.WORK / "session/.mactmnf-work.json"
+            stamp = build.WORK / "session/.trackmania-mac-work.json"
             identity = stamp.read_bytes()
             partial = build.WORK / "session/partial-object"
 
@@ -787,7 +802,7 @@ class BuildTests(unittest.TestCase):
                 self.main()
         self.assertFalse(self.complete.exists())
         self.assertNotEqual(
-            json.loads((build.WORK / ".mactmnf-work.json").read_text())["inputs"],
+            json.loads((build.WORK / ".trackmania-mac-work.json").read_text())["inputs"],
             build.build_inputs(),
         )
 
@@ -832,7 +847,7 @@ class BuildTests(unittest.TestCase):
                 self.main()
         self.assertFalse(self.complete.exists())
         self.assertNotEqual(
-            json.loads((build.WORK / ".mactmnf-work.json").read_text())["sources"],
+            json.loads((build.WORK / ".trackmania-mac-work.json").read_text())["sources"],
             build.source_inventory(),
         )
 
@@ -848,7 +863,7 @@ class BuildTests(unittest.TestCase):
                 self.main()
         self.assertFalse(self.complete.exists())
         self.assertNotEqual(
-            json.loads((build.WORK / ".mactmnf-work.json").read_text())["sources"],
+            json.loads((build.WORK / ".trackmania-mac-work.json").read_text())["sources"],
             build.source_inventory(),
         )
 
@@ -861,7 +876,7 @@ class BuildTests(unittest.TestCase):
                 self.main()
         self.assertFalse(self.complete.exists())
         self.assertEqual(
-            json.loads((build.WORK / ".mactmnf-work.json").read_text())["sources"],
+            json.loads((build.WORK / ".trackmania-mac-work.json").read_text())["sources"],
             build.source_inventory(),
         )
         with self.assertRaisesRegex(RuntimeError, "completed build"):
@@ -900,7 +915,7 @@ class BuildTests(unittest.TestCase):
         (source / "MoltenVKPackaging.xcodeproj").mkdir()
         (source / "Demos/Demos.xcworkspace").mkdir(parents=True)
         (source / "Demos/Demos.xcworkspace/contents.xcworkspacedata").write_text("shipped")
-        (source / ".mactmnf-source.json").write_text(
+        (source / ".trackmania-mac-source.json").write_text(
             json.dumps(build.prepared_identity("moltenvk"), sort_keys=True)
         )
 
@@ -960,7 +975,7 @@ class BuildTests(unittest.TestCase):
                 self.main()
         self.assertFalse(self.complete.exists())
         self.assertNotEqual(
-            json.loads((build.WORK / ".mactmnf-work.json").read_text())["sources"],
+            json.loads((build.WORK / ".trackmania-mac-work.json").read_text())["sources"],
             build.source_inventory(),
         )
 
@@ -1000,7 +1015,7 @@ class BuildTests(unittest.TestCase):
         self.assertIn("changed", message)
         self.assertFalse(self.complete.exists())
         self.assertNotEqual(
-            json.loads((build.WORK / ".mactmnf-work.json").read_text())["sources"],
+            json.loads((build.WORK / ".trackmania-mac-work.json").read_text())["sources"],
             build.source_inventory(),
         )
 
@@ -1011,7 +1026,7 @@ class BuildTests(unittest.TestCase):
                 with self.assertRaises(SystemExit) as exit:
                     self.main(jobs=jobs)
                 self.assertEqual(exit.exception.code, 2)
-                self.assertIn("TMNF_JOBS must be a positive integer", error.getvalue())
+                self.assertIn("TRACKMANIA_MAC_JOBS must be a positive integer", error.getvalue())
                 self.assertNotIn("Traceback", error.getvalue())
                 self.assertTrue(self.complete.exists())
         with self.actions():
@@ -1024,7 +1039,7 @@ class BuildTests(unittest.TestCase):
             mock.patch.dict(os.environ),
             contextlib.redirect_stdout(io.StringIO()) as output,
         ):
-            os.environ.pop("TMNF_JOBS", None)
+            os.environ.pop("TRACKMANIA_MAC_JOBS", None)
             with mock.patch.object(sys, "argv", ["build.py", "--only", "wine"]):
                 build.main()
         self.assertEqual(build.JOBS, os.cpu_count())
@@ -1080,11 +1095,11 @@ class BuildTests(unittest.TestCase):
                 elif change == "link":
                     link = build.RUNTIME / "bin/wine-link"
                     link.unlink()
-                    link.symlink_to("../.tmnf-runtime")
+                    link.symlink_to("../.trackmania-mac-runtime")
                 elif change == "manifest":
                     (build.RUNTIME / "SHA256SUMS").write_text("invalid")
                 else:
-                    (build.RUNTIME / ".tmnf-runtime").write_text("wrong\n")
+                    (build.RUNTIME / ".trackmania-mac-runtime").write_text("wrong\n")
                 if change not in ("manifest", "version"):
                     self.manifest()
                 with self.assertRaisesRegex(RuntimeError, "Runtime"):
@@ -1126,7 +1141,7 @@ class BuildTests(unittest.TestCase):
             "lib/d9vk/d3d9.dll",
             "lib/libMoltenVK.dylib",
             "lib/wine/i386-windows/d3dcompiler_43.dll",
-            "libexec/tmnf-session.exe",
+            "libexec/trackmania-mac-session.exe",
         ):
             with self.subTest(missing=name):
                 self.complete_build()
@@ -1194,7 +1209,7 @@ class BuildTests(unittest.TestCase):
             path = build.SOURCES / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("generated")
-        cache = self.root / "src/python/tmnf/build/__pycache__"
+        cache = self.root / "src/python/trackmania_mac/build/__pycache__"
         cache.mkdir()
         (cache / "build.pyc").write_bytes(b"cache")
         build.verify_completed()
@@ -1204,8 +1219,8 @@ class BuildTests(unittest.TestCase):
             names = tar.getnames()
             for relative in excluded:
                 self.assertNotIn("trackmania-mac/upstream/" + relative, names)
-            self.assertNotIn("tmnf/src/python/tmnf/build/__pycache__", names)
-            self.assertNotIn("trackmania-mac/upstream/wine/.mactmnf-source.json", names)
+            self.assertNotIn("tmnf/src/python/trackmania_mac/build/__pycache__", names)
+            self.assertNotIn("trackmania-mac/upstream/wine/.trackmania-mac-source.json", names)
             for relative in ("src/c/session.c", "src/nested/protocol.h"):
                 self.assertEqual(
                     tar.extractfile("trackmania-mac/" + relative).read(),
@@ -1218,7 +1233,9 @@ class BuildTests(unittest.TestCase):
     def test_packaging_needs_no_toolchain_and_publishes_valid_checksums(self):
         self.complete_build()
         original_complete = self.complete.read_bytes()
-        stamps = {path: path.read_bytes() for path in build.SOURCES.glob("*/.mactmnf-source.json")}
+        stamps = {
+            path: path.read_bytes() for path in build.SOURCES.glob("*/.trackmania-mac-source.json")
+        }
         with (
             mock.patch.object(
                 build, "toolchain_identity", side_effect=AssertionError("toolchain probe")
@@ -1307,7 +1324,7 @@ class BuildTests(unittest.TestCase):
                         waiting.set()
                         flock(fd, operation)
 
-                    with (build.BUILD / ".mactmnf.lock").open("a") as owner:
+                    with (build.BUILD / ".trackmania-mac.lock").open("a") as owner:
                         flock(owner, fcntl.LOCK_EX)
                         before = build.inventory(build.BUILD)
                         with (
@@ -1341,7 +1358,7 @@ class BuildTests(unittest.TestCase):
 
         def edit(name):
             source = fetch(name)
-            (self.root / "src/python/tmnf/build/game_profile.py").write_text(
+            (self.root / "src/python/trackmania_mac/build/game_profile.py").write_text(
                 "edited after acquiring the lock"
             )
             return source
@@ -1350,7 +1367,7 @@ class BuildTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Build inputs changed during the build"):
                 self.main()
         self.assertFalse(self.complete.exists())
-        self.assertFalse((build.WORK / ".mactmnf-work.json").exists())
+        self.assertFalse((build.WORK / ".trackmania-mac-work.json").exists())
 
     def test_packages_cannot_interleave_archive_and_checksum_publication(self):
         self.complete_build()
@@ -1486,11 +1503,11 @@ class BuildTests(unittest.TestCase):
 
 class BuildShellTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="mactmnf-build-shell-")
+        temporary = tempfile.TemporaryDirectory(prefix="trackmania-mac-build-shell-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         (self.root / "src/shell/tools").mkdir(parents=True)
-        (self.root / "src/python/tmnf").mkdir(parents=True)
+        (self.root / "src/python/trackmania_mac").mkdir(parents=True)
         shutil.copy2(
             ROOT / "src/shell/tools/build-runtime.sh",
             self.root / "src/shell/tools/build-runtime.sh",
@@ -1511,7 +1528,7 @@ class BuildShellTests(unittest.TestCase):
     def run_wrapper(self, *args, jobs="3"):
         return subprocess.run(
             ["/bin/bash", str(self.root / "src/shell/tools/build-runtime.sh"), *args],
-            env=dict(os.environ, PATH=f"{self.bin}:/usr/bin:/bin", TMNF_JOBS=jobs),
+            env=dict(os.environ, PATH=f"{self.bin}:/usr/bin:/bin", TRACKMANIA_MAC_JOBS=jobs),
             text=True,
             capture_output=True,
             check=False,
@@ -1529,7 +1546,7 @@ class BuildShellTests(unittest.TestCase):
             with self.subTest(args=args):
                 result = self.run_wrapper(*args, jobs="invalid")
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn("tmnf.build.runtime_builder", result.stdout)
+                self.assertIn("trackmania_mac.build.runtime_builder", result.stdout)
                 self.assertNotIn("forbidden bootstrap", result.stderr)
                 self.assertTrue(self.complete.exists())
 
@@ -1551,7 +1568,8 @@ class BuildShellTests(unittest.TestCase):
                 result = self.run_wrapper(*args)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(
-                    result.stdout.splitlines(), ["-m", "tmnf.build.runtime_builder", *args]
+                    result.stdout.splitlines(),
+                    ["-m", "trackmania_mac.build.runtime_builder", *args],
                 )
                 self.assertEqual(self.complete.read_text(), "complete")
         self.assertEqual(
@@ -1576,7 +1594,7 @@ class BuildShellTests(unittest.TestCase):
             with self.subTest(jobs=jobs):
                 result = self.run_wrapper(jobs=jobs)
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("TMNF_JOBS must be a positive integer", result.stderr)
+                self.assertIn("TRACKMANIA_MAC_JOBS must be a positive integer", result.stderr)
                 self.assertNotIn("forbidden bootstrap", result.stderr)
                 self.assertTrue(self.complete.exists())
 

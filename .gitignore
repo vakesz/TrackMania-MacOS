@@ -1,8 +1,27 @@
+# macOS
 .DS_Store
-*.log
+
+# Build output and logs
 .build/
-__pycache__/
-.ruff_cache/
 upstream/
+*.log
+
+# Python tooling
+.venv/
+__pycache__/
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Generated at package time from assets/titles/*.svg
 assets/titles/*.png
+
+# Game files and installers are never committed
+*.exe
+*.dll
+*.iso
+*.dmg
+
+# Local Claude Code state
+.claude/worktrees/
+.claude/settings.local.json

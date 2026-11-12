@@ -46,7 +46,7 @@ class CiAreaTests(unittest.TestCase):
         self.assertEqual(areas("src/swift/Sources/TrackManiaHub/HubApp.swift"), {"swift"})
 
     def test_python_and_shell_run_the_scripts_check(self):
-        self.assertEqual(areas("src/python/tmnf/hub/run.py"), {"scripts"})
+        self.assertEqual(areas("src/python/trackmania_mac/hub/run.py"), {"scripts"})
         self.assertEqual(areas("src/shell/lib/commands/maintain.sh"), {"scripts"})
         self.assertEqual(areas("config/titles/tmu.json"), {"scripts"})
 
@@ -56,8 +56,8 @@ class CiAreaTests(unittest.TestCase):
     def test_c_helpers_and_their_flag_sources(self):
         for path in (
             "src/c/session.c",
-            "src/python/tmnf/build/runtime_builder.py",
-            "src/python/tmnf/session/monitor.py",
+            "src/python/trackmania_mac/build/runtime_builder.py",
+            "src/python/trackmania_mac/session/monitor.py",
         ):
             with self.subTest(path=path):
                 self.assertEqual(areas(path), {"scripts", "c-helpers"})

@@ -221,7 +221,7 @@ int main(void)
     QueryPerformanceCounter(&end);
     double microseconds = 1000000.0 * (end.QuadPart - begin.QuadPart) / frequency.QuadPart / iterations;
     printf("SleepEx(0, TRUE): %.3f us/call, %d calls\n", microseconds, iterations);
-    const char *limit = getenv("MACTMNF_MAX_ZERO_WAIT_US");
+    const char *limit = getenv("TRACKMANIA_MAC_MAX_ZERO_WAIT_US");
     if (limit) CHECK(microseconds < strtod(limit, NULL));
     printf("APC callbacks: %ld; failures: %ld\n", callbacks, failures);
     return failures ? 1 : 0;

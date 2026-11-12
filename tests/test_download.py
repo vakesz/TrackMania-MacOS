@@ -15,7 +15,7 @@ class DownloadVerified(unittest.TestCase):
     """download_verified with a stub curl that records its arguments."""
 
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="tmnf-download-")
+        temporary = tempfile.TemporaryDirectory(prefix="trackmania-mac-download-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         (self.root / "bin").mkdir()
@@ -88,7 +88,7 @@ class InnoStaging(unittest.TestCase):
     """The unpacked inner installer must not outlive the install, success or not."""
 
     def run_install(self, wait_stub):
-        temporary = tempfile.TemporaryDirectory(prefix="tmnf-inno-")
+        temporary = tempfile.TemporaryDirectory(prefix="trackmania-mac-inno-")
         self.addCleanup(temporary.cleanup)
         home = Path(temporary.name).resolve()
         staging = home / "cache" / "setup.inner"
@@ -98,7 +98,7 @@ class InnoStaging(unittest.TestCase):
             '_cache_installer_path() { printf "%s\\n" "$HOME/cache/setup.exe"; }; '
             'unpack_inner_inno() { mkdir -p "$HOME/cache/setup.inner"; '
             'printf "%s\\n" "$HOME/cache/setup.inner/setup.exe"; }; '
-            "run_released_installer() { TMNF_INSTALLER_PID=0; }; "
+            "run_released_installer() { TRACKMANIA_MAC_INSTALLER_PID=0; }; "
             + wait_stub
             + " verify_installed_game() { :; }; say() { :; }; "
             + ""
@@ -107,7 +107,7 @@ class InnoStaging(unittest.TestCase):
         result = subprocess.run(
             ["/bin/bash", "-euc", script],
             cwd=ROOT,
-            env={"PATH": "/usr/bin:/bin", "HOME": str(home), "TMNF_TITLE": "tmu"},
+            env={"PATH": "/usr/bin:/bin", "HOME": str(home), "TRACKMANIA_MAC_TITLE": "tmu"},
             text=True,
             capture_output=True,
             timeout=30,
@@ -128,7 +128,7 @@ class InnoStaging(unittest.TestCase):
         self.assertFalse(staging.exists())
 
     def test_only_inner_directories_are_removed(self):
-        with tempfile.TemporaryDirectory(prefix="tmnf-inno-") as directory:
+        with tempfile.TemporaryDirectory(prefix="trackmania-mac-inno-") as directory:
             keep = Path(directory).resolve() / "cache"
             keep.mkdir()
             subprocess.run(
@@ -141,7 +141,7 @@ class InnoStaging(unittest.TestCase):
                     str(keep),
                 ],
                 cwd=ROOT,
-                env={"PATH": "/usr/bin:/bin", "HOME": directory, "TMNF_TITLE": "tmu"},
+                env={"PATH": "/usr/bin:/bin", "HOME": directory, "TRACKMANIA_MAC_TITLE": "tmu"},
                 check=True,
             )
             self.assertTrue(keep.is_dir())
@@ -151,7 +151,7 @@ class StopInstallerTree(unittest.TestCase):
     """wait_inno_setup must not block on an installer that survives wineserver -k."""
 
     def run_wait(self, installer_body):
-        temporary = tempfile.TemporaryDirectory(prefix="tmnf-wait-")
+        temporary = tempfile.TemporaryDirectory(prefix="trackmania-mac-wait-")
         self.addCleanup(temporary.cleanup)
         home = Path(temporary.name).resolve()
         log = home / "install.log"
@@ -177,8 +177,8 @@ class StopInstallerTree(unittest.TestCase):
             env={
                 "PATH": "/usr/bin:/bin",
                 "HOME": str(home),
-                "TMNF_TITLE": "tmu",
-                "TMNF_INSTALL_KILL_GRACE": "1",
+                "TRACKMANIA_MAC_TITLE": "tmu",
+                "TRACKMANIA_MAC_INSTALL_KILL_GRACE": "1",
             },
             text=True,
             capture_output=True,

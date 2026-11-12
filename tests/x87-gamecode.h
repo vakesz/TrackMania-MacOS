@@ -1,4 +1,4 @@
-/* Shared between x87-gamecode.c and the table tmnf.probes.x87_physics_gate generates. */
+/* Shared between x87-gamecode.c and the table trackmania_mac.probes.x87_physics_gate generates. */
 #include <stdint.h>
 #include <string.h>
 

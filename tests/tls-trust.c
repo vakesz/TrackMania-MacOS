@@ -31,11 +31,11 @@ int main(int argc, char **argv)
     nonce_length = strlen(argv[2]);
     if (nonce_length < 32 || nonce_length > 128 ||
             strspn(argv[2], "0123456789abcdefABCDEF") != nonce_length ||
-            GetEnvironmentVariableA("MACTMNF_DISPOSABLE_TEST", environment, sizeof(environment)) != nonce_length ||
+            GetEnvironmentVariableA("TRACKMANIA_MAC_DISPOSABLE_TEST", environment, sizeof(environment)) != nonce_length ||
             strcmp(environment, argv[2])) goto done;
 
     /* Hold the exact C: marker without write/delete sharing through the import. */
-    marker = CreateFileW(L"C:\\mactmnf-test-prefix.txt", GENERIC_READ, FILE_SHARE_READ,
+    marker = CreateFileW(L"C:\\trackmania-mac-test-prefix.txt", GENERIC_READ, FILE_SHARE_READ,
             NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL);
     if (marker == INVALID_HANDLE_VALUE || GetFileType(marker) != FILE_TYPE_DISK ||
             !GetFileInformationByHandle(marker, &information) ||
@@ -61,7 +61,7 @@ int main(int argc, char **argv)
     certificate = CertCreateCertificateContext(X509_ASN_ENCODING, der, der_size);
     if (!certificate || !CertGetNameStringA(certificate, CERT_NAME_ATTR_TYPE, 0,
             (void *)szOID_COMMON_NAME, subject, sizeof(subject)) ||
-            strcmp(subject, "MacTMNF PUBLIC TEST ONLY ca") ||
+            strcmp(subject, "TrackMania Mac PUBLIC TEST ONLY ca") ||
             !CertCompareCertificateName(X509_ASN_ENCODING, &certificate->pCertInfo->Subject,
                     &certificate->pCertInfo->Issuer)) goto done;
     extension = CertFindExtension(szOID_BASIC_CONSTRAINTS2, certificate->pCertInfo->cExtension,

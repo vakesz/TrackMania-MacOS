@@ -74,13 +74,15 @@ class Sha256FileTests(unittest.TestCase):
     def test_falls_back_to_shasum_without_python(self):
         path = self.sample("data", 4096)
         # common.sh needs Python to load, so make it unusable only afterwards.
-        result = shell_hash(path, after_source="have() { return 1; }; ", TMNF_PYTHON="python3")
+        result = shell_hash(
+            path, after_source="have() { return 1; }; ", TRACKMANIA_MAC_PYTHON="python3"
+        )
         self.assertEqual(result.stdout, shasum(path) + "\n")
 
     def test_module_prints_only_the_digest(self):
         path = self.sample("data", 2048)
         result = subprocess.run(
-            ["python3", "-m", "tmnf.install.hashing", "sha256", str(path)],
+            ["python3", "-m", "trackmania_mac.install.hashing", "sha256", str(path)],
             env={**os.environ, "PYTHONPATH": str(ROOT / "src/python")},
             capture_output=True,
             text=True,
@@ -94,7 +96,7 @@ class Sha256FileTests(unittest.TestCase):
             self.sample(name, size) for name, size in (("b", 10), ("a", 2 * 1024 * 1024), ("c", 0))
         ]
         result = subprocess.run(
-            ["python3", "-m", "tmnf.install.hashing", "sha256", *map(str, paths)],
+            ["python3", "-m", "trackmania_mac.install.hashing", "sha256", *map(str, paths)],
             env={**os.environ, "PYTHONPATH": str(ROOT / "src/python")},
             capture_output=True,
             text=True,
@@ -109,7 +111,7 @@ class Sha256FileTests(unittest.TestCase):
             [
                 "python3",
                 "-m",
-                "tmnf.install.hashing",
+                "trackmania_mac.install.hashing",
                 "sha256",
                 str(path),
                 str(self.root / "missing"),
@@ -173,30 +175,34 @@ class VerifyFilesTests(unittest.TestCase):
         starts = self.root / "starts"
         shim.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >>{}\nexec python3 "$@"\n'.format(starts))
         shim.chmod(0o755)
-        result = self.verify(TMNF_PYTHON=str(shim))
+        result = self.verify(TRACKMANIA_MAC_PYTHON=str(shim))
         self.assertEqual(result.returncode, 0, result.stderr)
         hashing = [
-            line for line in starts.read_text().splitlines() if "tmnf.install.hashing" in line
+            line
+            for line in starts.read_text().splitlines()
+            if "trackmania_mac.install.hashing" in line
         ]
         self.assertEqual(len(hashing), 1, hashing)
         self.assertEqual(hashing[0].count(str(self.root)), len(self.files))
 
     def test_falls_back_to_shasum_without_python(self):
         fallback = "have() { return 1; }; "
-        self.assertEqual(self.verify(after_source=fallback, TMNF_PYTHON="python3").returncode, 0)
+        self.assertEqual(
+            self.verify(after_source=fallback, TRACKMANIA_MAC_PYTHON="python3").returncode, 0
+        )
         files = list(self.files)
         files[2] = (files[2][0], "0" * 64)
         self.assertNotEqual(
-            self.verify(files, after_source=fallback, TMNF_PYTHON="python3").returncode, 0
+            self.verify(files, after_source=fallback, TRACKMANIA_MAC_PYTHON="python3").returncode, 0
         )
 
     def test_falls_back_to_shasum_when_the_hashing_module_fails(self):
         broken = self.root / "broken"
         broken.write_text(
-            '#!/bin/bash\nif test "$2" = tmnf.install.hashing; then exit 1; fi\nexec python3 "$@"\n'
+            '#!/bin/bash\nif test "$2" = trackmania_mac.install.hashing; then exit 1; fi\nexec python3 "$@"\n'
         )
         broken.chmod(0o755)
-        self.assertEqual(self.verify(TMNF_PYTHON=str(broken)).returncode, 0)
+        self.assertEqual(self.verify(TRACKMANIA_MAC_PYTHON=str(broken)).returncode, 0)
 
 
 if __name__ == "__main__":

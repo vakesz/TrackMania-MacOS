@@ -73,7 +73,7 @@ final class InstallerProgressTests: XCTestCase {
     }
 
     func testStageSkipsProgressBarsAndEchoedCommand() {
-        let progress = parse("$ tmnf hub run tmnf install\nDownloading runtime.tar.xz\n#####   30.0%\r######  60.0%")
+        let progress = parse("$ trackmania-mac hub run trackmania-mac install\nDownloading runtime.tar.xz\n#####   30.0%\r######  60.0%")
         XCTAssertEqual(progress.stage, "Downloading runtime.tar.xz")
     }
 
@@ -148,7 +148,7 @@ final class InstallerProgressTests: XCTestCase {
     }
 
     func testMatchesFullRescanForChunkedInput() {
-        let transcript = "$ tmnf hub run tmnf install\nDownloading runtime.tar.xz\n"
+        let transcript = "$ trackmania-mac hub run trackmania-mac install\nDownloading runtime.tar.xz\n"
             + "#####   30.0%\r######  60.0%\r#######  100.0%\n"
             + "[mvk-info] Created VkInstance\n\tVK_KHR_x v1\n0024:fixme:ole:Co stub\n"
             + "Installing TrackMania United Forever\n   \nDisk is 50%\nerror: nope\nafter error\r\nlast"

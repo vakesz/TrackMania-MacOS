@@ -2,9 +2,9 @@
 # Competition Patch and CoreMod via TMLoader. Sourced by install.sh after common.sh.
 
 configure_competition_patch() {
-  test -n "$TMNF_TITLE_GAME_DIR_NAME" || die "The title registry has no game_dir_name."
+  test -n "$TRACKMANIA_MAC_TITLE_GAME_DIR_NAME" || die "The title registry has no game_dir_name."
   mkdir -p "$(dirname "$TMLOADER_SETTINGS")" "$(dirname "$TMLOADER_PROFILE_FILE")"
-  printf 'install: "C:/Program Files (x86)/%s"\n' "$TMNF_TITLE_GAME_DIR_NAME" >"$TMLOADER_SETTINGS"
+  printf 'install: "C:/Program Files (x86)/%s"\n' "$TRACKMANIA_MAC_TITLE_GAME_DIR_NAME" >"$TMLOADER_SETTINGS"
   printf '%s\n' \
     'program:' \
     "  id: ${TMLOADER_PROGRAM_ID}" \
@@ -54,8 +54,8 @@ install_competition_patch() (
     esac
   done < <(unzip -Z1 "$TMLOADER_ARCHIVE")
 
-  sweep_stale "$TMNF_CACHE" '*-extract.*'
-  extract_dir="$(mktemp -d "${TMNF_CACHE}/tmloader-extract.XXXXXX")"
+  sweep_stale "$TRACKMANIA_MAC_CACHE" '*-extract.*'
+  extract_dir="$(mktemp -d "${TRACKMANIA_MAC_CACHE}/tmloader-extract.XXXXXX")"
   printf -v cleanup 'rm -rf -- %q' "$extract_dir"
   # shellcheck disable=SC2064
   trap "$cleanup" EXIT

@@ -12,24 +12,66 @@ import zipfile
 import unittest
 from unittest import mock
 
-from tmnf.hub import run as hub_run
-from tmnf.hub import paths as hub_paths
-from tmnf.hub import diagnostics, registry, snapshot, state
+from trackmania_mac.hub import run as hub_run
+from trackmania_mac.hub import paths as hub_paths
+from trackmania_mac.hub import diagnostics, registry, snapshot, state
+from trackmania_mac.install import version as project_version
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "src/shell/cli/tmnf"
+CLI = ROOT / "src/shell/cli/trackmania-mac"
 
 
 class HubBackendTests(unittest.TestCase):
+    def setUp(self):
+        # An empty HOME unless a test sets its own: the real one may hold
+        # files of an earlier release, and then every action would wait for them.
+        temporary = tempfile.TemporaryDirectory(
+            dir="/private/tmp", prefix="trackmania-mac-hub-home-"
+        )
+        self.addCleanup(temporary.cleanup)
+        patcher = mock.patch.dict(os.environ, HOME=temporary.name)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_actions_wait_while_files_of_an_earlier_release_are_left(self):
+        legacy = Path(os.environ["HOME"]) / "Library/Logs/TMNF"
+        legacy.mkdir(parents=True)
+        payload = snapshot.snapshot()
+        self.assertEqual(payload["migration"]["state"], "pending")
+        self.assertEqual(payload["migration"]["from"], [str(legacy)])
+        self.assertTrue(all(title["actions"] == [] for title in payload["titles"]))
+        with mock.patch.object(hub_run.os, "execve") as execve, self.assertRaises(SystemExit):
+            hub_run.run("tmnf", "doctor", None)
+        execve.assert_not_called()
+
+    def test_migrate_runs_the_cli_migration_without_title_overrides(self):
+        environment = {
+            "TRACKMANIA_MAC_ROOT": "/x",
+            "TRACKMANIA_MAC_TITLE": "tmu",
+            "TRACKMANIA_MAC_SUPPORT": "/support",
+        }
+        with (
+            mock.patch.dict(os.environ, environment),
+            mock.patch.object(hub_run.os, "execve", side_effect=KeyboardInterrupt) as execve,
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            hub_run.migrate()
+        command, env = execve.call_args.args[1], execve.call_args.args[2]
+        self.assertTrue(command[1].endswith("src/shell/cli/trackmania-mac"))
+        self.assertEqual(command[2:], ["migrate"])
+        self.assertNotIn("TRACKMANIA_MAC_ROOT", env)
+        self.assertNotIn("TRACKMANIA_MAC_TITLE", env)
+        self.assertEqual(env["TRACKMANIA_MAC_SUPPORT"], "/support")
+
     def run_hub(self, *arguments, home, titles_dir=None):
         env = {
             "PATH": "/usr/bin:/bin",
             "HOME": str(home),
-            "TMNF_APPS_DIR": str(Path(home) / "Applications"),
+            "TRACKMANIA_MAC_APPS_DIR": str(Path(home) / "Applications"),
         }
         if titles_dir is not None:
-            env["TMNF_TITLES_DIR"] = str(titles_dir)
+            env["TRACKMANIA_MAC_TITLES_DIR"] = str(titles_dir)
         return subprocess.run(
             ["/bin/bash", str(CLI), "hub", *arguments],
             cwd=ROOT,
@@ -43,7 +85,8 @@ class HubBackendTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
             canyon_game = (
-                home / "Games/TMNF/Canyon/prefix/drive_c/Program Files (x86)/ManiaPlanet"
+                home
+                / "Library/TrackManiaMacOS/games/tm-canyon/prefix/drive_c/Program Files (x86)/ManiaPlanet"
                 "/ManiaPlanet.exe"
             )
             canyon_game.parent.mkdir(parents=True)
@@ -52,7 +95,7 @@ class HubBackendTests(unittest.TestCase):
             result = self.run_hub("snapshot", home=home)
             self.assertEqual(result.returncode, 0, result.stderr)
             snapshot = json.loads(result.stdout)
-            self.assertEqual(snapshot["schema"], 2)
+            self.assertEqual(snapshot["schema"], 3)
             titles = {title["id"]: title for title in snapshot["titles"]}
             # The shipped JSON files, not the registry the snapshot itself reads.
             self.assertEqual(
@@ -69,7 +112,7 @@ class HubBackendTests(unittest.TestCase):
     def test_snapshot_icon_prefers_game_icon_then_bundled_artwork(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
-            support = home / "Library/Application Support/TMNF"
+            support = home / "Library/TrackManiaMacOS"
 
             def titles():
                 result = self.run_hub("snapshot", home=home)
@@ -95,10 +138,10 @@ class HubBackendTests(unittest.TestCase):
                 (titles / path.name).write_text(path.read_text())
             (titles / "tm-turbo.json").write_text("{}")
             environment = {
-                "TMNF_TITLES_DIR": str(titles),
+                "TRACKMANIA_MAC_TITLES_DIR": str(titles),
                 "HOME": directory,
                 # Never the real /Applications: wrappers there would offer Uninstall.
-                "TMNF_APPS_DIR": str(Path(directory) / "Applications"),
+                "TRACKMANIA_MAC_APPS_DIR": str(Path(directory) / "Applications"),
             }
             with mock.patch.dict(os.environ, environment):
                 actions = hub_run.available_action_ids(registry.get("tmu"))
@@ -113,23 +156,26 @@ class HubBackendTests(unittest.TestCase):
         self.assertFalse(set(hub_paths.TITLE_ENV) & set(env))
 
     def test_titles_dir_is_not_scrubbed(self):
-        with mock.patch.dict(os.environ, {"TMNF_TITLES_DIR": "/private/tmp/t"}):
-            self.assertEqual(hub_run._scrubbed_env("tmu")["TMNF_TITLES_DIR"], "/private/tmp/t")
+        with mock.patch.dict(os.environ, {"TRACKMANIA_MAC_TITLES_DIR": "/private/tmp/t"}):
+            self.assertEqual(
+                hub_run._scrubbed_env("tmu")["TRACKMANIA_MAC_TITLES_DIR"], "/private/tmp/t"
+            )
 
     def test_runtime_source_never_leaks_from_the_caller(self):
         inherited = {
-            "TMNF_RUNTIME_SOURCE": "build",
-            "TMNF_RUNTIME_ARCHIVE": "/private/tmp/x.tar",
-            "TMNF_RUNTIME_SHA256": "0" * 64,
+            "TRACKMANIA_MAC_RUNTIME_SOURCE": "build",
+            "TRACKMANIA_MAC_RUNTIME_ARCHIVE": "/private/tmp/x.tar",
+            "TRACKMANIA_MAC_RUNTIME_SHA256": "0" * 64,
         }
         with mock.patch.dict(os.environ, inherited):
             self.assertFalse(set(inherited) & set(hub_run._scrubbed_env("tmu")))
             self.assertFalse(
-                (set(inherited) - {"TMNF_RUNTIME_SOURCE"})
+                (set(inherited) - {"TRACKMANIA_MAC_RUNTIME_SOURCE"})
                 & set(hub_run._scrubbed_env("tmu", "download"))
             )
             self.assertEqual(
-                hub_run._scrubbed_env("tmu", "download")["TMNF_RUNTIME_SOURCE"], "download"
+                hub_run._scrubbed_env("tmu", "download")["TRACKMANIA_MAC_RUNTIME_SOURCE"],
+                "download",
             )
 
     def test_runtime_flag_sets_env_for_install_actions(self):
@@ -142,7 +188,7 @@ class HubBackendTests(unittest.TestCase):
         for runtime, action, extra in cases:
             with (
                 self.subTest(runtime=runtime, action=action),
-                mock.patch.dict(os.environ, {"TMNF_RUNTIME_SOURCE": "build"}),
+                mock.patch.dict(os.environ, {"TRACKMANIA_MAC_RUNTIME_SOURCE": "build"}),
                 mock.patch.object(hub_run, "available_action_ids", return_value={action}),
                 mock.patch.object(hub_run.os, "execve", side_effect=KeyboardInterrupt) as execve,
                 self.assertRaises(KeyboardInterrupt),
@@ -151,7 +197,7 @@ class HubBackendTests(unittest.TestCase):
             command, env = execve.call_args.args[1], execve.call_args.args[2]
             self.assertTrue(command[1].endswith("src/shell/cli/install.sh"))
             self.assertEqual(command[2:], extra)
-            self.assertEqual(env.get("TMNF_RUNTIME_SOURCE"), runtime)
+            self.assertEqual(env.get("TRACKMANIA_MAC_RUNTIME_SOURCE"), runtime)
 
     def test_runtime_flag_is_rejected_for_other_actions_and_bad_values(self):
         for action, runtime in (
@@ -176,8 +222,10 @@ class HubBackendTests(unittest.TestCase):
         self.assertIsNone(placeholder["iconSource"])
 
     def test_launchers_are_per_title(self):
-        with mock.patch.dict(os.environ, {"TMNF_SUPPORT": "/private/tmp/x/support"}, clear=False):
-            for name in ("TMNF_LAUNCHER", "TMNF_TITLE"):
+        with mock.patch.dict(
+            os.environ, {"TRACKMANIA_MAC_SUPPORT": "/private/tmp/x/support"}, clear=False
+        ):
+            for name in ("TRACKMANIA_MAC_LAUNCHER", "TRACKMANIA_MAC_TITLE"):
                 os.environ.pop(name, None)
             launchers = {
                 title_id: hub_paths.compute(registry.get(title_id)).launcher
@@ -206,7 +254,8 @@ class HubBackendTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
             turbo = (
-                home / "Games/TMNF/Turbo/prefix/drive_c/Program Files (x86)/TrackMania Turbo"
+                home
+                / "Library/TrackManiaMacOS/games/tm-turbo/prefix/drive_c/Program Files (x86)/TrackMania Turbo"
                 "/TrackmaniaTurbo.exe"
             )
             turbo.parent.mkdir(parents=True)
@@ -287,9 +336,9 @@ class HubBackendTests(unittest.TestCase):
 
             contents = app / "Contents"
             contents.mkdir()
-            (contents / ".tmnf-app").touch()
+            (contents / ".trackmania-mac-app").touch()
             (contents / "Info.plist").write_text("<plist/>")
-            executable = contents / "MacOS/TMNF"
+            executable = contents / "MacOS/TrackManiaMac"
             executable.parent.mkdir()
             executable.write_text("#!/bin/sh\nexit 0\n")
             executable.chmod(0o755)
@@ -353,8 +402,8 @@ class HubBackendTests(unittest.TestCase):
             env = {
                 "PATH": "/usr/bin:/bin",
                 "HOME": str(home),
-                "TMNF_AUDIO": "bogus",
-                "TMNF_WINDOW_SIZE": "0x0",
+                "TRACKMANIA_MAC_AUDIO": "bogus",
+                "TRACKMANIA_MAC_WINDOW_SIZE": "0x0",
             }
             result = subprocess.run(
                 ["/bin/bash", str(CLI), "hub", "snapshot"],
@@ -365,7 +414,7 @@ class HubBackendTests(unittest.TestCase):
                 timeout=30,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(json.loads(result.stdout)["schema"], 2)
+            self.assertEqual(json.loads(result.stdout)["schema"], 3)
 
     def test_run_rejects_unknown_or_non_snapshot_actions_before_installing(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -387,7 +436,7 @@ class HubBackendTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             result = self.run_hub("snapshot", home=directory)
             data = json.loads(result.stdout)
-            self.assertEqual(data["hubVersion"], (ROOT / "VERSION").read_text().strip())
+            self.assertEqual(data["hubVersion"], project_version.read(ROOT))
             for title in data["titles"]:
                 for key, kind in self.NEW_FIELDS.items():
                     self.assertIsInstance(title[key], kind, key)
@@ -397,7 +446,8 @@ class HubBackendTests(unittest.TestCase):
                 for value in title["locations"].values():
                     self.assertTrue(value.startswith("/"))
                 self.assertEqual(
-                    title["locations"]["logs"], str(Path(directory) / "Library/Logs/TMNF")
+                    title["locations"]["logs"],
+                    str(Path(directory) / "Library/TrackManiaMacOS/logs"),
                 )
                 self.assertFalse(title["sessionActive"])
         placeholder = snapshot._error_placeholder("broken", "bad")
@@ -451,8 +501,8 @@ class HubBackendTests(unittest.TestCase):
                 (contents / "Info.plist").write_bytes(
                     plistlib.dumps({"CFBundleIdentifier": bundle})
                 )
-                (contents / ".tmnf-app").touch()
-            (home / "Games/TMNF/Canyon/UserData").mkdir(parents=True)
+                (contents / ".trackmania-mac-app").touch()
+            (home / "Library/TrackManiaMacOS/saves/tm-canyon").mkdir(parents=True)
             result = self.run_hub("snapshot", home=home)
             self.assertEqual(result.returncode, 0, result.stderr)
             titles = {title["id"]: title for title in json.loads(result.stdout)["titles"]}
@@ -473,7 +523,7 @@ class HubBackendTests(unittest.TestCase):
         self.assertIn("uninstall", action_ids("tm-canyon"))
         self.assertEqual(
             titles["tm-canyon"]["removal"],
-            {"items": [], "saves": str(home / "Games/TMNF/Canyon/UserData")},
+            {"items": [], "saves": str(home / "Library/TrackManiaMacOS/saves/tm-canyon")},
         )
         self.assertNotIn("uninstall", action_ids("tm-original"))
         self.assertEqual(titles["tm-original"]["removal"], {"items": [], "saves": None})
@@ -501,7 +551,7 @@ class HubBackendTests(unittest.TestCase):
             execve.assert_not_called()
 
     def test_cli_parses_include_saves(self):
-        from tmnf.hub import __main__ as hub_main
+        from trackmania_mac.hub import __main__ as hub_main
 
         with mock.patch.object(hub_main.hub_run, "run", side_effect=SystemExit(0)) as run:
             with self.assertRaises(SystemExit):
@@ -571,7 +621,7 @@ class HubBackendTests(unittest.TestCase):
             ):
                 hub_run.run("tmnf", action, None)
             command = execve.call_args.args[1]
-            self.assertTrue(command[1].endswith("src/shell/cli/tmnf"))
+            self.assertTrue(command[1].endswith("src/shell/cli/trackmania-mac"))
             self.assertEqual(command[2:], extra)
 
     def test_redact_home_and_username(self):
@@ -586,7 +636,7 @@ class HubBackendTests(unittest.TestCase):
     def test_diagnostics_zip_contents_are_redacted(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory).resolve() / "alice"
-            logs = home / "Library/Logs/TMNF"
+            logs = home / "Library/TrackManiaMacOS/logs"
             logs.mkdir(parents=True)
             for index in range(7):
                 log = logs / f"tmu-run{index}.log"
@@ -599,7 +649,7 @@ class HubBackendTests(unittest.TestCase):
             )
             os.utime(logs / "tmu-big.log", (9000, 9000))
             with (
-                mock.patch.dict(os.environ, {"HOME": str(home), "TMNF_TITLE": "tmu"}),
+                mock.patch.dict(os.environ, {"HOME": str(home), "TRACKMANIA_MAC_TITLE": "tmu"}),
                 mock.patch.object(diagnostics.getpass, "getuser", return_value="alice"),
             ):
                 target = diagnostics.build("tmu", doctor_output=f"doctor says {home}\n")
@@ -654,6 +704,8 @@ class HubBackendTests(unittest.TestCase):
 
             def fake_popen(command, **kwargs):
                 self.assertTrue(kwargs.get("start_new_session"))
+                # The doctor command must name the CLI that exists.
+                self.assertTrue(Path(command[1]).is_file(), command)
                 return real_popen([sys.executable, "-c", script, str(pidfile)], **kwargs)
 
             waits = []
@@ -703,15 +755,15 @@ class HubBackendTests(unittest.TestCase):
         title = registry.get("tmnf")
         with tempfile.TemporaryDirectory() as directory:
             prefix = Path(directory)
-            (prefix / ".tmnf-prefix").write_text(title.prefix_marker)
+            (prefix / ".trackmania-mac-prefix").write_text(title.prefix_marker)
             (prefix / "system.reg").write_text("")
             self.assertTrue(state._prefix_ready(title, prefix).ready)
-            (prefix / ".tmnf-initializing").touch()
+            (prefix / ".trackmania-mac-initializing").touch()
             probe = state._prefix_ready(title, prefix)
             self.assertFalse(probe.ready)
             self.assertIn("run install again", probe.note)
             # Legacy tmnf prefix (empty marker) is covered by the same check.
-            (prefix / ".tmnf-prefix").write_text("")
+            (prefix / ".trackmania-mac-prefix").write_text("")
             self.assertFalse(state._prefix_ready(title, prefix).ready)
 
 

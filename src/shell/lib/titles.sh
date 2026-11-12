@@ -1,16 +1,16 @@
 #!/bin/bash
-# Title registry access. config/titles/*.json and src/python/tmnf/hub/registry.py
+# Title registry access. config/titles/*.json and src/python/trackmania_mac/hub/registry.py
 # are the single source of truth; this file only loads them. Inert policy only:
 # no plugins or arbitrary hooks.
 
-: "${TMNF_TITLES_DIR:=${TMNF_PROJECT_DIR}/config/titles}"
+: "${TRACKMANIA_MAC_TITLES_DIR:=${TRACKMANIA_MAC_PROJECT_DIR}/config/titles}"
 
-tmnf_title_is_known() {
+trackmania_mac_title_is_known() {
   case "$1" in ''|*[!A-Za-z0-9_-]*) return 1 ;; esac
-  test -f "${TMNF_TITLES_DIR}/$1.json"
+  test -f "${TRACKMANIA_MAC_TITLES_DIR}/$1.json"
 }
 
-# tmnf_load_title [TITLE] — one Python start defines every TMNF_TITLE_* field
+# trackmania_mac_load_title [TITLE] — one Python start defines every TRACKMANIA_MAC_TITLE_* field
 # of TITLE plus the release pins (DIRECTX_*, TMLOADER_*, TMCOMP_*, OPENAL_SOFT_*). Without a
 # title only the pins are defined. The registry validates every value and
 # shell-quotes it, so evaluating the output is safe.
@@ -21,32 +21,32 @@ title_has() {
     competition-patch|openal|system-config) ;;
     *) die "Unknown title component: $1" ;;
   esac
-  case " ${TMNF_TITLE_COMPONENTS-} " in
+  case " ${TRACKMANIA_MAC_TITLE_COMPONENTS-} " in
     *" $1 "*) return 0 ;;
     *) return 1 ;;
   esac
 }
 
-tmnf_load_title() {
+trackmania_mac_load_title() {
   local assignments
-  assignments="$(TMNF_TITLES_DIR="$TMNF_TITLES_DIR" tmnf_python -m tmnf.hub.registry export "$@")" \
+  assignments="$(TRACKMANIA_MAC_TITLES_DIR="$TRACKMANIA_MAC_TITLES_DIR" trackmania_mac_python -m trackmania_mac.hub.registry export "$@")" \
     || return 1
   eval "$assignments"
 }
 
 # _cache_installer_path TITLE — resolved path of the pinned installer download.
-# src/python/tmnf/guard/uninstall.py mirrors it (installer_cache_path); a test keeps them equal.
+# src/python/trackmania_mac/guard/uninstall.py mirrors it (installer_cache_path); a test keeps them equal.
 _cache_installer_path() {
-  local title="$1" url="$TMNF_TITLE_SOURCE_URL"
-  test "$title" = "$TMNF_TITLE" || die "Installer cache requested for $title, not $TMNF_TITLE."
+  local title="$1" url="$TRACKMANIA_MAC_TITLE_SOURCE_URL"
+  test "$title" = "$TRACKMANIA_MAC_TITLE" || die "Installer cache requested for $title, not $TRACKMANIA_MAC_TITLE."
   if test -z "$url"; then
     die "Title $title has no pinned installer URL in config/titles."
   fi
   if test "$title" = tmnf; then
     # Keep the historical single-title cache location so existing downloads
     # stay valid.
-    printf '%s/%s\n' "$TMNF_CACHE" "${url##*/}"
+    printf '%s/%s\n' "$TRACKMANIA_MAC_CACHE" "${url##*/}"
   else
-    printf '%s/games/%s/%s\n' "$TMNF_CACHE" "$title" "${url##*/}"
+    printf '%s/games/%s/%s\n' "$TRACKMANIA_MAC_CACHE" "$title" "${url##*/}"
   fi
 }

@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests/fixtures/tls"
 ARCHITECTURES = ("i686", "x86_64")
 REQUEST_MODES = ("sync", "async")
-TLS_SERVER = runpy.run_path(str(ROOT / "src/python/tmnf/probes/tls_test_server.py"))
+TLS_SERVER = runpy.run_path(str(ROOT / "src/python/trackmania_mac/probes/tls_test_server.py"))
 TLS_CASES = TLS_SERVER["CASES"]
 
 
@@ -36,14 +36,14 @@ def fixture_environment(runtime, home, prefix, nonce, winhttp_overlay=False):
         "PATH": str(runtime / "bin") + ":/usr/bin:/bin",
         "HOME": str(home),
         "TMPDIR": str(home / "tmp"),
-        "USER": "mactmnf-tls-test",
-        "LOGNAME": "mactmnf-tls-test",
+        "USER": "trackmania-mac-tls-test",
+        "LOGNAME": "trackmania-mac-tls-test",
         "WINEPREFIX": str(prefix),
         "WINESERVER": str(runtime / "bin/wineserver"),
         "WINEARCH": "win64",
         "WINEDEBUG": "-all,warn+winhttp",
         "WINEDLLOVERRIDES": "mscoree,mshtml=" + (";winhttp=n" if winhttp_overlay else ""),
-        "MACTMNF_DISPOSABLE_TEST": nonce,
+        "TRACKMANIA_MAC_DISPOSABLE_TEST": nonce,
     }
 
 
@@ -177,13 +177,15 @@ def cleanup_prefixes(runtime, scratch, root_identity, owned):
 class LegacyTLS10Account(unittest.TestCase):
     """Account creation in TrackMania Forever needs WinINet to speak TLS 1.0.
 
-    Opt in with MACTMNF_TEST_RUNTIME=/absolute/path/to/runtime. The probe runs
+    Opt in with TRACKMANIA_MAC_TEST_RUNTIME=/absolute/path/to/runtime. The probe runs
     in a disposable prefix and never touches the game prefix.
     """
 
-    @unittest.skipUnless(os.environ.get("MACTMNF_TEST_RUNTIME"), "MACTMNF_TEST_RUNTIME is not set")
+    @unittest.skipUnless(
+        os.environ.get("TRACKMANIA_MAC_TEST_RUNTIME"), "TRACKMANIA_MAC_TEST_RUNTIME is not set"
+    )
     def test_wininet_request_over_tls10_with_game_retry(self):
-        runtime = Path(os.environ["MACTMNF_TEST_RUNTIME"]).resolve()
+        runtime = Path(os.environ["TRACKMANIA_MAC_TEST_RUNTIME"]).resolve()
         compiler = shutil.which("i686-w64-mingw32-gcc")
         if compiler is None:
             self.skipTest("i686-w64-mingw32-gcc not found (brew install mingw-w64)")
@@ -192,7 +194,7 @@ class LegacyTLS10Account(unittest.TestCase):
             url, handshakes = server.__enter__()
         except TLS_SERVER["TLS10Unavailable"] as error:
             self.skipTest(str(error))
-        scratch = Path(tempfile.mkdtemp(prefix="mactmnf-tls10-")).resolve()
+        scratch = Path(tempfile.mkdtemp(prefix="trackmania-mac-tls10-")).resolve()
         owned = []
         try:
             prefix, home = scratch / "prefix-i686", scratch / "home-i686"

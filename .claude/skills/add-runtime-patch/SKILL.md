@@ -1,6 +1,6 @@
 ---
 name: add-runtime-patch
-description: Checklist for changing the MacTMNF runtime, meaning a patch under patches/ for Wine, D9VK, MoltenVK or x87sidecar, or a bump of a pinned upstream revision or archive in config/sources.json. Use it whenever the work touches patches/ or config/sources.json, or the user wants to fix or work around a Wine, Direct3D 9, Metal/Vulkan or x87 floating-point problem in the runtime itself, even if they don't say "patch".
+description: Checklist for changing the TrackMania Mac runtime, meaning a patch under patches/ for Wine, D9VK, MoltenVK or x87sidecar, or a bump of a pinned upstream revision or archive in config/sources.json. Use it whenever the work touches patches/ or config/sources.json, or the user wants to fix or work around a Wine, Direct3D 9, Metal/Vulkan or x87 floating-point problem in the runtime itself, even if they don't say "patch".
 ---
 
 The runtime is built from the pinned sources in `config/sources.json` plus every `patches/<component>/*.patch`, applied in sorted filename order (`runtime_builder.py`). A full build takes hours, so most mistakes only show up long after the edit. Each step below is there to catch one of them early.
@@ -12,6 +12,6 @@ The runtime is built from the pinned sources in `config/sources.json` plus every
 5. **Document it.** Add an entry to `docs/runtime.md`.
 6. **Keep pinned values in sync:**
    - If the x87sidecar revision changes, set `REVISION` in `tests/test_x87_patch.py` to the same value. Only CI's x87-native job catches a mismatch.
-   - If C helper compile flags change, keep `.github/workflows/check.yml`, `src/python/tmnf/build/runtime_builder.py` (`session()`) and `src/python/tmnf/session/monitor.py` (`start_state_helper()`) identical.
+   - If C helper compile flags change, keep `.github/workflows/check.yml`, `src/python/trackmania_mac/build/runtime_builder.py` (`session()`) and `src/python/trackmania_mac/session/monitor.py` (`start_state_helper()`) identical.
    - For a pin bump, rebase every patch for that component and repeat step 3 for all of them.
 7. **Verify.** Run `make check`. Don't run `make build` or `make smoke` unless the user asks: the build takes hours and smoke runs against the real Wine prefix.

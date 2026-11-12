@@ -8,7 +8,8 @@ from unittest import mock
 
 SPEC = importlib.util.spec_from_file_location(
     "winhttp_build",
-    Path(__file__).resolve().parents[1] / "src/python/tmnf/build/winhttp_probe_builder.py",
+    Path(__file__).resolve().parents[1]
+    / "src/python/trackmania_mac/build/winhttp_probe_builder.py",
 )
 build = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(build)
@@ -134,8 +135,8 @@ class WinhttpBuildTests(unittest.TestCase):
                 directory.mkdir(parents=True)
             pin = {"git": "fixture", "revision": build.PIN}
             (root / "config/sources.json").write_text(json.dumps({"wine": pin}))
-            (source / ".mactmnf-source.json").write_text(json.dumps(pin))
-            (work / ".mactmnf-configure.json").write_text(json.dumps({"source": pin}))
+            (source / ".trackmania-mac-source.json").write_text(json.dumps(pin))
+            (work / ".trackmania-mac-configure.json").write_text(json.dumps({"source": pin}))
             for patch in build.PATCHES:
                 (root / patch).write_bytes((build.ROOT / patch).read_bytes())
             for wrong in (
@@ -181,8 +182,8 @@ class WinhttpBuildTests(unittest.TestCase):
                 directory.mkdir(parents=True)
             pin = {"git": "fixture", "revision": build.PIN}
             (root / "config/sources.json").write_text(json.dumps({"wine": pin}))
-            (source / ".mactmnf-source.json").write_text(json.dumps(pin))
-            (work / ".mactmnf-configure.json").write_text(json.dumps({"source": pin}))
+            (source / ".trackmania-mac-source.json").write_text(json.dumps(pin))
+            (work / ".trackmania-mac-configure.json").write_text(json.dumps({"source": pin}))
             (root / build.PATCH).write_text("fixture patch")
             with (
                 mock.patch.object(build.subprocess, "check_output", return_value="wrong HEAD\n"),

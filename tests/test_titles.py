@@ -12,7 +12,7 @@ def load_registry():
     import sys
 
     sys.path.insert(0, str(ROOT / "src/python"))
-    from tmnf.hub import registry
+    from trackmania_mac.hub import registry
 
     return registry
 
@@ -30,13 +30,16 @@ class TitleRegistryTests(unittest.TestCase):
             {title.id for title in titles}, {"tmnf", "tmu", "tm-original", "tm-canyon", "tm-turbo"}
         )
 
-    def test_prefix_subdirs_are_unique(self):
+    def test_legacy_prefix_subdirs_are_unique(self):
         subdirs = {}
         for path in sorted(TITLES.glob("*.json")):
             data = json.loads(path.read_text())
+            self.assertNotIn("prefix_subdir", data, "new paths come from the id")
+            if not data.get("legacy_prefix_subdir"):
+                continue
             # APFS is case-insensitive: "TMNF/Canyon" and "tmnf/canyon" are one folder.
-            key = data["prefix_subdir"].casefold()
-            self.assertNotIn(key, subdirs, data["prefix_subdir"])
+            key = data["legacy_prefix_subdir"].casefold()
+            self.assertNotIn(key, subdirs, data["legacy_prefix_subdir"])
             subdirs[key] = data["id"]
         for key, title_id in subdirs.items():
             for other in subdirs:
@@ -52,7 +55,7 @@ class TitleRegistryTests(unittest.TestCase):
         import tempfile
 
         sys.path.insert(0, str(ROOT / "src/python"))
-        from tmnf.hub import registry
+        from trackmania_mac.hub import registry
 
         self.assertEqual(registry.subdir_conflicts(registry.load_all(TITLES)), {})
         for subdir in ("tmnf", "TMNF/Prefix/x", "tmnf/userdata/x", "tmnf/canyon"):
@@ -60,7 +63,7 @@ class TitleRegistryTests(unittest.TestCase):
                 titles = Path(directory) / "titles"
                 shutil.copytree(TITLES, titles)
                 data = json.loads((titles / "tm-turbo.json").read_text())
-                data["prefix_subdir"] = subdir
+                data["legacy_prefix_subdir"] = subdir
                 (titles / "tm-turbo.json").write_text(json.dumps(data))
                 loaded, errors, _ = registry.load_registry(titles)
                 self.assertIn("tm-turbo", errors)
@@ -68,12 +71,41 @@ class TitleRegistryTests(unittest.TestCase):
                 with self.assertRaises(registry.RegistryError):
                     registry.load_all(titles)
 
+    def test_registry_refuses_ids_that_differ_only_in_case(self):
+        import sys
+
+        sys.path.insert(0, str(ROOT / "src/python"))
+        from trackmania_mac.hub import registry
+
+        titles = registry.load_all(TITLES)
+        twin = titles[0]._replace(id=titles[0].id.upper(), legacy_prefix_subdir=None)
+        conflicts = registry.subdir_conflicts([*titles, twin])
+        self.assertIn(twin.id, conflicts)
+        self.assertIn("differs only in case", conflicts[twin.id])
+
+    def test_a_title_without_a_legacy_root_is_valid(self):
+        import shutil
+        import sys
+        import tempfile
+
+        sys.path.insert(0, str(ROOT / "src/python"))
+        from trackmania_mac.hub import registry
+
+        with tempfile.TemporaryDirectory() as directory:
+            titles = Path(directory) / "titles"
+            shutil.copytree(TITLES, titles)
+            data = json.loads((titles / "tm-turbo.json").read_text())
+            del data["legacy_prefix_subdir"]
+            (titles / "tm-turbo.json").write_text(json.dumps(data))
+            loaded = {title.id: title for title in registry.load_all(titles)}
+            self.assertIsNone(loaded["tm-turbo"].legacy_prefix_subdir)
+
     def test_shell_and_python_read_the_same_release_pins(self):
         """config/pins.json is the only home: shell and Python must agree on it."""
         import sys
 
         sys.path.insert(0, str(ROOT / "src/python"))
-        from tmnf.hub import registry
+        from trackmania_mac.hub import registry
 
         pins = registry.pins()
         self.assertEqual(
@@ -97,13 +129,13 @@ class TitleRegistryTests(unittest.TestCase):
         for literal in pins.values():
             for source in (
                 "src/shell/lib/common.sh",
-                "src/python/tmnf/hub/state.py",
-                "src/python/tmnf/hub/paths.py",
+                "src/python/trackmania_mac/hub/state.py",
+                "src/python/trackmania_mac/hub/paths.py",
             ):
                 self.assertNotIn(literal, (ROOT / source).read_text(), (source, literal))
 
     def test_modloader_layout_is_unchanged_and_defined_once(self):
-        """The shell's ModLoader paths come from tmnf.install.modloader, byte for byte."""
+        """The shell's ModLoader paths come from trackmania_mac.install.modloader, byte for byte."""
         pins = load_registry().pins()
         result = subprocess.run(
             [
@@ -118,7 +150,7 @@ class TitleRegistryTests(unittest.TestCase):
             text=True,
             capture_output=True,
             timeout=15,
-            env={"PATH": "/usr/bin:/bin", "HOME": "/tmp/h", "TMNF_PREFIX": "/tmp/p"},
+            env={"PATH": "/usr/bin:/bin", "HOME": "/tmp/h", "TRACKMANIA_MAC_PREFIX": "/tmp/p"},
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         loader = "/tmp/p/drive_c/Program Files/TMLoader"
@@ -147,7 +179,7 @@ class TitleRegistryTests(unittest.TestCase):
             "src/shell/lib/common.sh",
             "src/shell/lib/install/patch.sh",
             "src/shell/lib/commands/play.sh",
-            "src/python/tmnf/hub/state.py",
+            "src/python/trackmania_mac/hub/state.py",
         ):
             self.assertNotIn("database/TmForever", (ROOT / source).read_text(), source)
             self.assertNotIn('"database"', (ROOT / source).read_text(), source)
@@ -164,7 +196,7 @@ class TitleRegistryTests(unittest.TestCase):
             text=True,
             capture_output=True,
             timeout=15,
-            env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TMNF_CACHE": "/tmp/c"},
+            env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TRACKMANIA_MAC_CACHE": "/tmp/c"},
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "/tmp/c/tmnationsforever_setup.exe")
@@ -193,12 +225,30 @@ class TitleRegistryTests(unittest.TestCase):
                 (ROOT / "config/pins.json").read_text(),
             )
 
+    def test_a_custom_root_keeps_its_saves_beside_the_prefix(self):
+        script = '. src/shell/lib/common.sh; printf "%s\\n" "$TRACKMANIA_MAC_USERDATA"'
+        for environment, expected in (
+            ({"TRACKMANIA_MAC_ROOT": "/tmp/custom"}, "/tmp/custom/UserData"),
+            ({}, "/tmp/Library/TrackManiaMacOS/saves/tmnf"),
+        ):
+            with self.subTest(environment=environment):
+                result = subprocess.run(
+                    ["/bin/bash", "-euc", script],
+                    cwd=ROOT,
+                    text=True,
+                    capture_output=True,
+                    timeout=15,
+                    env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", **environment},
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), expected)
+
     def test_common_sh_title_defaults(self):
         result = subprocess.run(
             [
                 "/bin/bash",
                 "-euc",
-                '. src/shell/lib/common.sh; printf "%s\\n" "$TMNF_TITLE" "$GAME_EXE" "$TMNF_ROOT"',
+                '. src/shell/lib/common.sh; printf "%s\\n" "$TRACKMANIA_MAC_TITLE" "$GAME_EXE" "$TRACKMANIA_MAC_ROOT"',
             ],
             cwd=ROOT,
             text=True,
@@ -209,7 +259,7 @@ class TitleRegistryTests(unittest.TestCase):
         title, game_exe, root = result.stdout.splitlines()
         self.assertEqual(title, "tmnf")
         self.assertTrue(game_exe.endswith("TmNationsForever/TmForever.exe"))
-        self.assertTrue(root.endswith("Games/TMNF"))
+        self.assertTrue(root.endswith("Library/TrackManiaMacOS/games/tmnf"))
 
     def test_shell_matches_title_registry(self):
         for path in sorted(TITLES.glob("*.json")):
@@ -220,22 +270,33 @@ class TitleRegistryTests(unittest.TestCase):
                         "/bin/bash",
                         "-euc",
                         '. src/shell/lib/common.sh; printf "%s\\n" "$GAME_EXE" '
-                        '"$LAUNCHER_EXE" "$TMNF_ROOT" "$TMNF_APP" "$TMNF_SETTINGS_APP"',
+                        '"$LAUNCHER_EXE" "$TRACKMANIA_MAC_ROOT" "$TRACKMANIA_MAC_APP" "$TRACKMANIA_MAC_SETTINGS_APP" '
+                        '"$TRACKMANIA_MAC_USERDATA" "$TRACKMANIA_MAC_SUPPORT" "$TRACKMANIA_MAC_CACHE"',
                     ],
                     cwd=ROOT,
                     text=True,
                     capture_output=True,
                     timeout=15,
-                    env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TMNF_TITLE": data["id"]},
+                    env={
+                        "PATH": "/usr/bin:/bin",
+                        "HOME": "/tmp",
+                        "TRACKMANIA_MAC_TITLE": data["id"],
+                    },
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
-                game_exe, launcher_exe, root, app, settings_app = result.stdout.splitlines()
+                lines = result.stdout.splitlines()
+                game_exe, launcher_exe, root, app, settings_app = lines[:5]
+                userdata, support, cache = lines[5:]
+                data_dir = "/tmp/Library/TrackManiaMacOS"
+                self.assertEqual(root, "{}/games/{}".format(data_dir, data["id"]))
+                self.assertEqual(userdata, "{}/saves/{}".format(data_dir, data["id"]))
+                self.assertEqual(support, data_dir)
+                self.assertEqual(cache, data_dir + "/cache")
                 game_dir = "drive_c/Program Files (x86)/{}".format(data["game_dir_name"])
                 self.assertTrue(game_exe.endswith(game_dir + "/" + data["game_exe"]), game_exe)
                 self.assertTrue(
                     launcher_exe.endswith(game_dir + "/" + data["launcher_exe"]), launcher_exe
                 )
-                self.assertTrue(root.endswith("Games/" + data["prefix_subdir"]), root)
                 self.assertTrue(app.endswith("/" + data["app_name"]), app)
                 self.assertTrue(
                     settings_app.endswith("/" + data["settings_app_name"]), settings_app
@@ -256,14 +317,14 @@ class TitleRegistryTests(unittest.TestCase):
             env={
                 "PATH": "/usr/bin:/bin",
                 "HOME": "/tmp",
-                "TMNF_TITLE": "tmu",
-                "TMNF_CACHE": "/tmp/tmnf-cache",
-                "TMNF_SOURCE_URL": "https://example.invalid/override.exe",
+                "TRACKMANIA_MAC_TITLE": "tmu",
+                "TRACKMANIA_MAC_CACHE": "/tmp/trackmania-mac-cache",
+                "TRACKMANIA_MAC_SOURCE_URL": "https://example.invalid/override.exe",
             },
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
-            result.stdout.strip(), "/tmp/tmnf-cache/games/tmu/tmunitedforever_setup.exe"
+            result.stdout.strip(), "/tmp/trackmania-mac-cache/games/tmu/tmunitedforever_setup.exe"
         )
 
     def test_wrapped_inno_installers_target_the_registry_game_dir(self):
@@ -272,7 +333,7 @@ class TitleRegistryTests(unittest.TestCase):
             "download_pinned_installer() { :; }; "
             'unpack_inner_inno() { printf "/stub/setup.exe\\n"; }; '
             "run_wine() { :; }; "
-            'run_released_installer() { printf "%s\\n" "$TMNF_INNO_DIR"; TMNF_INSTALLER_PID=0; }; '
+            'run_released_installer() { printf "%s\\n" "$TRACKMANIA_MAC_INNO_DIR"; TRACKMANIA_MAC_INSTALLER_PID=0; }; '
             "wait_inno_setup() { :; }; verify_installed_game() { :; }; say() { :; }; "
         )
         for path in sorted(TITLES.glob("*.json")):
@@ -286,7 +347,7 @@ class TitleRegistryTests(unittest.TestCase):
                         "-euc",
                         ". src/shell/lib/common.sh; . src/shell/lib/install/game.sh; "
                         + stubs
-                        + 'install_pinned_inno_game "$TMNF_TITLE_INSTALLER"',
+                        + 'install_pinned_inno_game "$TRACKMANIA_MAC_TITLE_INSTALLER"',
                     ],
                     cwd=ROOT,
                     text=True,
@@ -294,8 +355,8 @@ class TitleRegistryTests(unittest.TestCase):
                     timeout=15,
                     env={
                         "PATH": "/usr/bin:/bin",
-                        "HOME": "/tmp/tmnf-no-home",
-                        "TMNF_TITLE": data["id"],
+                        "HOME": "/tmp/trackmania-mac-no-home",
+                        "TRACKMANIA_MAC_TITLE": data["id"],
                     },
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -310,13 +371,17 @@ class TitleRegistryTests(unittest.TestCase):
                     [
                         "/bin/bash",
                         "-euc",
-                        '. src/shell/lib/common.sh; printf "%s" "$TMNF_TITLE_PREFIX_MARKER"',
+                        '. src/shell/lib/common.sh; printf "%s" "$TRACKMANIA_MAC_TITLE_PREFIX_MARKER"',
                     ],
                     cwd=ROOT,
                     text=True,
                     capture_output=True,
                     timeout=15,
-                    env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TMNF_TITLE": path.stem},
+                    env={
+                        "PATH": "/usr/bin:/bin",
+                        "HOME": "/tmp",
+                        "TRACKMANIA_MAC_TITLE": path.stem,
+                    },
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout, path.stem + ":1")
@@ -345,7 +410,7 @@ class TitleRegistryTests(unittest.TestCase):
                     text=True,
                     capture_output=True,
                     timeout=15,
-                    env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TMNF_TITLE": title.id},
+                    env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TRACKMANIA_MAC_TITLE": title.id},
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(tuple(result.stdout.split()), title.components)
@@ -357,7 +422,7 @@ class TitleRegistryTests(unittest.TestCase):
             text=True,
             capture_output=True,
             timeout=15,
-            env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TMNF_TITLE": "tmnf"},
+            env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TRACKMANIA_MAC_TITLE": "tmnf"},
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Unknown title component", result.stderr)
@@ -370,7 +435,7 @@ class TitleRegistryTests(unittest.TestCase):
                     [
                         "/bin/bash",
                         "-euc",
-                        '. src/shell/lib/common.sh; printf "%s" "$TMNF_TITLE_USER_SUBDIR"',
+                        '. src/shell/lib/common.sh; printf "%s" "$TRACKMANIA_MAC_TITLE_USER_SUBDIR"',
                     ],
                     cwd=ROOT,
                     text=True,
@@ -378,8 +443,8 @@ class TitleRegistryTests(unittest.TestCase):
                     timeout=15,
                     env={
                         "PATH": "/usr/bin:/bin",
-                        "HOME": "/tmp/tmnf-no-home",
-                        "TMNF_TITLE": data["id"],
+                        "HOME": "/tmp/trackmania-mac-no-home",
+                        "TRACKMANIA_MAC_TITLE": data["id"],
                     },
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -390,7 +455,7 @@ class TitleRegistryTests(unittest.TestCase):
         import sys
 
         sys.path.insert(0, str(ROOT / "src/python"))
-        from tmnf.guard.managed_paths import save_dir_names
+        from trackmania_mac.guard.managed_paths import save_dir_names
 
         guarded = set(save_dir_names())
         for path in sorted(TITLES.glob("*.json")):
@@ -401,7 +466,7 @@ class TitleRegistryTests(unittest.TestCase):
 
     def test_cli_titles_lists_all(self):
         result = subprocess.run(
-            ["/bin/bash", str(ROOT / "src/shell/cli/tmnf"), "titles"],
+            ["/bin/bash", str(ROOT / "src/shell/cli/trackmania-mac"), "titles"],
             text=True,
             capture_output=True,
             timeout=15,
@@ -417,7 +482,7 @@ class TitleRegistryTests(unittest.TestCase):
             text=True,
             capture_output=True,
             timeout=15,
-            env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TMNF_TITLE": "nope"},
+            env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TRACKMANIA_MAC_TITLE": "nope"},
         )
         self.assertNotEqual(result.returncode, 0)
 
@@ -425,9 +490,9 @@ class TitleRegistryTests(unittest.TestCase):
 # Title facts belong in config/titles/*.json. These patterns catch code that
 # branches on a title id instead; only the legacy migration shims may.
 TITLE_CONDITIONALS = (
-    re.compile(r'"?\$\{?TMNF_TITLE\}?"?\s+!?=\s'),
+    re.compile(r'"?\$\{?TRACKMANIA_MAC_TITLE\}?"?\s+!?=\s'),
     re.compile(r'\btest\s+"?\$\{?\w+\}?"?\s+!?=\s+"?tmnf"?(\s|;|$)'),
-    re.compile(r'case\s+"?\$\{?TMNF_TITLE\}?"?\s+in'),
+    re.compile(r'case\s+"?\$\{?TRACKMANIA_MAC_TITLE\}?"?\s+in'),
     re.compile(r'\btitle(_id|\.id)\s*[!=]=\s*["\']'),
     re.compile(r"\btitle(_id|\.id)\s+(not\s+)?in\s*[(\[{]"),
     re.compile(r'\$\{?\w+\}?"?\s*!?==?\s*"?tmnf"?\s*\]\]'),
@@ -438,23 +503,23 @@ TITLE_CONDITIONALS = (
 TITLE_CONDITIONAL_ALLOWLIST = (
     # A pre-marker TMNF prefix from before multi-title support.
     (
-        "src/python/tmnf/hub/state.py",
+        "src/python/trackmania_mac/hub/state.py",
         'if not identity and title.id == "tmnf" and (prefix / "system.reg").is_file():',
     ),
-    ("src/python/tmnf/hub/state.py", 'if not identity and title.id == "tmnf":'),
+    ("src/python/trackmania_mac/hub/state.py", 'if not identity and title.id == "tmnf":'),
     # The single-title installer cache location existing downloads still use;
     # uninstall mirrors it and TMNF's unprefixed log names.
     ("src/shell/lib/titles.sh", 'if test "$title" = tmnf; then'),
-    ("src/python/tmnf/guard/uninstall.py", 'if title.id == "tmnf":'),
-    ("src/python/tmnf/guard/uninstall.py", 'if title_id != "tmnf":'),
+    ("src/python/trackmania_mac/guard/uninstall.py", 'if title.id == "tmnf":'),
+    ("src/python/trackmania_mac/guard/uninstall.py", 'if title_id != "tmnf":'),
     # The shared pre-multi-title launcher only TMNF ever installed.
-    ("src/shell/lib/apps/wrappers.sh", 'test "$TMNF_TITLE" = tmnf || return 0'),
+    ("src/shell/lib/apps/wrappers.sh", 'test "$TRACKMANIA_MAC_TITLE" = tmnf || return 0'),
     # TMNF's app logs kept their pre-multi-title names (play.log, configure.log).
     (
         "src/shell/lib/apps/wrappers.sh",
-        'test "$TMNF_TITLE" = tmnf || log_name="${TMNF_TITLE}-${action}.log"',
+        'test "$TRACKMANIA_MAC_TITLE" = tmnf || log_name="${TRACKMANIA_MAC_TITLE}-${action}.log"',
     ),
-    ("src/python/tmnf/hub/diagnostics.py", 'if title_id == "tmnf":'),
+    ("src/python/trackmania_mac/hub/diagnostics.py", 'if title_id == "tmnf":'),
 )
 
 
@@ -462,7 +527,7 @@ def source_files():
     for path in sorted((ROOT / "src/shell").rglob("*")):
         if path.is_file() and (path.suffix == ".sh" or path.parent.name == "cli"):
             yield path
-    yield from sorted((ROOT / "src/python/tmnf").rglob("*.py"))
+    yield from sorted((ROOT / "src/python/trackmania_mac").rglob("*.py"))
 
 
 class TitleConditionalTests(unittest.TestCase):
@@ -486,9 +551,9 @@ class TitleConditionalTests(unittest.TestCase):
 
     def test_patterns_catch_common_spellings(self):
         for line in (
-            'if test "$TMNF_TITLE" = tmu; then',
-            "if [[ $TMNF_TITLE == tmnf ]]; then",
-            'case "$TMNF_TITLE" in',
+            'if test "$TRACKMANIA_MAC_TITLE" = tmu; then',
+            "if [[ $TRACKMANIA_MAC_TITLE == tmnf ]]; then",
+            'case "$TRACKMANIA_MAC_TITLE" in',
             'if title.id == "tmu":',
             'if title.id in ("tmnf", "tmu"):',
             "if title_id not in {'tmnf'}:",
@@ -502,7 +567,7 @@ class RegistryValidationTests(unittest.TestCase):
         import sys
 
         sys.path.insert(0, str(ROOT / "src/python"))
-        from tmnf.hub import registry
+        from trackmania_mac.hub import registry
 
         self.registry = registry
         self.data = json.loads((TITLES / "tmu.json").read_text())
@@ -600,8 +665,11 @@ class RegistryValidationTests(unittest.TestCase):
             with self.subTest(save_dir=value), self.assertRaises(self.registry.RegistryError):
                 self.validate(save_dirs=[value])
         for value in ("TMNF/..", "/abs", "a//b", "~/x", "a/./b", "a\\b", "TMNF/a\nb"):
-            with self.subTest(prefix_subdir=value), self.assertRaises(self.registry.RegistryError):
-                self.validate(prefix_subdir=value)
+            with (
+                self.subTest(legacy_prefix_subdir=value),
+                self.assertRaises(self.registry.RegistryError),
+            ):
+                self.validate(legacy_prefix_subdir=value)
 
     def test_user_subdir_must_be_a_declared_save_dir(self):
         for value in ("Elsewhere", "TmForever/x", "..", "~x"):
@@ -643,7 +711,7 @@ class RegistryValidationTests(unittest.TestCase):
                     "/bin/bash",
                     "-euc",
                     ". src/shell/lib/common.sh; "
-                    'printf "%s\\0" "$TMNF_TITLE_NAME" "$TMNF_TITLE_NOTES" "$TMNF_TITLE_SHORT_NAME"',
+                    'printf "%s\\0" "$TRACKMANIA_MAC_TITLE_NAME" "$TRACKMANIA_MAC_TITLE_NOTES" "$TRACKMANIA_MAC_TITLE_SHORT_NAME"',
                 ],
                 cwd=ROOT,
                 capture_output=True,
@@ -651,8 +719,8 @@ class RegistryValidationTests(unittest.TestCase):
                 env={
                     "PATH": "/usr/bin:/bin",
                     "HOME": directory,
-                    "TMNF_TITLE": "evil",
-                    "TMNF_TITLES_DIR": str(titles),
+                    "TRACKMANIA_MAC_TITLE": "evil",
+                    "TRACKMANIA_MAC_TITLES_DIR": str(titles),
                 },
             )
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -671,7 +739,11 @@ class RegistryValidationTests(unittest.TestCase):
             titles.mkdir()
             (titles / "tmu.json").write_text(json.dumps(dict(self.data, name="Custom")))
             result = subprocess.run(
-                ["/bin/bash", "-euc", '. src/shell/lib/common.sh; printf "%s" "$TMNF_TITLE_NAME"'],
+                [
+                    "/bin/bash",
+                    "-euc",
+                    '. src/shell/lib/common.sh; printf "%s" "$TRACKMANIA_MAC_TITLE_NAME"',
+                ],
                 cwd=ROOT,
                 text=True,
                 capture_output=True,
@@ -679,8 +751,8 @@ class RegistryValidationTests(unittest.TestCase):
                 env={
                     "PATH": "/usr/bin:/bin",
                     "HOME": directory,
-                    "TMNF_TITLE": "tmu",
-                    "TMNF_TITLES_DIR": str(titles),
+                    "TRACKMANIA_MAC_TITLE": "tmu",
+                    "TRACKMANIA_MAC_TITLES_DIR": str(titles),
                 },
             )
             self.assertEqual(result.stdout, "Custom", result.stderr)

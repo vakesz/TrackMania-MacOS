@@ -14,7 +14,7 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNNER = ROOT / "src/python/tmnf/probes/probe_runner.py"
+RUNNER = ROOT / "src/python/trackmania_mac/probes/probe_runner.py"
 # The descendant holds the output pipe open and ignores graceful termination.
 TREE = (
     "import subprocess, sys, time; "
@@ -181,15 +181,15 @@ class ProbeRunner(unittest.TestCase):
 
 class SmokeScripts(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="mactmnf-probe-test-")
+        self.temp = tempfile.TemporaryDirectory(prefix="trackmania-mac-probe-test-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         for name in (
             "src/shell/tools/probes",
             "src/shell/lib",
-            "src/python/tmnf/probes",
-            "src/python/tmnf/hub",
-            "src/python/tmnf/install",
+            "src/python/trackmania_mac/probes",
+            "src/python/trackmania_mac/hub",
+            "src/python/trackmania_mac/install",
             "config/titles",
             "bin",
             "prefix",
@@ -199,27 +199,34 @@ class SmokeScripts(unittest.TestCase):
             (self.root / name).mkdir(parents=True)
         for script in (ROOT / "src/shell/tools/probes").glob("smoke-*.sh"):
             shutil.copy2(script, self.root / "src/shell/tools/probes" / script.name)
-        shutil.copy2(RUNNER, self.root / "src/python/tmnf/probes/probe_runner.py")
+        shutil.copy2(RUNNER, self.root / "src/python/trackmania_mac/probes/probe_runner.py")
         shutil.copy2(
-            ROOT / "src/python/tmnf/__init__.py", self.root / "src/python/tmnf/__init__.py"
+            ROOT / "src/python/trackmania_mac/__init__.py",
+            self.root / "src/python/trackmania_mac/__init__.py",
         )
         shutil.copy2(
-            ROOT / "src/python/tmnf/probes/__init__.py",
-            self.root / "src/python/tmnf/probes/__init__.py",
+            ROOT / "src/python/trackmania_mac/probes/__init__.py",
+            self.root / "src/python/trackmania_mac/probes/__init__.py",
         )
         # The registry export and the ModLoader layout it includes.
         for module in (
+            "legacy.py",
             "hub/__init__.py",
             "hub/registry.py",
             "install/__init__.py",
             "install/modloader.py",
         ):
-            shutil.copy2(ROOT / "src/python/tmnf" / module, self.root / "src/python/tmnf" / module)
+            shutil.copy2(
+                ROOT / "src/python/trackmania_mac" / module,
+                self.root / "src/python/trackmania_mac" / module,
+            )
         shutil.copy2(ROOT / "config/pins.json", self.root / "config/pins.json")
         shutil.copy2(ROOT / "src/shell/lib/common.sh", self.root / "src/shell/lib/common.sh")
         shutil.copy2(ROOT / "src/shell/lib/titles.sh", self.root / "src/shell/lib/titles.sh")
+        shutil.copy2(ROOT / "src/shell/lib/version.sh", self.root / "src/shell/lib/version.sh")
+        shutil.copy2(ROOT / "src/shell/lib/legacy.sh", self.root / "src/shell/lib/legacy.sh")
         shutil.copy2(ROOT / "config/titles/tmnf.json", self.root / "config/titles/tmnf.json")
-        shutil.copy2(ROOT / "VERSION", self.root / "VERSION")
+        shutil.copy2(ROOT / "pyproject.toml", self.root / "pyproject.toml")
         (self.root / "prefix/system.reg").touch()
         self.log = self.root / "calls.jsonl"
         stub = self.root / "bin/stub"
@@ -229,7 +236,7 @@ class SmokeScripts(unittest.TestCase):
             "with open(os.environ['PROBE_LOG'], 'a') as log:\n"
             "    log.write(json.dumps({'name': os.path.basename(sys.argv[0]), "
             "'args': sys.argv[1:], 'prefix': os.getenv('WINEPREFIX'), 'pgid': os.getpgrp(), "
-            "'x87': os.getenv('TMNF_X87'), 'hook': os.getenv('ROSETTA_X87_PATH'), "
+            "'x87': os.getenv('TRACKMANIA_MAC_X87'), 'hook': os.getenv('ROSETTA_X87_PATH'), "
             "'storm_pc24': os.getenv('STORM_PC24'), 'storm_case': os.getenv('STORM_CASE'), "
             "'fma': os.getenv('X87_ENABLE_FMA_CONTRACT'), 'fast_round': os.getenv('X87_FAST_ROUND'), "
             "'ir_disabled': os.getenv('X87_DISABLE_X87_IR'), "
@@ -246,14 +253,14 @@ class SmokeScripts(unittest.TestCase):
             "HOME": str(self.root / "home"),
             "TMPDIR": str(self.root),
             "PROBE_LOG": str(self.log),
-            "TMNF_ROOT": str(self.root),
-            "TMNF_PREFIX": str(self.root / "prefix"),
-            "TMNF_RUNTIME": str(self.root / "absent-runtime"),
-            "TMNF_WINE": str(self.root / "bin/wine"),
-            "TMNF_SIDECAR": str(self.root / "bin/x87sidecar"),
-            "TMNF_X87_SRC": str(self.root / "source"),
-            "TMNF_X87": "off",
-            "TMNF_AUDIO": "on",
+            "TRACKMANIA_MAC_ROOT": str(self.root),
+            "TRACKMANIA_MAC_PREFIX": str(self.root / "prefix"),
+            "TRACKMANIA_MAC_RUNTIME": str(self.root / "absent-runtime"),
+            "TRACKMANIA_MAC_WINE": str(self.root / "bin/wine"),
+            "TRACKMANIA_MAC_SIDECAR": str(self.root / "bin/x87sidecar"),
+            "TRACKMANIA_MAC_X87_SRC": str(self.root / "source"),
+            "TRACKMANIA_MAC_X87": "off",
+            "TRACKMANIA_MAC_AUDIO": "on",
             "ROSETTA_X87_PATH": "/must-not-use-inherited-hook",
         }
 
@@ -276,7 +283,9 @@ class SmokeScripts(unittest.TestCase):
                 recorded = [json.loads(line) for line in self.log.read_text().splitlines()]
                 wines = [call for call in recorded if call["name"] == "wine"]
                 self.assertEqual(len(wines), calls)
-                self.assertTrue(all(call["prefix"] == self.env["TMNF_PREFIX"] for call in wines))
+                self.assertTrue(
+                    all(call["prefix"] == self.env["TRACKMANIA_MAC_PREFIX"] for call in wines)
+                )
                 self.assertTrue(all(call["pgid"] != os.getpgrp() for call in wines))
 
     def test_translator_forces_hook_and_reports_source_skip(self):
@@ -329,7 +338,7 @@ class SmokeScripts(unittest.TestCase):
                         ),
                         settings,
                     )
-                hook = str(source) if source_present else self.env["TMNF_SIDECAR"]
+                hook = str(source) if source_present else self.env["TRACKMANIA_MAC_SIDECAR"]
                 self.assertTrue(
                     all(call["x87"] == "on" and call["hook"] == hook for call in probes)
                 )

@@ -23,9 +23,9 @@ certificate-error ignore ladder is a separate backlog issue.
 
 Regression coverage is in tests/network.c and tests/test_network_runtime.py.
 After compiling both WinHTTP DLL architectures and integrating them into a
-disposable runtime overlay, run from the MacTMNF repository root:
+disposable runtime overlay, run from the repository root:
 
-    MACTMNF_TEST_RUNTIME=/absolute/path/to/patched-runtime python3 tests/test_network_runtime.py
+    TRACKMANIA_MAC_TEST_RUNTIME=/absolute/path/to/patched-runtime python3 tests/test_network_runtime.py
 
 Synchronous and asynchronous controls and rejection cases pass with isolated
 rebuilt DLLs for i686 and x86_64, loaded app-locally inside disposable prefixes.

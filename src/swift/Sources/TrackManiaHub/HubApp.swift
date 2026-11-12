@@ -8,6 +8,14 @@ struct TrackManiaHubApp: App {
     @StateObject private var updates = UpdateChecker()
     @State private var showWelcome = false
 
+    init() {
+        let defaults = UserDefaults.standard
+        if Bundle.main.bundleIdentifier != HubLegacy.bundleIdentifier {
+            HubDefaults.adoptLegacySettings(
+                into: defaults, from: defaults.persistentDomain(forName: HubLegacy.bundleIdentifier))
+        }
+    }
+
     var body: some Scene {
         Window("TrackMania Mac", id: "hub") {
             HubRootView(model: model, updates: updates, showWelcome: $showWelcome)

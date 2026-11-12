@@ -17,6 +17,7 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
+import warnings
 from urllib.parse import urlsplit
 
 
@@ -60,7 +61,8 @@ class TLSFixtures(unittest.TestCase):
         )
         self.assertEqual({path.name for path in FIXTURES.glob("*.key")}, {"server.key"})
         self.assertEqual(
-            {path.stem for path in FIXTURES.glob("*.pem")}, {*TLS["CASES"], "ca", "untrusted-ca"}
+            {path.stem for path in FIXTURES.glob("*.pem")},
+            {*TLS["CASES"], "ca", "untrusted-ca", "legacy-self-signed"},
         )
         for case in TLS["CASES"]:
             with self.subTest(case=case):
@@ -108,6 +110,25 @@ class TLSFixtures(unittest.TestCase):
                     "OCSP",
                 ):
                     self.assertNotIn(extension, text)
+
+    def test_legacy_self_signed_leaf_is_self_issued_and_expired(self):
+        leaf = FIXTURES / "legacy-self-signed.pem"
+        metadata = ssl._ssl._test_decode_cert(str(leaf))
+        self.assertEqual(metadata["issuer"], metadata["subject"])
+        self.assertEqual(metadata["notBefore"], "Jan  1 00:00:00 2020 GMT")
+        self.assertEqual(metadata["notAfter"], "Jan  1 00:00:00 2021 GMT")
+        self.assertEqual(
+            metadata["subjectAltName"], (("IP Address", "127.0.0.1"), ("DNS", "127.0.0.1"))
+        )
+        # It must share the public server key so the server can use it.
+        modulus = [
+            subprocess.check_output(command, text=True)
+            for command in (
+                ["openssl", "x509", "-in", str(leaf), "-noout", "-modulus"],
+                ["openssl", "rsa", "-in", str(FIXTURES / "server.key"), "-noout", "-modulus"],
+            )
+        ]
+        self.assertEqual(modulus[0], modulus[1])
 
     def test_keepalive_connection_ids_prove_reuse_and_new_connection(self):
         with TLS["serve"]() as urls:
@@ -238,6 +259,54 @@ class TLSFixtures(unittest.TestCase):
                     if process.poll() is None:
                         process.kill()
                     process.communicate(timeout=5)
+
+
+class LegacyTLS10Server(unittest.TestCase):
+    """The TLS 1.0 mode must stay TLS 1.0 only, or the account regression test proves nothing."""
+
+    @staticmethod
+    def legacy_client(version):
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        # The fixture is untrusted and expired, like the real account servers.
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            context.minimum_version = context.maximum_version = version
+        context.set_ciphers("ALL:@SECLEVEL=0")
+        return context
+
+    def test_tls10_only_accepts_tls10_and_refuses_tls12(self):
+        try:
+            server = TLS["serve_legacy_tls10"]()
+            url, handshakes = server.__enter__()
+        except TLS["TLS10Unavailable"] as error:
+            self.skipTest(str(error))
+        try:
+            try:
+                tls10 = self.legacy_client(ssl.TLSVersion.TLSv1)
+            except (ValueError, ssl.SSLError) as error:
+                self.skipTest("local client cannot speak TLS 1.0: %s" % error)
+            with connect(url, tls10) as connection:
+                self.assertEqual(connection.version(), "TLSv1")
+                self.assertIn(connection.cipher()[0], TLS["LEGACY_TLS10_CIPHERS"].split(":"))
+                connection.sendall(b"HEAD / HTTP/1.0\r\n\r\n")
+                self.assertIn(b" 200 ", connection.recv(4096).split(b"\r\n")[0])
+            self.assertEqual([version for version, _ in handshakes], ["TLSv1"])
+            with self.assertRaises(ssl.SSLError):
+                with connect(url, self.legacy_client(ssl.TLSVersion.TLSv1_2)):
+                    self.fail("TLS 1.2 handshake accepted by TLS 1.0 only server")
+            self.assertEqual(len(handshakes), 1)
+        finally:
+            server.__exit__(None, None, None)
+        with self.assertRaises(ConnectionRefusedError):
+            with socket.create_connection(("127.0.0.1", urlsplit(url).port), timeout=1):
+                self.fail("server still listening")
+
+    def test_unavailable_openssl_is_reported_as_skip_reason(self):
+        with mock.patch.object(ssl.SSLContext, "set_ciphers", side_effect=ssl.SSLError("no")):
+            with self.assertRaisesRegex(TLS["TLS10Unavailable"], "cannot serve TLS 1.0"):
+                TLS["legacy_tls10_context"]()
 
 
 class NetworkProbe(unittest.TestCase):

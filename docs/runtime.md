@@ -197,6 +197,39 @@ quality field is inferred from the later display layout. It validates required
 types, integer encoding limits and preset enum ranges, not every setting the
 game may accept. Offline tests check chunk structure and unchanged default bytes.
 
+## Account creation over TLS 1.0
+
+TrackMania Nations and United Forever create accounts through WinINet.
+The game calls `HttpOpenRequestA` with `INTERNET_FLAG_SECURE` and the
+ignore-certificate flags `0x80F000`. On certificate errors 12045, 12037 or
+12038 it adds `0xF380` to `INTERNET_OPTION_SECURITY_FLAGS` and retries. The
+requests go to `nations.trackmaniaforever.com` and `united.trackmaniaforever.com`
+under `/online_game/request.php`.
+
+Those servers accept TLS 1.0 only, with AES-128/256-CBC-SHA and DHE-RSA-AES-SHA
+ciphers. Their certificates are self-signed, RSA-1024, SHA-1 and expired. Windows
+turns TLS 1.0 off by default, so players there must re-enable it. The runtime
+needs no workaround because Wine's WinINet uses GnuTLS, which still negotiates
+TLS 1.0 and SHA-1 certificates here.
+
+An offline test keeps it that way. It serves the expired, untrusted test
+certificate on loopback with TLS 1.0 and those ciphers only, then runs a WinINet
+probe (`tests/inet_legacy.c`) that repeats the game's flags and retry. The probe
+must get HTTP 200, and the server must have negotiated TLS 1.0:
+
+```sh
+MACTMNF_TEST_RUNTIME=/absolute/path/to/runtime \
+  uv run --frozen --group test pytest -q tests/test_network_runtime.py
+```
+
+`make smoke` runs the same check in the selected prefix. Both skip with a reason
+when the local OpenSSL cannot serve TLS 1.0.
+
+When you bump Wine or GnuTLS, run this test before release. A failure means the
+new build dropped TLS 1.0, SHA-1 signatures or one of the ciphers, which breaks
+account creation. Check the Wine `secur32` and `schannel` GnuTLS priority string
+and the GnuTLS build options first.
+
 ## Troubleshooting
 
 Start with `make doctor`. The app logs are in

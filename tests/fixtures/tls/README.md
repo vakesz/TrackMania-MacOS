@@ -4,7 +4,7 @@ Every key in this directory is PUBLIC TEST DATA, not a secret. Never use these
 certificates or keys outside a disposable test environment. Do not install either
 CA in macOS Keychain, a Windows installation, or your game/default Wine prefix.
 The CA signing keys are discarded during generation. `server.key` is deliberately
-public and shared by the eight leaf certificates.
+public and shared by the eight leaf certificates and the legacy self-signed one.
 
 | File | Issuer | Identity | Validity |
 | --- | --- | --- | --- |
@@ -16,6 +16,13 @@ public and shared by the eight leaf certificates.
 | `hostname-untrusted.pem` | `untrusted-ca.pem` | DNS SAN `wrong-host.invalid` | 2020-2040 |
 | `expired-hostname.pem` | `ca.pem` | DNS SAN `wrong-host.invalid` | 2020-2021 |
 | `expired-hostname-untrusted.pem` | `untrusted-ca.pem` | DNS SAN `wrong-host.invalid` | 2020-2021 |
+| `legacy-self-signed.pem` | itself | `CN=127.0.0.1`, IP and DNS SAN `127.0.0.1` | 2020-2021 |
+
+`legacy-self-signed.pem` is not part of the case matrix. Only the TLS 1.0 legacy
+mode serves it (`tls_test_server.py --legacy-tls10`). It mirrors Nadeo's
+self-signed, expired account server certificates: a client sees an untrusted root
+(12045) and not a revocation failure (12057), which a leaf from an unsent private
+CA would give. `tests/inet_legacy.c` uses it for the account creation regression.
 
 The roots are valid from 2019 to 2041, covering every leaf's entire validity
 period. Tests fail if the clock is outside the valid control's validity window.

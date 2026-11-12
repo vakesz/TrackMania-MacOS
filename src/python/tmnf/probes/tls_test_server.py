@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import warnings
 
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -27,6 +28,17 @@ CASES = (
     "expired-hostname",
     "expired-hostname-untrusted",
 )
+# The TrackMania Forever account servers speak TLS 1.0 only, with these ciphers.
+# Their certificates are self-signed and expired, so the legacy mode serves the
+# legacy-self-signed fixture and clients must take their ignore-certificate path.
+# A leaf from an unsent private CA fails revocation (12057) first, not the way
+# the real servers do (12045).
+LEGACY_TLS10_CIPHERS = "AES256-SHA:AES128-SHA:DHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA"
+LEGACY_TLS10_CASE = "legacy-self-signed"
+
+
+class TLS10Unavailable(RuntimeError):
+    """The local OpenSSL cannot serve TLS 1.0 with the legacy ciphers."""
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -46,6 +58,8 @@ class Server(ThreadingHTTPServer):
     daemon_threads = True
     connections = 0
     context: ssl.SSLContext  # assigned by serve() before the first request
+    # When a list, each completed handshake appends (TLS version, cipher name).
+    handshakes: "list | None" = None
 
     def server_bind(self):
         # HTTPServer.server_bind reverse-resolves the host with getfqdn, which
@@ -60,6 +74,8 @@ class Server(ThreadingHTTPServer):
         try:
             secured = self.context.wrap_socket(connection, server_side=True)
             self.connections += 1
+            if self.handshakes is not None:
+                self.handshakes.append((secured.version(), (secured.cipher() or ("",))[0]))
             secured.test_id = self.connections  # type: ignore[attr-defined]  # read back by Handler
             return secured, address
         except (OSError, ValueError) as error:
@@ -92,6 +108,50 @@ def serve(fixtures=FIXTURES):
             cleanup.callback(server.shutdown)
             urls[name] = "https://127.0.0.1:%d/" % server.server_port
         yield urls
+
+
+def legacy_tls10_context(fixtures=FIXTURES):
+    """Server context for TLS 1.0 only, or raise TLS10Unavailable with the reason."""
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    try:
+        with warnings.catch_warnings():
+            # TLSVersion.TLSv1 is deprecated; serving it is the point of this mode.
+            warnings.simplefilter("ignore", DeprecationWarning)
+            context.minimum_version = ssl.TLSVersion.TLSv1
+            context.maximum_version = ssl.TLSVersion.TLSv1
+        # OpenSSL's default security level refuses TLS 1.0 and SHA-1 signatures.
+        context.set_ciphers(LEGACY_TLS10_CIPHERS + ":@SECLEVEL=0")
+        context.load_cert_chain(
+            str(fixtures / (LEGACY_TLS10_CASE + ".pem")), str(fixtures / "server.key")
+        )
+    except (ValueError, ssl.SSLError) as error:
+        raise TLS10Unavailable(
+            "local %s cannot serve TLS 1.0: %s" % (ssl.OPENSSL_VERSION, error)
+        ) from error
+    return context
+
+
+@contextmanager
+def serve_legacy_tls10(fixtures=FIXTURES):
+    """Yield (url, handshakes) for a TLS 1.0 only server; close on any exit.
+
+    handshakes collects the (version, cipher) the server negotiated, so tests
+    can assert what the client actually spoke.
+    """
+    context = legacy_tls10_context(fixtures)
+    handshakes: list = []
+    with ExitStack() as cleanup:
+        server = Server(("127.0.0.1", 0), Handler)
+        cleanup.callback(server.server_close)
+        server.context = context
+        server.handshakes = handshakes
+        thread = threading.Thread(
+            target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        )
+        thread.start()
+        cleanup.callback(thread.join)
+        cleanup.callback(server.shutdown)
+        yield "https://127.0.0.1:%d/" % server.server_port, handshakes
 
 
 def generate_fixtures(destination):
@@ -141,6 +201,10 @@ keyUsage = critical,digitalSignature,keyEncipherment
 extendedKeyUsage = serverAuth
 subjectAltName = DNS:wrong-host.invalid
 authorityKeyIdentifier = keyid
+[legacy]
+basicConstraints = CA:true
+subjectKeyIdentifier = hash
+subjectAltName = IP:127.0.0.1,DNS:127.0.0.1
 """,
             encoding="ascii",
         )
@@ -237,6 +301,18 @@ authorityKeyIdentifier = keyid
                 "-enddate",
                 "20210101000000Z" if "expired" in name else "20400101000000Z",
             )
+        # Self-signed like Nadeo's account servers, expired like their certificates.
+        # Re-sign a throwaway self-signed certificate to control its validity.
+        openssl(
+            "req", "-new", "-x509", "-key", "server.key", "-subj", "/CN=127.0.0.1",
+            "-out", "legacy-seed.pem",
+        )  # fmt: skip
+        openssl(
+            "ca", "-selfsign", "-batch", "-notext", "-config", "ca.cnf",
+            "-cert", "legacy-seed.pem", "-keyfile", "server.key", "-in", "server.csr",
+            "-out", "legacy-self-signed.pem", "-extensions", "legacy",
+            "-startdate", "20200101000000Z", "-enddate", "20210101000000Z",
+        )  # fmt: skip
         # Publish only after openssl succeeded, replacing each file atomically,
         # so a failed regeneration leaves the existing fixtures untouched
         # instead of mixing half old and half new files.
@@ -246,6 +322,7 @@ authorityKeyIdentifier = keyid
                 "ca.pem",
                 "untrusted-ca.pem",
                 "server.key",
+                "legacy-self-signed.pem",
                 *(case + ".pem" for case in CASES),
             ):
                 staging = destination / (name + ".partial")
@@ -266,6 +343,11 @@ def main():
         metavar="DIRECTORY",
         help="write public test material using openssl, then exit; replaces existing fixtures",
     )
+    parser.add_argument(
+        "--legacy-tls10",
+        action="store_true",
+        help="serve only the TLS 1.0 legacy endpoint (JSON key 'legacy-tls10')",
+    )
     args = parser.parse_args()
     if args.generate_fixtures is not None:
         generate_fixtures(args.generate_fixtures.resolve())
@@ -276,9 +358,18 @@ def main():
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
     }
     try:
-        with serve(args.fixtures) as urls:
-            print(json.dumps(urls, sort_keys=True), flush=True)
-            stop.wait()
+        if args.legacy_tls10:
+            try:
+                with serve_legacy_tls10(args.fixtures) as (url, _):
+                    print(json.dumps({"legacy-tls10": url}), flush=True)
+                    stop.wait()
+            except TLS10Unavailable as error:
+                print("skip: %s" % error, file=sys.stderr)
+                return 3
+        else:
+            with serve(args.fixtures) as urls:
+                print(json.dumps(urls, sort_keys=True), flush=True)
+                stop.wait()
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)

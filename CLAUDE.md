@@ -6,7 +6,8 @@ Runtime (patched Wine + D9VK + MoltenVK + x87sidecar) and native Swift hub app f
 
 ## Commands
 
-- `make check` runs everything CI's main job runs (bash -n, shellcheck, ruff, mypy, pytest, `tests/test-cli.sh`, swiftlint, swift test). Needs `shellcheck`, `uv`, `swiftlint`.
+- `make check` runs `check-scripts` (bash -n, shellcheck, ruff, mypy, pytest, `tests/test-cli.sh`) and `check-swift` (swiftlint, swift test). Needs `shellcheck`, `uv`, `swiftlint`.
+- CI runs each job only when its files change; `.github/scripts/ci-areas.sh` maps paths to jobs (tested by `tests/test_ci_areas.py`). A new file type that a job must check needs a rule there.
 - Always `uv run --frozen --group <test|lint|typecheck> ...`; the repo is not pip-installed. Single test: `uv run --frozen --group test pytest -q tests/test_titles.py -k NAME`.
 - Swift: `swift test --package-path src/swift --filter HubUITests`; lint with `(cd src/swift && swiftlint lint --strict --quiet)`.
 - Run Python modules as `PYTHONPATH=src/python python3 -m tmnf.<pkg>.<module>`.

@@ -39,6 +39,12 @@ make check
 
 This runs Bash syntax checks, ShellCheck, Ruff (lint and format check), mypy,
 Python tests, the shell CLI integration test, SwiftLint and `swift test`.
+`make check-scripts` and `make check-swift` run each half on its own.
+
+CI runs only the jobs whose files a change touches.
+`.github/scripts/ci-areas.sh` maps changed paths to jobs: docs, the website and
+GitHub forms run nothing, Swift runs only the Swift jobs, and any path it has
+no rule for runs the scripts check.
 
 ## Build a runtime from source
 

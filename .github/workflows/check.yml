@@ -1,6 +1,10 @@
 name: Check scripts
 on:
+  # Branches are checked through their pull request; pushes to main check
+  # each merged commit.
   push:
+    branches:
+      - main
   pull_request:
 permissions:
   contents: read
@@ -9,8 +13,46 @@ permissions:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+# Each job runs only when files it checks changed; the changes job decides
+# with .github/scripts/ci-areas.sh. A skipped job counts as passed for the
+# required checks. If the changes job itself fails, every job runs.
 jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      scripts: ${{ steps.areas.outputs.scripts }}
+      swift: ${{ steps.areas.outputs.swift }}
+      c-helpers: ${{ steps.areas.outputs.c-helpers }}
+      x87: ${{ steps.areas.outputs.x87 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Map changed files to jobs
+        id: areas
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$BASE" || "$BASE" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            echo "No usable base commit; running every job." >&2
+            changed=".github/workflows/check.yml"
+          elif test "$EVENT" = pull_request; then
+            # Only what the pull request changes, not what main gained since.
+            changed="$(git diff --name-only "${BASE}...${HEAD}")"
+          else
+            changed="$(git diff --name-only "$BASE" "$HEAD")"
+          fi
+          printf '%s\n' "$changed"
+          printf '%s\n' "$changed" | .github/scripts/ci-areas.sh | tee -a "$GITHUB_OUTPUT"
+  # Shell, Python and the CLI integration test (make check-scripts).
   check:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.scripts == 'true') }}
     runs-on: macos-15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned
@@ -36,6 +78,17 @@ jobs:
           tar -xJf "$archive" -C "${RUNNER_TEMP}/shellcheck" --strip-components=1
           echo "${RUNNER_TEMP}/shellcheck" >>"$GITHUB_PATH"
           "${RUNNER_TEMP}/shellcheck/shellcheck" --version
+      - name: Validate
+        run: make check-scripts
+  # SwiftLint and the hub's Swift tests (make check-swift).
+  swift:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.swift == 'true') }}
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned
+        with:
+          persist-credentials: false
       - name: Install swiftlint
         env:
           SWIFTLINT_VERSION: 0.65.1
@@ -65,11 +118,13 @@ jobs:
           restore-keys: |
             swift-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift.outputs.toolchain }}-
       - name: Validate
-        run: make check
+        run: make check-swift
   # The two MinGW helpers are only built by make build, which CI never runs.
   # Compile them with the flags the build and the session monitor use, so a
   # warning fails here and not on a user's machine.
   c-helpers:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.c-helpers == 'true') }}
     runs-on: macos-15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned
@@ -94,9 +149,11 @@ jobs:
           set -euo pipefail
           x86_64-w64-mingw32-gcc -O2 -Wall -Wextra -Werror \
             src/c/game-state.c -o "${RUNNER_TEMP}/game-state.exe"
-  # The one test make check skips off a prepared sidecar checkout: it compiles
+  # The one test make check-scripts skips off a prepared sidecar checkout: it compiles
   # the patched lowerer natively and runs ARM code, which needs arm64 macOS.
   x87-native:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.x87 == 'true') }}
     runs-on: macos-15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned
@@ -139,6 +196,8 @@ jobs:
   # check does not. The build is sanitized, so it does not share the cache of
   # the check job.
   swift-tsan:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.swift == 'true') }}
     runs-on: macos-15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned

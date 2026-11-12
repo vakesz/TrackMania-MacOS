@@ -1,5 +1,6 @@
 .DEFAULT_GOAL := help
 SHELL_SOURCES := $(shell find src/shell -type f \( -name '*.sh' -o -path 'src/shell/cli/tmnf' \) -print)
+EXTRA_SHELL_SOURCES := tests/test-cli.sh .github/scripts/ci-areas.sh
 
 ifneq ($(RUNTIME),)
 ifneq ($(words $(RUNTIME)),1)
@@ -10,7 +11,7 @@ $(error RUNTIME must be one of: auto download build)
 endif
 endif
 
-.PHONY: help build package appbundle zip install play diag report configure doctor stop app setup check smoke
+.PHONY: help build package appbundle zip install play diag report configure doctor stop app setup check check-scripts check-swift smoke
 
 help:
 	@echo 'make build       Build the pinned Wine runtime from source'
@@ -27,6 +28,7 @@ help:
 	@echo 'make app         Install the game and settings apps in Applications'
 	@echo 'make setup       Install runtime, prefix and DirectX without the game (RUNTIME=...)'
 	@echo 'make check       Validate scripts and run offline regression tests'
+	@echo '                  (check-scripts and check-swift run each half)'
 	@echo 'make smoke       Run runtime regression probes in the selected prefix'
 
 build:
@@ -58,16 +60,22 @@ diag:
 report:
 	@PYTHONPATH=src/python python3 -m tmnf.session.report
 
-check:
-	bash -n $(SHELL_SOURCES) tests/test-cli.sh
+check: check-scripts check-swift
+
+# CI runs each half as its own job, only when its files change
+# (.github/scripts/ci-areas.sh decides).
+check-scripts:
+	bash -n $(SHELL_SOURCES) $(EXTRA_SHELL_SOURCES)
 	@command -v shellcheck >/dev/null 2>&1 || (echo 'error: shellcheck is required (brew install shellcheck on macOS)' >&2; exit 1)
-	shellcheck $(SHELL_SOURCES) tests/test-cli.sh
+	shellcheck $(SHELL_SOURCES) $(EXTRA_SHELL_SOURCES)
 	@command -v uv >/dev/null 2>&1 || (echo 'error: uv is required (https://docs.astral.sh/uv/)' >&2; exit 1)
 	uv run --frozen --group lint ruff check src tests
 	uv run --frozen --group lint ruff format --check src tests
 	uv run --frozen --group typecheck mypy
 	uv run --frozen --group test pytest -q
 	./tests/test-cli.sh
+
+check-swift:
 	@command -v swiftlint >/dev/null 2>&1 || (echo 'error: swiftlint is required (brew install swiftlint on macOS)' >&2; exit 1)
 	cd src/swift && swiftlint lint --strict --quiet
 	swift test --package-path src/swift

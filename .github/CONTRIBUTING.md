@@ -32,7 +32,7 @@ make check     # shell syntax, shellcheck, ruff, Python and Swift tests
 
 `make install` installs the runtime and game via the bundled installer.
 
-- Keep shell scripts shellcheck-clean; CI runs `make check` on every push.
+- Keep shell scripts shellcheck-clean. CI runs the parts of `make check` that a pull request touches; `.github/scripts/ci-areas.sh` decides which.
 - A runtime patch goes under `patches/<component>/`. It must apply with
   `git apply` against the source pinned in `config/sources.json`, carry a short
   header saying what it does and why, and come with a probe that covers it.

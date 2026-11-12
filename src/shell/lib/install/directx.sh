@@ -24,8 +24,9 @@ install_directx_runtime() (
   # needs the native components; treat .NET as unavailable for this setup.
   WINEDLLOVERRIDES='mscoree=' run_wine "${extract_dir}/DXSETUP.exe" /silent
 
-  # Restore Wine-owned system DLLs which DXSETUP replaces with native copies.
-  # DirectX-only side-by-side components and COM registrations remain present.
+  # Refresh Wine's own prefix files and registrations. This does not restore
+  # DLLs DXSETUP replaced: wineboot never overwrites files that are not Wine's,
+  # so repair_runtime_dlls below copies the d3dx9 compilers back explicitly.
   WINEDLLOVERRIDES='mscoree,mshtml=' run_wine wineboot --update
 
   repair_runtime_dlls
@@ -40,7 +41,7 @@ repair_runtime_dlls() {
   local wine_root arch dll source
   wine_root="$(dirname "$(dirname "$(wine_binary)")")"
   for arch in i386 x86_64; do
-    for dll in d3dx9_30 d3dx9_43; do
+    for dll in "${RUNTIME_D3DX9_DLLS[@]}"; do
       source="${wine_root}/lib/wine/${arch}-windows/${dll}.dll"
       test -f "$source" || die "The runtime is missing $source"
       if test "$arch" = i386; then

@@ -14,6 +14,7 @@
   "game_dir_name": "ManiaPlanet",
   "game_exe": "ManiaPlanet.exe",
   "launcher_exe": "ManiaPlanetLauncher.exe",
+  "user_subdir": "ManiaPlanet",
   "save_dirs": ["ManiaPlanet", "Canyon"],
   "needs_directx": true,
   "needs_tmloader": false,

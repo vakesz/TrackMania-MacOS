@@ -35,7 +35,7 @@ REQUIRED_FILES = (
 ) + tuple(
     "lib/wine/{}/{}".format(arch, name)
     for arch in ("i386-windows", "x86_64-windows")
-    for name in ("d3dx9_30.dll", "d3dx9_43.dll", "d3dcompiler_43.dll")
+    for name in ("d3dx9_30.dll", "d3dx9_31.dll", "d3dx9_43.dll", "d3dcompiler_43.dll")
 )
 
 

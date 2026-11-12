@@ -71,7 +71,7 @@ rate overlay enabled (`DXVK_HUD=fps,frametimes`).
 | Title | Where the game comes from | Status |
 | --- | --- | --- |
 | Nations Forever | free download from Nadeo | ✅ supported |
-| United Forever | official retail installer (needs your serial key) | 🧪 provisional |
+| United Forever | official retail installer (needs your serial key); starts with Competition Patch | 🧪 provisional |
 | Original | your own retail disc image or setup file | 🧪 provisional |
 | TrackMania 2 Canyon | official ManiaPlanet trial | 🧪 provisional |
 | Turbo | your existing Steam game folder | 🧪 provisional |

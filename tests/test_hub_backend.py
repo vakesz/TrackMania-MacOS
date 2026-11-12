@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -206,6 +207,46 @@ class HubBackendTests(unittest.TestCase):
             )
             self.assertTrue(actions[0]["primary"])
             self.assertFalse(actions[1]["primary"])
+
+    def test_united_is_ready_only_with_the_competition_patch(self):
+        title = registry.get("tmu")
+        self.assertTrue(title.needs_tmloader)
+        with tempfile.TemporaryDirectory() as directory:
+            prefix = Path(directory) / "prefix"
+            game = prefix / "drive_c/Program Files (x86)" / title.game_dir_name / title.game_exe
+            game.parent.mkdir(parents=True)
+            game.touch()
+            paths = mock.Mock(game_exe=game)
+            self.assertFalse(state._game_ready(title, paths, prefix).ready)
+
+            pins = dict(registry.pins())
+            loader = prefix / "drive_c/Program Files/TMLoader"
+            products = loader / "database/TmForever/products"
+            files = {
+                "tmloader_exe_sha256": loader / "TMLoader.exe",
+                "tmcomp_dll_sha256": products
+                / "Competition Patch"
+                / pins["tmcomp_version"]
+                / "TMCompPatch.dll",
+                "tmloader_game_sha256": products
+                / "TmForever"
+                / pins["tmloader_game_version"]
+                / "TmForever.exe",
+                "tmloader_coremod_sha256": products
+                / "CoreMod"
+                / pins["tmloader_coremod_version"]
+                / "CoreMod.dll",
+            }
+            for key, path in files.items():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(key.encode())
+                pins[key] = hashlib.sha256(path.read_bytes()).hexdigest()
+            (products / "TmForever/settings.yaml").write_text("install: x\n")
+            profiles = loader / "database/TmForever/profiles"
+            profiles.mkdir(parents=True)
+            (profiles / "competition.yaml").write_text("program:\n")
+            with mock.patch.object(registry, "pins", return_value=pins):
+                self.assertTrue(state._game_ready(title, paths, prefix).ready)
 
     def test_imported_game_makes_app_wrappers_primary_after_platform_ready(self):
         title = registry.get("tm-turbo")

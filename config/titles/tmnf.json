@@ -14,6 +14,7 @@
   "game_dir_name": "TmNationsForever",
   "game_exe": "TmForever.exe",
   "launcher_exe": "TmForeverLauncher.exe",
+  "user_subdir": "TmForever",
   "save_dirs": ["TmForever"],
   "needs_directx": true,
   "needs_tmloader": true,

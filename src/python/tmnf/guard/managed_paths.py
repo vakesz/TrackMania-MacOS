@@ -443,7 +443,7 @@ def redirected_documents(prefix):
     return locations
 
 
-def check_uninstall(prefix, userdata):
+def check_uninstall(prefix, userdata, title=None):
     """Read-only guard for every known save location in the prefix.
 
     Returns the resolved prefix path, the only path a caller may remove.
@@ -454,7 +454,7 @@ def check_uninstall(prefix, userdata):
     exists but cannot be understood (a missing user.reg is a fresh prefix).
     """
     check_layout([str(prefix), str(userdata)])
-    check_prefix(str(prefix))
+    check_prefix(str(prefix), title=title)
     prefix = safe_path(str(prefix))
 
     max_depth = 32

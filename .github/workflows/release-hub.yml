@@ -112,7 +112,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download unsigned app tar
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0, pinned
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v4.3.0, pinned
         with:
           name: hub-app-unsigned
           path: ${{ runner.temp }}/hub-app
@@ -212,7 +212,7 @@ jobs:
       contents: write
     steps:
       - name: Download signed app archive
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0, pinned
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v4.3.0, pinned
         with:
           name: TrackMania-Mac-hub
           path: dist

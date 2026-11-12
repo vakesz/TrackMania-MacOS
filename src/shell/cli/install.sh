@@ -86,10 +86,10 @@ main() {
         install_game
         ensure_title_icon || warn "Could not extract the game icon for the hub."
         install_directx_runtime
-        if test "$TMNF_TITLE_NEEDS_TMLOADER" = true; then
+        if title_has competition-patch; then
           install_competition_patch
         fi
-        if openal_applies; then
+        if title_has openal; then
           install_openal
         fi
         ;;

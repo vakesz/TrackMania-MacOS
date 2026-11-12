@@ -180,7 +180,7 @@ def _competition_patch_ready(prefix: pathlib.Path) -> Probe:
 def _game_ready(title: registry.Title, paths: hub_paths.TitlePaths, prefix: pathlib.Path) -> Probe:
     if not paths.game_exe.is_file():
         return Probe(False, f"{title.name} is not installed yet")
-    if title.needs_tmloader:
+    if "competition-patch" in title.components:
         return _competition_patch_ready(prefix)
     if title.requires_serial:
         return Probe(True, "Installed; the game asks for the serial key at first launch")

@@ -241,6 +241,45 @@ class TitleRegistryTests(unittest.TestCase):
         registry = load_registry()
         self.assertEqual(registry.get("tmu", TITLES).prefix_marker, "tmu:1")
 
+    def test_components_per_title(self):
+        registry = load_registry()
+        components = {title.id: title.components for title in registry.load_all(TITLES)}
+        self.assertEqual(components["tmnf"], ("competition-patch", "openal", "system-config"))
+        self.assertEqual(components["tmu"], ("competition-patch", "system-config"))
+        for title_id in ("tm-canyon", "tm-turbo", "tm-original"):
+            self.assertEqual(components[title_id], (), title_id)
+
+    def test_shell_components_match_python(self):
+        registry = load_registry()
+        for title in registry.load_all(TITLES):
+            with self.subTest(title=title.id):
+                checks = "; ".join(
+                    "if title_has {0}; then echo {0}; fi".format(name)
+                    for name in registry.COMPONENTS
+                )
+                result = subprocess.run(
+                    ["/bin/bash", "-euc", ". src/shell/lib/common.sh; " + checks],
+                    cwd=ROOT,
+                    text=True,
+                    capture_output=True,
+                    timeout=15,
+                    env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TMNF_TITLE": title.id},
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(tuple(result.stdout.split()), title.components)
+
+    def test_title_has_rejects_unknown_components(self):
+        result = subprocess.run(
+            ["/bin/bash", "-euc", ". src/shell/lib/common.sh; title_has competition_patch"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=15,
+            env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TMNF_TITLE": "tmnf"},
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Unknown title component", result.stderr)
+
     def test_user_subdir_export_matches_each_title(self):
         for path in sorted(TITLES.glob("*.json")):
             data = json.loads(path.read_text())
@@ -358,6 +397,11 @@ class RegistryValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(self.registry.RegistryError, "requires game_exe_sha256"):
             self.validate(installer="online")
         self.validate(installer="online", game_version="1.0", game_exe_sha256="0" * 64)
+
+    def test_modloader_titles_must_run_the_forever_exe(self):
+        with self.assertRaisesRegex(self.registry.RegistryError, "needs_tmloader requires"):
+            self.validate(game_exe="ManiaPlanet.exe")
+        self.validate(game_exe="ManiaPlanet.exe", needs_tmloader=False)
 
     def test_value_types_are_checked(self):
         for field, value in (

@@ -100,7 +100,7 @@ install_d9vk() {
 }
 
 play_game() {
-  if test "$TMNF_TITLE_NEEDS_TMLOADER" != true; then
+  if ! title_has competition-patch; then
     play_vanilla "$@"
     return
   fi

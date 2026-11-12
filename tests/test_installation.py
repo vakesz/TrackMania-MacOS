@@ -529,10 +529,10 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         self.assertEqual(result.stdout.splitlines()[-1], "soft")
         self.assertFalse(self.log.exists())  # no Wine process is needed
 
-    def test_openal_is_tmnf_only(self):
+    def test_openal_needs_a_creative_pin(self):
         # Other titles ship their own OpenAL32.dll, whose checksum is not pinned.
         result = self.shell(
-            ". ./src/shell/lib/common.sh; openal_is_current; ! openal_applies",
+            ". ./src/shell/lib/common.sh; openal_is_current; ! title_has openal",
             TMNF_TITLE="tmu",
             TMNF_OPENAL="creative",
         )
@@ -649,6 +649,21 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(config.is_symlink())
         self.assertFalse(elsewhere.exists())
+
+    def test_seed_system_config_is_only_for_forever_titles(self):
+        # The runtime's file is in TmForever's format; other engines must not get it.
+        for title in ("tm-canyon", "tm-turbo", "tm-original"):
+            with self.subTest(title=title):
+                userdata = self.home / ("userdata-" + title)
+                result = self.shell(
+                    self.seed_command(), TMNF_TITLE=title, TMNF_USERDATA=str(userdata)
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse(userdata.exists())
+        userdata = self.home / "userdata-tmnf"
+        result = self.shell(self.seed_command(), TMNF_TITLE="tmnf", TMNF_USERDATA=str(userdata))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((userdata / "TmForever/Config/Default.SystemConfig.Gbx").is_file())
 
     def test_seed_system_config_refuses_an_empty_user_subdir(self):
         result = self.shell(

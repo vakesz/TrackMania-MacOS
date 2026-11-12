@@ -271,14 +271,10 @@ d9vk_is_installed() {
   cmp -s "$TMNF_D9VK_DLL" "$PREFIX_D9VK_DLL"
 }
 
-# A title whose release ships Creative's OpenAL router pins that DLL in the
-# registry (creative_openal_sha256). OpenAL Soft's official Windows binaries
-# (config/pins.json) replace it, because the router's software mixer costs much
-# more CPU under Wine on macOS 27. Other titles keep the library they ship.
-openal_applies() {
-  test -n "$TMNF_TITLE_CREATIVE_OPENAL_SHA256"
-}
-
+# The openal component: a title whose release ships Creative's OpenAL router
+# pins that DLL in the registry (creative_openal_sha256). OpenAL Soft's official
+# Windows binaries (config/pins.json) replace it, because the router's software
+# mixer costs much more CPU under Wine on macOS 27. Other titles keep theirs.
 openal_soft_is_installed() {
   verify_file "$GAME_OPENAL" "$OPENAL_SOFT_DLL_SHA256"
 }
@@ -298,7 +294,7 @@ game_openal() {
 
 # make install applied TMNF_OPENAL. It leaves a missing or unrecognised DLL alone.
 openal_is_current() {
-  openal_applies || return 0
+  title_has openal || return 0
   case "$(game_openal)" in
     "$TMNF_OPENAL"|other|missing) return 0 ;;
     *) return 1 ;;

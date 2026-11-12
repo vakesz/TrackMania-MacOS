@@ -29,6 +29,11 @@ ONLINE_INSTALLERS = ("online", "online-retail", "online-trial")
 INSTALLERS = frozenset(ONLINE_INSTALLERS + ("steam-copy", "disk-image"))
 ENGINES = frozenset({"tmf-classic", "maniaplanet", "turbo"})
 STATUSES = frozenset({"supported", "provisional"})
+# The Forever-engine executable. ModLoader's program and the runtime's
+# Default.SystemConfig.Gbx both belong to it, so it decides those components.
+FOREVER_EXE = "TmForever.exe"
+# Optional install components a title can have; Title.components derives them.
+COMPONENTS = ("competition-patch", "openal", "system-config")
 
 
 class _Field(typing.NamedTuple):
@@ -129,6 +134,21 @@ class Title(typing.NamedTuple):
     def prefix_marker(self) -> str:
         """Ownership text in the prefix's .tmnf-prefix; derived, never configured."""
         return f"{self.id}:1"
+
+    @property
+    def components(self) -> typing.Tuple[str, ...]:
+        """Optional install components, derived from registry facts, in COMPONENTS order.
+
+        competition-patch: the title runs through ModLoader (needs_tmloader).
+        openal: its release ships a pinned Creative OpenAL32.dll to replace.
+        system-config: it reads the runtime's Forever-format Default.SystemConfig.Gbx.
+        """
+        present = {
+            "competition-patch": self.needs_tmloader,
+            "openal": bool(self.creative_openal_sha256),
+            "system-config": self.game_exe == FOREVER_EXE,
+        }
+        return tuple(name for name in COMPONENTS if present[name])
 
     @property
     def downloads(self) -> bool:
@@ -242,6 +262,8 @@ def _validate(data: object, path: pathlib.Path) -> Title:
             )
     elif url or sha or size:
         raise RegistryError(f"{path}: installer kind {values['installer']} must not carry pins")
+    if values["needs_tmloader"] and values["game_exe"] != FOREVER_EXE:
+        raise RegistryError(f"{path}: needs_tmloader requires game_exe {FOREVER_EXE}")
     if values["game_exe_sha256"] and not values["game_version"]:
         raise RegistryError(f"{path}: game_exe_sha256 requires game_version")
     # The direct "online" flow verifies the installed executable against its pin.
@@ -348,6 +370,7 @@ def shell_assignments(title: typing.Optional[Title]) -> typing.List[typing.Tuple
             if field != "save_dirs"
         ]
         pairs.append(("TMNF_TITLE_PREFIX_MARKER", title.prefix_marker))
+        pairs.append(("TMNF_TITLE_COMPONENTS", " ".join(title.components)))
     pairs += [(key.upper(), value) for key, value in pins().items()]
     return pairs
 

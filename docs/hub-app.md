@@ -44,8 +44,8 @@ apps never changes what another title's apps launch.
 
 Nations Forever and United Forever start with Competition Patch and CoreMod;
 the other titles start their own game executable. Nations Forever exposes
-install/repair, update and app-wrapper actions. United Forever and Canyon can
-also use their pinned official installers. Original can
+install and update actions; install also writes the app wrappers. United
+Forever and Canyon can also use their pinned official installers. Original can
 be installed from user-owned retail media, while Turbo can copy an existing
 Steam game folder. These other titles remain provisional: installation does not
 mean their renderer, DRM, online services or complete gameplay have been

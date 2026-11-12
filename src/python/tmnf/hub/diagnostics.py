@@ -12,12 +12,14 @@ import json
 import os
 import pathlib
 import re
+import signal
 import subprocess
 import sys
 import tempfile
 import typing
 import zipfile
 
+from tmnf.guard import operation_guard
 from . import paths as hub_paths
 from . import registry
 from . import snapshot
@@ -25,6 +27,8 @@ from . import snapshot
 LOG_COUNT = 5
 LOG_TAIL_BYTES = 2 * 1024 * 1024
 DOCTOR_TIMEOUT = 120
+# Slack on top of operation_guard.INTERRUPT_GRACE for the guard to finish and exit.
+TERMINATE_MARGIN = 1.0
 ROSETTA = pathlib.Path("/Library/Apple/usr/share/rosetta/rosetta")
 
 
@@ -54,22 +58,57 @@ def _run(command: typing.List[str], timeout: int = 20) -> str:
     return result.stdout + result.stderr
 
 
+def _stop_group(child: "subprocess.Popen[str]") -> None:
+    """Stop a timed-out doctor and everything it started.
+
+    The direct child is operation_guard, which forwards SIGTERM to the doctor's own
+    group and SIGKILLs it after INTERRUPT_GRACE. Killing only the guard would leave the
+    doctor holding the prefix lock, so signal our group first and escalate only after
+    the guard's grace has passed.
+    """
+    for signum, wait in (
+        (signal.SIGTERM, operation_guard.INTERRUPT_GRACE + TERMINATE_MARGIN),
+        (signal.SIGKILL, TERMINATE_MARGIN),
+    ):
+        try:
+            os.killpg(child.pid, signum)
+        except (ProcessLookupError, PermissionError):
+            pass
+        try:
+            child.wait(timeout=wait)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
 def _doctor(title_id: str) -> str:
     cli = registry.project_dir() / "src" / "shell" / "cli" / "tmnf"
     env = dict(os.environ, TMNF_TITLE=title_id)
     try:
-        result = subprocess.run(
+        child = subprocess.Popen(
             ["/bin/bash", str(cli), "doctor"],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             errors="replace",
-            timeout=DOCTOR_TIMEOUT,
             env=env,
             stdin=subprocess.DEVNULL,
+            start_new_session=True,
         )
-    except (OSError, subprocess.SubprocessError) as error:
+    except OSError as error:
         return f"doctor could not run: {error}\n"
-    return f"{result.stdout}{result.stderr}\n(doctor exit status {result.returncode})\n"
+    try:
+        stdout, stderr = child.communicate(timeout=DOCTOR_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        _stop_group(child)
+        try:
+            stdout, stderr = child.communicate(timeout=TERMINATE_MARGIN)
+        except subprocess.TimeoutExpired:
+            stdout, stderr = "", ""
+        return (
+            f"{stdout}{stderr}\n(doctor timed out after {DOCTOR_TIMEOUT} seconds and was stopped)\n"
+        )
+    return f"{stdout}{stderr}\n(doctor exit status {child.returncode})\n"
 
 
 def _summary(title_id: str) -> str:
@@ -92,9 +131,20 @@ def _tail(path: pathlib.Path) -> str:
         return stream.read().decode("utf-8", "replace")
 
 
-def _recent_logs(directory: pathlib.Path) -> typing.List[pathlib.Path]:
+def _is_title_log(name: str, title_id: str) -> bool:
+    """tmnf keeps the unprefixed play/configure logs; other titles use `<id>-<action>.log`."""
+    if title_id == "tmnf":
+        return name in ("play.log", "configure.log")
+    return name.startswith(f"{title_id}-") and name.endswith(".log")
+
+
+def _recent_logs(directory: pathlib.Path, title_id: str) -> typing.List[pathlib.Path]:
     try:
-        logs = [path for path in directory.glob("*.log") if path.is_file()]
+        logs = [
+            path
+            for path in directory.glob("*.log")
+            if path.is_file() and _is_title_log(path.name, title_id)
+        ]
         return sorted(logs, key=lambda path: path.stat().st_mtime, reverse=True)[:LOG_COUNT]
     except OSError:
         return []
@@ -115,7 +165,7 @@ def build(title_id: str, doctor_output: typing.Optional[str] = None) -> pathlib.
         "doctor.txt": doctor_output if doctor_output is not None else _doctor(title_id),
         "snapshot.json": json.dumps(snapshot.contained_payload(title), indent=2, sort_keys=True),
     }
-    for log in _recent_logs(directory):
+    for log in _recent_logs(directory, title_id):
         try:
             members[f"logs/{log.name}"] = _tail(log)
         except OSError as error:

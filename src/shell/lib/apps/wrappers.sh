@@ -81,6 +81,10 @@ write_app() {
 EOF
   publish_file "$tmp" "${contents}/Info.plist"
   tmp="$(mktemp "${contents}/MacOS/.TMNF.XXXXXX")" || die "Cannot stage the app executable."
+  # tmnf keeps play.log/configure.log; other titles get their own so a second title's app
+  # neither waits on the first's log lock nor mixes output with it.
+  local log_name="${action}.log"
+  test "$TMNF_TITLE" = tmnf || log_name="${TMNF_TITLE}-${action}.log"
   # shellcheck disable=SC2016 # Generate shell variables for the app's later invocation.
   {
     printf '#!/bin/bash\n'
@@ -91,7 +95,7 @@ EOF
     printf '  alert "The launcher support files are missing. Reinstall the apps from the TrackMania hub."\n'
     printf '  exit 1\nfi\n'
     printf 'PYTHONPATH=%q "$python_bin" -m tmnf.app.launch %q %q %q\n' "${TMNF_LAUNCHER}/src/python" \
-      "${TMNF_LAUNCHER}/src/shell/cli/tmnf" "$action" "${HOME}/Library/Logs/TMNF/${action}.log"
+      "${TMNF_LAUNCHER}/src/shell/cli/tmnf" "$action" "${HOME}/Library/Logs/TMNF/${log_name}"
     printf 'status=$?\nif test "$status" -ne 0; then\n'
     printf '  alert "The session failed or its state is uncertain. The game may still be running. Open ~/Library/Logs/TMNF in Finder for the launch log."\n'
     printf 'fi\nexit "$status"\n'

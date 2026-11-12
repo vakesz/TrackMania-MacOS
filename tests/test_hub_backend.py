@@ -2,8 +2,11 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
+import sys
 import tempfile
+import time
 import zipfile
 import unittest
 from unittest import mock
@@ -502,34 +505,130 @@ class HubBackendTests(unittest.TestCase):
             logs = home / "Library/Logs/TMNF"
             logs.mkdir(parents=True)
             for index in range(7):
-                log = logs / f"run{index}.log"
+                log = logs / f"tmu-run{index}.log"
                 log.write_text(f"line from {home} by alice\n")
                 os.utime(log, (1000 + index, 1000 + index))
-            (logs / "big.log").write_text("x" * (diagnostics.LOG_TAIL_BYTES + 100) + f"END {home}")
-            os.utime(logs / "big.log", (9000, 9000))
+            (logs / "play.log").write_text("not this title")
+            os.utime(logs / "play.log", (9500, 9500))
+            (logs / "tmu-big.log").write_text(
+                "x" * (diagnostics.LOG_TAIL_BYTES + 100) + f"END {home}"
+            )
+            os.utime(logs / "tmu-big.log", (9000, 9000))
             with (
-                mock.patch.dict(os.environ, {"HOME": str(home), "TMNF_TITLE": "tmnf"}),
+                mock.patch.dict(os.environ, {"HOME": str(home), "TMNF_TITLE": "tmu"}),
                 mock.patch.object(diagnostics.getpass, "getuser", return_value="alice"),
             ):
-                target = diagnostics.build("tmnf", doctor_output=f"doctor says {home}\n")
+                target = diagnostics.build("tmu", doctor_output=f"doctor says {home}\n")
             self.assertEqual(target.parent, logs)
-            self.assertRegex(target.name, r"^diagnostics-tmnf-\d{8}-\d{6}\.zip$")
+            self.assertRegex(target.name, r"^diagnostics-tmu-\d{8}-\d{6}\.zip$")
             with zipfile.ZipFile(target) as archive:
                 names = set(archive.namelist())
                 self.assertTrue({"summary.txt", "doctor.txt", "snapshot.json"} <= names)
                 self.assertEqual(
                     len([n for n in names if n.startswith("logs/")]), diagnostics.LOG_COUNT
                 )
-                self.assertIn("logs/big.log", names)
+                self.assertIn("logs/tmu-big.log", names)
+                self.assertNotIn("logs/play.log", names)
                 for name in names:
                     body = archive.read(name).decode()
                     self.assertNotIn(str(home), body, name)
                     self.assertNotIn("alice", body, name)
                 self.assertLessEqual(
-                    len(archive.read("logs/big.log")), diagnostics.LOG_TAIL_BYTES + 100
+                    len(archive.read("logs/tmu-big.log")), diagnostics.LOG_TAIL_BYTES + 100
                 )
-                self.assertTrue(archive.read("logs/big.log").decode().endswith("END ~"))
-                self.assertEqual(json.loads(archive.read("snapshot.json"))["id"], "tmnf")
+                self.assertTrue(archive.read("logs/tmu-big.log").decode().endswith("END ~"))
+                self.assertEqual(json.loads(archive.read("snapshot.json"))["id"], "tmu")
+
+    def test_diagnostics_logs_are_per_title(self):
+        with tempfile.TemporaryDirectory() as directory:
+            logs = Path(directory)
+            names = ["play.log", "configure.log", "tmu-play.log", "tmu-configure.log", "other.log"]
+            for index, name in enumerate(names):
+                (logs / name).write_text("x")
+                os.utime(logs / name, (1000 + index, 1000 + index))
+
+            def found(title):
+                return sorted(p.name for p in diagnostics._recent_logs(logs, title))
+
+            self.assertEqual(found("tmnf"), ["configure.log", "play.log"])
+            self.assertEqual(found("tmu"), ["tmu-configure.log", "tmu-play.log"])
+            self.assertEqual(found("tm-canyon"), [])
+
+    def test_doctor_timeout_signals_the_process_group_and_waits_for_guard_grace(self):
+        # Fake doctor: a shell that forks a child, ignores nothing, and sleeps.
+        script = (
+            "import os, signal, subprocess, sys, time\n"
+            "pidfile = sys.argv[1]\n"
+            "child = subprocess.Popen(['sleep', '60'])\n"
+            "open(pidfile, 'w').write(str(child.pid))\n"
+            "signal.signal(signal.SIGTERM, lambda *a: (time.sleep(0.3), sys.exit(143)))\n"
+            "time.sleep(60)\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            pidfile = Path(directory) / "child.pid"
+            real_popen = subprocess.Popen
+
+            def fake_popen(command, **kwargs):
+                self.assertTrue(kwargs.get("start_new_session"))
+                return real_popen([sys.executable, "-c", script, str(pidfile)], **kwargs)
+
+            waits = []
+            real_stop = diagnostics._stop_group
+
+            def recording_stop(child):
+                waits.append(child.pid)
+                real_stop(child)
+
+            with (
+                mock.patch.object(diagnostics.subprocess, "Popen", fake_popen),
+                mock.patch.object(diagnostics, "DOCTOR_TIMEOUT", 1),
+                mock.patch.object(diagnostics, "_stop_group", recording_stop),
+            ):
+                started = time.monotonic()
+                output = diagnostics._doctor("tmnf")
+            self.assertLess(time.monotonic() - started, 10)
+            self.assertIn("timed out", output)
+            self.assertEqual(len(waits), 1)
+            grandchild = int(pidfile.read_text())
+            for _ in range(50):
+                try:
+                    os.kill(grandchild, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.1)
+            else:
+                os.kill(grandchild, signal.SIGKILL)
+                self.fail("the doctor's child survived the timeout")
+
+    def test_doctor_timeout_escalation_outlasts_guard_grace(self):
+        # A child that ignores SIGTERM must get at least INTERRUPT_GRACE before SIGKILL.
+        child = mock.Mock(pid=4242)
+        child.wait.side_effect = [subprocess.TimeoutExpired("x", 1), None]
+        with mock.patch.object(diagnostics.os, "killpg") as killpg:
+            diagnostics._stop_group(child)
+        self.assertEqual(
+            [call.args for call in killpg.call_args_list],
+            [(4242, signal.SIGTERM), (4242, signal.SIGKILL)],
+        )
+        self.assertGreater(
+            child.wait.call_args_list[0].kwargs["timeout"],
+            diagnostics.operation_guard.INTERRUPT_GRACE,
+        )
+
+    def test_prefix_with_initializing_marker_is_not_ready(self):
+        title = registry.get("tmnf")
+        with tempfile.TemporaryDirectory() as directory:
+            prefix = Path(directory)
+            (prefix / ".tmnf-prefix").write_text(title.prefix_marker)
+            (prefix / "system.reg").write_text("")
+            self.assertTrue(state._prefix_ready(title, prefix).ready)
+            (prefix / ".tmnf-initializing").touch()
+            probe = state._prefix_ready(title, prefix)
+            self.assertFalse(probe.ready)
+            self.assertIn("run install again", probe.note)
+            # Legacy tmnf prefix (empty marker) is covered by the same check.
+            (prefix / ".tmnf-prefix").write_text("")
+            self.assertFalse(state._prefix_ready(title, prefix).ready)
 
 
 if __name__ == "__main__":

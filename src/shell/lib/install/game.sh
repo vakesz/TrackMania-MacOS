@@ -111,12 +111,29 @@ $entries"
   printf '%s\n' "$staging/$exe_name"
 }
 
+# remove_inno_staging DIR — delete the unpacked inner installer (about 1.2 GB for TMU)
+# once Setup no longer needs it. Only `*.inner` directories under a managed root.
+remove_inno_staging() {
+  local dir="$1"
+  case "$dir" in
+    *.inner) ;;
+    *) return 0 ;;
+  esac
+  test -d "$dir" || return 0
+  if is_safe_managed_path "$dir" 2>/dev/null; then
+    rm -rf -- "$dir"
+  else
+    warn "Leaving the unpacked installer in place (unsafe path): $dir"
+  fi
+}
+
 download_pinned_installer() {
   local title="$1"
   test -n "$TMNF_TITLE_SOURCE_URL" && test -n "$TMNF_TITLE_SOURCE_SHA256" \
     || die "Title $title has no pinned installer URL and checksum in config/titles."
+  # The registry pins the installer size (empty when unknown); cap the download at it.
   download_verified "$TMNF_TITLE_SOURCE_URL" "$(_cache_installer_path "$title")" \
-    "$TMNF_TITLE_SOURCE_SHA256"
+    "$TMNF_TITLE_SOURCE_SHA256" "${TMNF_TITLE_SOURCE_SIZE:-}"
 }
 
 verify_installed_game() {
@@ -161,7 +178,7 @@ install_game() {
 
 install_pinned_inno_game() {
   local kind="$1" title_id="$TMNF_TITLE"
-  local title_name installer_path installer_log inner
+  local title_name installer_path installer_log inner cleanup
 
   title_name="$TMNF_TITLE_NAME"
   installer_log="${TMNF_PREFIX}/drive_c/tmnf-install.log"
@@ -178,9 +195,16 @@ install_pinned_inno_game() {
   rm -f "$installer_log"
   # Inside double quotes "\$" is a literal dollar sign, so the separator
   # before the expansion must be an escaped backslash.
-  TMNF_INNO_DIR="C:\\Program Files (x86)\\${TMNF_TITLE_GAME_DIR_NAME}" \
-    run_released_installer "$inner" "$title_name"
-  wait_inno_setup "$TMNF_INSTALLER_PID" "$installer_log" "$title_name"
+  # The subshell's EXIT trap removes the unpacked installer when die exits it; the trap
+  # does not outlive the subshell.
+  printf -v cleanup 'remove_inno_staging %q' "$(dirname "$inner")"
+  (
+    # shellcheck disable=SC2064
+    trap "$cleanup" EXIT
+    TMNF_INNO_DIR="C:\\Program Files (x86)\\${TMNF_TITLE_GAME_DIR_NAME}" \
+      run_released_installer "$inner" "$title_name"
+    wait_inno_setup "$TMNF_INSTALLER_PID" "$installer_log" "$title_name"
+  ) || exit "$?"
   verify_installed_game "$GAME_EXE" "" "$title_name"
   say "Installed $title_name at $GAME_DIR"
 }

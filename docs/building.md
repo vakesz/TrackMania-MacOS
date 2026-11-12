@@ -109,6 +109,13 @@ hub) takes the runtime from `TMNF_RUNTIME_SOURCE`, or `--runtime=<mode>` on
   and a commit that has been pushed to GitHub. A hub built from uncommitted
   changes records `dirty` and cannot build; use a checkout instead.
 
+The installer trusts a release runtime only when its SHA-256 is pinned in the hub:
+first `config/runtime-pin` (written when the app is packaged), then the entry for
+the runtime archive in `config/release-assets.sha256`. With neither, the install
+stops instead of trusting a checksum published next to the archive. Set
+`TMNF_RUNTIME_ALLOW_UNPINNED=1` to accept that checksum anyway; the installer then
+warns that a compromised release could replace both files.
+
 An installed runtime is never replaced; remove it while the game is closed to
 install again with another mode. `build` needs the prerequisites above and
 cannot be combined with `TMNF_RUNTIME_ARCHIVE`.

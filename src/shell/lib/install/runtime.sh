@@ -29,7 +29,7 @@ runtime_download_hint() {
 # Print the runtime checksum pinned in config/runtime-pin ("<version> <sha256>"),
 # found like the payload's other config files. Prints nothing when there is no
 # usable pin; a pin for another version is ignored with a warning.
-runtime_pinned_checksum() {
+_runtime_pin_file_checksum() {
   local file="${TMNF_PROJECT_DIR}/config/runtime-pin" version hash extra
   test -f "$file" && test ! -L "$file" || return 0
   read -r version hash extra <"$file" || true
@@ -42,6 +42,35 @@ runtime_pinned_checksum() {
     return 0
   fi
   printf '%s' "$hash" | tr 'A-F' 'a-f'
+}
+
+# Print the digest config/release-assets.sha256 lists for this runtime archive (the
+# one line whose second field is exactly RUNTIME_ARCHIVE_NAME), under the same rules
+# as the runtime pin file. Prints nothing when there is no usable entry.
+_runtime_release_assets_checksum() {
+  local file="${TMNF_PROJECT_DIR}/config/release-assets.sha256" lines hash _name extra
+  test -f "$file" && test ! -L "$file" || return 0
+  lines="$(awk -v name="$RUNTIME_ARCHIVE_NAME" '$2 == name' "$file")" || return 0
+  test -n "$lines" || return 0
+  if test "$(printf '%s\n' "$lines" | wc -l | tr -d ' ')" != 1; then
+    warn "Ignoring ambiguous release-assets entry for $RUNTIME_ARCHIVE_NAME: $file"
+    return 0
+  fi
+  read -r hash _name extra <<<"$lines"
+  if [[ ! "$hash" =~ ^[0-9a-fA-F]{64}$ ]] || test -n "$extra"; then
+    warn "Ignoring malformed release-assets entry for $RUNTIME_ARCHIVE_NAME: $file"
+    return 0
+  fi
+  printf '%s' "$hash" | tr 'A-F' 'a-f'
+}
+
+# Print the trusted runtime checksum: config/runtime-pin first, then the entry in
+# config/release-assets.sha256. Prints nothing when neither yields one.
+runtime_pinned_checksum() {
+  local pinned
+  pinned="$(_runtime_pin_file_checksum)"
+  if test -z "$pinned"; then pinned="$(_runtime_release_assets_checksum)"; fi
+  printf '%s' "$pinned"
 }
 
 find_git() {
@@ -211,6 +240,9 @@ install_wine_runtime() {
       if test -z "$archive"; then
         archive="${TMNF_CACHE}/${RUNTIME_ARCHIVE_NAME}"
         pinned="$(runtime_pinned_checksum)"
+        if test -z "$pinned" && test "${TMNF_RUNTIME_ALLOW_UNPINNED:-0}" != 1; then
+          die "No pinned checksum for runtime $RUNTIME_VERSION (config/runtime-pin or config/release-assets.sha256). Refusing to trust a checksum fetched from the release itself; set TMNF_RUNTIME_ALLOW_UNPINNED=1 to accept it anyway."
+        fi
         if curl -q --fail --location --retry 3 --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
           --output "${staging}/release.sha256" \
           "${RUNTIME_RELEASE_URL}/${RUNTIME_ARCHIVE_NAME}.sha256"; then

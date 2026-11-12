@@ -4,7 +4,14 @@ import Foundation
 struct HubCommandResult: Sendable {
     let status: Int32
     let output: String
+    /// Only filled when the command ran with `separateStderr`; otherwise stderr is in `output`.
+    var stderr = ""
     var cancelled = false
+
+    var failureText: String {
+        let text = [output, stderr].filter { !$0.isEmpty }.joined(separator: "\n")
+        return text.isEmpty ? "The hub command failed (status \(status))." : text
+    }
 }
 
 private final class HubOutputCollector: @unchecked Sendable {
@@ -110,7 +117,7 @@ enum HubBackendError: LocalizedError {
         case let .launcherMissing(url):
             "The bundled launcher is missing: \(url.path)"
         case let .commandFailed(result):
-            result.output.isEmpty ? "The hub command failed (status \(result.status))." : result.output
+            result.failureText
         case let .malformedSnapshot(error):
             "The launcher returned invalid hub data: \(error.localizedDescription)"
         case let .schemaMismatch(found):
@@ -160,7 +167,9 @@ final class HubBackend: Sendable {
     }
 
     func snapshot() async throws -> HubSnapshot {
-        let result = try await run(arguments: ["hub", "snapshot"], handle: HubCommandHandle(), onOutput: { _ in })
+        // Snapshot output is JSON on stdout; stray stderr must not corrupt it.
+        let result = try await run(arguments: ["hub", "snapshot"], handle: HubCommandHandle(),
+                                   separateStderr: true, onOutput: { _ in })
         guard result.status == 0 else { throw HubBackendError.commandFailed(result) }
         return try Self.decodeSnapshot(Data(result.output.utf8))
     }
@@ -190,12 +199,13 @@ final class HubBackend: Sendable {
         return result
     }
 
-    private func run(arguments: [String], handle: HubCommandHandle,
+    private func run(arguments: [String], handle: HubCommandHandle, separateStderr: Bool = false,
                      onOutput: @escaping @Sendable (String) -> Void) async throws -> HubCommandResult {
         let launcher = launcherURL
         let result = try await withTaskCancellationHandler {
             try await Task.detached(priority: .userInitiated) {
-                try Self.execute(launcher: launcher, arguments: arguments, handle: handle, onOutput: onOutput)
+                try Self.execute(launcher: launcher, arguments: arguments, handle: handle,
+                                 separateStderr: separateStderr, onOutput: onOutput)
             }.value
         } onCancel: {
             handle.cancel()
@@ -204,11 +214,12 @@ final class HubBackend: Sendable {
         return result
     }
 
-    /// Runs `launcher` in a new session with stdout and stderr merged into one pipe.
+    /// Runs `launcher` in a new session with stdout and stderr merged into one pipe, or, with
+    /// `separateStderr`, stderr captured on its own in `HubCommandResult.stderr`.
     /// Returns once the child has exited and the pipe hit EOF, or shortly after exit if
     /// some other process still holds the pipe's write end.
     static func execute(launcher: URL, arguments: [String], // swiftlint:disable:this cyclomatic_complexity function_body_length
-                        handle: HubCommandHandle = HubCommandHandle(),
+                        handle: HubCommandHandle = HubCommandHandle(), separateStderr: Bool = false,
                         onOutput: @escaping @Sendable (String) -> Void = { _ in }) throws -> HubCommandResult {
         var fds: [Int32] = [0, 0]
         guard pipe(&fds) == 0 else { throw HubBackendError.spawnFailed(errno) }
@@ -221,7 +232,18 @@ final class HubBackend: Sendable {
         posix_spawn_file_actions_init(&actions)
         defer { posix_spawn_file_actions_destroy(&actions) }
         posix_spawn_file_actions_adddup2(&actions, writeFD, STDOUT_FILENO)
-        posix_spawn_file_actions_adddup2(&actions, writeFD, STDERR_FILENO)
+        // Stderr goes to a private temp file when separate: no second pipe to drain or leak.
+        let stderrPath = separateStderr
+            ? FileManager.default.temporaryDirectory
+                .appendingPathComponent("trackmania-hub-stderr-\(UUID().uuidString)").path
+            : nil
+        if let stderrPath {
+            posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, stderrPath,
+                                             O_WRONLY | O_CREAT | O_TRUNC, 0o600)
+        } else {
+            posix_spawn_file_actions_adddup2(&actions, writeFD, STDERR_FILENO)
+        }
+        defer { if let stderrPath { unlink(stderrPath) } }
         posix_spawn_file_actions_addchdir_np(&actions, launcher.deletingLastPathComponent().path)
 
         var attributes: posix_spawnattr_t?
@@ -286,9 +308,13 @@ final class HubBackend: Sendable {
         let raw = exit.snapshot?.status ?? 0
         let signal = raw & 0x7f
         let status: Int32 = signal == 0 ? (raw >> 8) & 0xff : 128 + signal
+        let errorText = stderrPath.flatMap { FileManager.default.contents(atPath: $0) }
+            // swiftlint:disable:next optional_data_string_conversion
+            .map { String(decoding: $0, as: UTF8.self) } ?? ""
         return HubCommandResult(status: status,
                                 // swiftlint:disable:next optional_data_string_conversion
                                 output: String(decoding: collector.value(), as: UTF8.self),
+                                stderr: errorText,
                                 cancelled: handle.isCancelled && status != 0)
     }
 }

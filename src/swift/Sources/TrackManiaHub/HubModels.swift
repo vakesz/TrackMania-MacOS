@@ -328,7 +328,7 @@ extension HubTitle {
 
     var availability: String {
         if error != nil { return "Needs attention" }
-        if state.gameApp?.ready == true { return "Ready to play" }
+        if state.gameApp?.ready == true, state.game?.ready == true { return "Ready to play" }
         if state.game?.ready == true { return "Game files installed" }
         if state.prefix?.ready == true { return "Platform ready" }
         return "Not installed"
@@ -392,9 +392,10 @@ extension HubTitle {
     /// Installed titles are those whose game files are in place.
     var isInstalled: Bool { state.game?.ready == true }
 
-    /// Play when the game app is ready; otherwise the backend's primary (or first) action.
+    /// Play when the game app and the game files are both ready (the wrappers outlive an
+    /// uninstall); otherwise the backend's primary (or first) action.
     var primaryControl: PrimaryControl? {
-        if state.gameApp?.ready == true { return .play }
+        if state.gameApp?.ready == true, state.game?.ready == true { return .play }
         return (actions.first(where: \.primary) ?? actions.first).map(PrimaryControl.action)
     }
 

@@ -3,7 +3,7 @@ import XCTest
 
 @MainActor
 final class HubUITests: XCTestCase {
-    private let playReady = HubInstallationState(gameApp: true)
+    private let playReady = HubInstallationState(game: true, gameApp: true)
     private let install = HubAction(id: "install", label: "Install", primary: true, kind: .install)
     private let verify = HubAction(id: "verify", label: "Verify", kind: .verify)
     private let doctor = HubAction(id: "doctor", label: "Run checks", kind: .maintenance)
@@ -14,6 +14,16 @@ final class HubUITests: XCTestCase {
         XCTAssertEqual(title.primaryControl, .play)
         XCTAssertEqual(title.moreActionGroups.setup, [install])
         XCTAssertEqual(title.moreActionGroups.maintenance, [verify])
+    }
+
+    func testPlayNeedsGameFilesNotJustWrappers() {
+        let wrappersOnly = HubTitle(id: "t", name: "T", state: HubInstallationState(gameApp: true), actions: [install, verify])
+        XCTAssertEqual(wrappersOnly.primaryControl, .action(install))
+        XCTAssertNotEqual(wrappersOnly.availability, "Ready to play")
+        let both = HubTitle(id: "t", name: "T", state: HubInstallationState(game: true, gameApp: true),
+                            actions: [install])
+        XCTAssertEqual(both.primaryControl, .play)
+        XCTAssertEqual(both.availability, "Ready to play")
     }
 
     func testBackendPrimaryWhenGameAppMissing() {

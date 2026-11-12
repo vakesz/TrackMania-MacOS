@@ -201,6 +201,8 @@ class AppInstallTests(unittest.TestCase):
             self.assertIn(f"export TMNF_TITLE={title}; fi\n", settings)
             wrapper = (self.home / f"apps/{title}-Game.app/Contents/MacOS/TMNF").read_text()
             self.assertIn(str(launcher / "python/bin/python3"), wrapper)
+            log_name = "play.log" if title == "tmnf" else f"{title}-play.log"
+            self.assertIn(f"Library/Logs/TMNF/{log_name}", wrapper)
         self.assertNotIn(
             "TMNF_TITLE=tmu", (support / "launchers/tmnf/config/installation.sh").read_text()
         )

@@ -7,7 +7,7 @@ update_game() {
 
   case "$kind" in
     online-retail|online-trial)
-      say "Re-running the pinned $label installer (repair)."
+      say "Checking the platform and components for $label and repairing what is missing; the installed game files are kept."
       exec "${TMNF_PROJECT_DIR}/src/shell/cli/install.sh"
       ;;
     steam-copy|disk-image)

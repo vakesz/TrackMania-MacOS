@@ -24,7 +24,7 @@ jobs:
       # Never a secret: a manual run on a branch builds an unsigned, unpublished hub.
       IS_TAG_BUILD: ${{ startsWith(github.ref, 'refs/tags/v') }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4, pinned
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2, pinned
@@ -108,7 +108,7 @@ jobs:
     # This job must not build anything: no swift build, no uv, no package
     # manager. It runs the tagged package-app.sh `sign` command only.
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4, pinned
         with:
           persist-credentials: false
       - name: Download unsigned app tar

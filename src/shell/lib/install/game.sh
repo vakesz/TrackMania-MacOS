@@ -57,6 +57,13 @@ stop_installer_tree() {
   wait "$pid" 2>/dev/null || true
 }
 
+# reap_prefix_leftovers — after `wineserver -k` and stop_installer_tree, stop
+# Wine processes (services.exe, explorer.exe, ...) that were reparented to
+# launchd and still hold the dead server's directory open. Setup steps only.
+reap_prefix_leftovers() {
+  without_operation_lock tmnf_python -m tmnf.guard.operation_guard reap "$TMNF_PREFIX" || true
+}
+
 # wait_inno_setup PID LOG LABEL: watch a running Inno Setup in the prefix.
 # The legacy Inno Setup versions used by every title can spin during teardown
 # under WoW64/Rosetta. Only stop them once their own log documents a
@@ -76,6 +83,7 @@ wait_inno_setup() {
         server_bin="$(wineserver_binary "$(wine_binary)")" || die "Cannot locate wineserver."
         without_operation_lock env WINEPREFIX="$TMNF_PREFIX" "$server_bin" -k || true
         stop_installer_tree "$installer_pid"
+        reap_prefix_leftovers
         break
       fi
     fi
@@ -85,11 +93,13 @@ wait_inno_setup() {
         server_bin="$(wineserver_binary "$(wine_binary)")" || die "Cannot locate wineserver."
         without_operation_lock env WINEPREFIX="$TMNF_PREFIX" "$server_bin" -k || true
         stop_installer_tree "$installer_pid"
+        reap_prefix_leftovers
         break
       fi
       server_bin="$(wineserver_binary "$(wine_binary)")" || die "Cannot locate wineserver."
       without_operation_lock env WINEPREFIX="$TMNF_PREFIX" "$server_bin" -k || true
       stop_installer_tree "$installer_pid"
+      reap_prefix_leftovers
       die "$label installation timed out. See $installer_log; rerun make install to retry."
     fi
     sleep 2

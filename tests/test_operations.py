@@ -1,4 +1,7 @@
+import contextlib
 import errno
+import io
+import shutil
 import fcntl
 import os
 import select
@@ -918,6 +921,99 @@ class Operations(unittest.TestCase):
         result = self.cli("run", self.prefix, sys.executable, "-c", "pass", env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
         release.touch()
+
+
+HOLDER = """
+import os, signal, sys, time
+if sys.argv[2] == "ignore":
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+fd = os.open(sys.argv[1], os.O_RDONLY)
+print("ready", flush=True)
+deadline = time.monotonic() + 30
+while time.monotonic() < deadline:
+    time.sleep(0.05)
+"""
+
+
+@unittest.skipUnless(
+    shutil.which("lsof") or os.path.exists("/usr/sbin/lsof"), "lsof is not available"
+)
+class Reap(unittest.TestCase):
+    setUp = Operations.setUp
+    stop = Operations.stop
+    spawn = Operations.spawn
+
+    def holder(self, path, mode="term"):
+        process = self.spawn([sys.executable, "-c", HOLDER, str(path), mode])
+        self.assertEqual(process.stdout.readline().strip(), "ready")
+        return process
+
+    def server_dir(self):
+        self.prefix.mkdir(parents=True, exist_ok=True)
+        directory = guard.wine_server_dir(self.prefix)
+        directory.mkdir(parents=True, mode=0o700)
+        return directory
+
+    def reap(self, grace=0.5):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            count = guard.reap(self.prefix, grace=grace)
+        return count, out.getvalue()
+
+    def test_stops_holders_including_one_that_ignores_sigterm(self):
+        directory = self.server_dir()
+        (directory / "lock").touch()
+        polite = self.holder(directory)  # holds the directory itself, like services.exe
+        stubborn = self.holder(directory / "lock", "ignore")
+        count, output = self.reap()
+        self.assertEqual(count, 2)
+        self.assertEqual(output, "Stopped 2 Wine processes left behind by the installer.\n")
+        self.assertEqual(polite.wait(timeout=5), -signal.SIGTERM)
+        self.assertEqual(stubborn.wait(timeout=5), -signal.SIGKILL)
+
+    def test_leaves_unrelated_processes_alone(self):
+        directory = self.server_dir()
+        other = self.root / "other-dir"
+        other.mkdir()
+        bystander = self.holder(other)
+        victim = self.holder(directory)
+        count, _ = self.reap()
+        self.assertEqual(count, 1)
+        victim.wait(timeout=5)
+        self.assertIsNone(bystander.poll())
+
+    def test_nothing_to_do_prints_nothing(self):
+        self.server_dir()
+        self.assertEqual(self.reap(), (0, ""))
+
+    def test_missing_server_dir_is_a_noop(self):
+        self.prefix.mkdir()
+        self.assertEqual(self.reap(), (0, ""))
+        shutil.rmtree(self.prefix)
+        self.assertEqual(self.reap(), (0, ""))
+
+    def test_cli_exits_zero(self):
+        directory = self.server_dir()
+        victim = self.holder(directory)
+        env = dict(self.env, TMNF_TEST_SERVER_ROOT=str(self.server_root))
+        code = (
+            "import os,sys;from pathlib import Path;"
+            "from tmnf.guard import operation_guard as g;"
+            "g.WINE_SERVER_ROOT=Path(os.environ['TMNF_TEST_SERVER_ROOT']);"
+            "g.INTERRUPT_GRACE=0.5;"
+            "sys.exit(g.main(['reap',sys.argv[1]]))"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code, str(self.prefix)],
+            env=dict(env, PYTHONPATH=str(ROOT / "src/python")),
+            text=True,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Stopped 1 Wine processes", result.stdout)
+        victim.wait(timeout=5)
 
 
 if __name__ == "__main__":

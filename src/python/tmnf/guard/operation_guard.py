@@ -254,7 +254,7 @@ def _held(path, token_name):
     return fd
 
 
-def wine_server_lock(prefix):
+def wine_server_dir(prefix):
     """Match the pinned Wine server/request.c create_server_dir layout."""
     prefix = safe_path(str(prefix))
     try:
@@ -263,12 +263,12 @@ def wine_server_lock(prefix):
         return None
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
         raise ValueError(f"Unsafe Wine prefix: {prefix}")
-    return (
-        WINE_SERVER_ROOT
-        / f".wine-{os.getuid()}"
-        / f"server-{info.st_dev:x}-{info.st_ino:x}"
-        / "lock"
-    )
+    return WINE_SERVER_ROOT / f".wine-{os.getuid()}" / f"server-{info.st_dev:x}-{info.st_ino:x}"
+
+
+def wine_server_lock(prefix):
+    directory = wine_server_dir(prefix)
+    return None if directory is None else directory / "lock"
 
 
 def check_inactive(prefix):
@@ -306,6 +306,73 @@ def check_inactive(prefix):
     finally:
         for directory in reversed(directories):
             os.close(directory)
+
+
+def _ancestors():
+    """Our pid and every parent up to launchd, so reap never signals its own chain."""
+    pids = {os.getpid()}
+    pid = os.getppid()
+    while pid > 1 and pid not in pids:
+        pids.add(pid)
+        result = subprocess.run(
+            ["/bin/ps", "-o", "ppid=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        try:
+            pid = int(result.stdout.strip())
+        except ValueError:
+            break
+    return pids
+
+
+def _server_dir_holders(directory):
+    """PIDs of this user's processes holding files in a Wine server directory open."""
+    result = subprocess.run(
+        ["/usr/sbin/lsof", "-t", "-a", "-u", str(os.getuid()), "+d", str(directory)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    # lsof exits 1 when nothing matches; anything else with no output is an error.
+    if result.returncode not in (0, 1):
+        raise RuntimeError(f"lsof failed: {result.stderr.strip() or result.returncode}")
+    return {int(token) for token in result.stdout.split() if token.isdecimal()}
+
+
+def reap(prefix, grace=INTERRUPT_GRACE):
+    """Stop Wine processes still attached to a prefix whose wineserver is gone.
+
+    Wine reparents services.exe, explorer.exe and friends to launchd, so a
+    process-tree walk cannot find them. Each still holds the dead server's
+    directory open, which names its prefix. Does not touch the operation lock.
+    """
+    directory = wine_server_dir(prefix)
+    if directory is None or not directory.is_dir():
+        return 0
+    excluded = _ancestors()
+    victims = _server_dir_holders(directory) - excluded
+    if not victims:
+        return 0
+    stopped = len(victims)
+    for pid in victims:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    deadline = time.monotonic() + grace
+    remaining = victims
+    while remaining and time.monotonic() < deadline:
+        time.sleep(0.1)
+        remaining = _server_dir_holders(directory) - excluded
+    for pid in remaining:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    print(f"Stopped {stopped} Wine processes left behind by the installer.", flush=True)
+    return stopped
 
 
 def _signal_group(pid, signum):
@@ -433,7 +500,7 @@ def _run(command, tokens, grace=INTERRUPT_GRACE):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("run", "held", "app-run", "app-held"))
+    parser.add_argument("action", choices=("run", "held", "app-run", "app-held", "reap"))
     parser.add_argument("prefix")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
@@ -444,6 +511,11 @@ def main(argv=None):
             held(args.prefix)
             if args.action == "app-held":
                 app_held()
+            return 0
+        if args.action == "reap":
+            if args.command:
+                raise ValueError("reap does not accept a command")
+            reap(args.prefix)
             return 0
         if args.action == "app-run":
             return app_run(args.prefix, args.command)

@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # What an old name looks like, by kind.
 PATTERNS = {
     "python package": r"\btmnf\.(?:app|build|guard|hub|install|probes|session)\b|src/python/tmnf\b",
-    "cli": r"\bcli/tmnf\b",
+    "cli": r"\bcli/tmnf\b|[\"']cli[\"']\s*[/,]\s*[\"']tmnf[\"']|\b(?:by|outside) tmnf\b",
     "env prefix": r"(?<![A-Za-z0-9_])TMNF_[A-Z*]",
     "marker or tombstone": r"\.tmnf-[a-z]|\btmnf-(?:removing|relink|operation|session)",
     "log prefix": r"\btmnf-(?:state|mon|map|run):",
@@ -50,14 +50,6 @@ ALLOWED: typing.Dict[str, typing.List[typing.Tuple[str, typing.Optional[str]]]] 
     ],
     "registry: the bundle ids earlier releases gave each title's apps": [
         ("config/titles/*.json", r'"legacy_bundle_id_(?:game|settings)"'),
-    ],
-    "TLS test CA common name, fixed in the committed test certificates": [
-        ("src/python/trackmania_mac/probes/tls_test_server.py", r"MacTMNF PUBLIC TEST ONLY"),
-        ("tests/test_network.py", r"MacTMNF PUBLIC TEST ONLY"),
-        ("tests/tls-trust.c", r"MacTMNF PUBLIC TEST ONLY"),
-    ],
-    "repository name in a runtime patch's description": [
-        ("patches/wine/0010-winhttp-report-certificate-errors.patch", r"MacTMNF repository root"),
     ],
 }
 EXCLUDED = ("*.md", "LICENSE", "website/*", ".claude/*", ".github/ISSUE_TEMPLATE/*")

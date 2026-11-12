@@ -31,7 +31,7 @@ Runtime (patched Wine + D9VK + MoltenVK + x87sidecar) and native Swift hub app f
 - Every `curl` under `src/` must pass `-q` as its first argument (`tests/test_supply_chain.py`).
 - Every title needs `assets/titles/<id>.svg`.
 - `tests/test_naming.py` fails on a stray old name (`tmnf` package or CLI, `TMNF_*`, `.tmnf-*`, `local.tmnf.*`, `MacTMNF`) outside its labelled allow-list. Only the title id `tmnf` and what derives from it keep the name.
-- Names of earlier releases are recognised only in `src/python/trackmania_mac/legacy.py`, `src/shell/lib/legacy.sh` and `src/swift/Sources/TrackManiaHub/HubLegacy.swift` (the current marker names are in `trackmania_mac/markers.py`); the allow-list also covers the registry's `legacy_*` fields, test fixtures and the test CA's common name.
+- Names of earlier releases are recognised only in `src/python/trackmania_mac/legacy.py`, `src/shell/lib/legacy.sh` and `src/swift/Sources/TrackManiaHub/HubLegacy.swift` (the current marker names are in `trackmania_mac/markers.py`); the allow-list also covers the registry's `legacy_*` fields and test fixtures.
 - Runtime patches apply in sorted filename order from `patches/<component>/`.
 
 ## Conventions

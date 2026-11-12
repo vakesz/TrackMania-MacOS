@@ -1,6 +1,6 @@
 #!/bin/bash
 # Installation maintenance: update, doctor, stop, uninstall.
-# Sourced by tmnf after common.sh.
+# Sourced by trackmania-mac after common.sh.
 
 update_game() {
   local kind="$TRACKMANIA_MAC_TITLE_INSTALLER" label="$TRACKMANIA_MAC_TITLE_NAME"

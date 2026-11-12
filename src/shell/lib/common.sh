@@ -80,7 +80,7 @@ have() {
   command -v "$1" >/dev/null 2>&1
 }
 
-# Run the tmnf Python package. The package root travels with the project
+# Run the trackmania_mac Python package. The package root travels with the project
 # (checkout or installed launcher), so one helper serves every caller.
 # Exec sites inline PYTHONPATH directly to preserve process replacement.
 readonly TRACKMANIA_MAC_PYTHONPATH="${TRACKMANIA_MAC_PROJECT_DIR}/src/python${PYTHONPATH:+:$PYTHONPATH}"

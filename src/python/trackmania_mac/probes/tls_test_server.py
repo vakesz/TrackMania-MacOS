@@ -234,7 +234,7 @@ subjectAltName = IP:127.0.0.1,DNS:127.0.0.1
                 "-days",
                 "7300",
                 "-subj",
-                "/CN=MacTMNF PUBLIC TEST ONLY " + ca,
+                "/CN=TrackMania Mac PUBLIC TEST ONLY " + ca,
                 "-addext",
                 "basicConstraints=critical,CA:true,pathlen:0",
                 "-addext",
@@ -250,7 +250,7 @@ subjectAltName = IP:127.0.0.1,DNS:127.0.0.1
                 "-key",
                 ca + ".key",
                 "-subj",
-                "/CN=MacTMNF PUBLIC TEST ONLY " + ca,
+                "/CN=TrackMania Mac PUBLIC TEST ONLY " + ca,
                 "-out",
                 ca + ".csr",
             )

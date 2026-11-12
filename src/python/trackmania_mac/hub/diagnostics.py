@@ -83,7 +83,7 @@ def _stop_group(child: "subprocess.Popen[str]") -> None:
 
 
 def _doctor(title_id: str) -> str:
-    cli = registry.project_dir() / "src" / "shell" / "cli" / "tmnf"
+    cli = registry.project_dir() / "src" / "shell" / "cli" / hub_paths.CLI_NAME
     env = dict(os.environ, TRACKMANIA_MAC_TITLE=title_id)
     try:
         child = subprocess.Popen(

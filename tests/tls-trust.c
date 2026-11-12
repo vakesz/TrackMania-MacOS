@@ -61,7 +61,7 @@ int main(int argc, char **argv)
     certificate = CertCreateCertificateContext(X509_ASN_ENCODING, der, der_size);
     if (!certificate || !CertGetNameStringA(certificate, CERT_NAME_ATTR_TYPE, 0,
             (void *)szOID_COMMON_NAME, subject, sizeof(subject)) ||
-            strcmp(subject, "MacTMNF PUBLIC TEST ONLY ca") ||
+            strcmp(subject, "TrackMania Mac PUBLIC TEST ONLY ca") ||
             !CertCompareCertificateName(X509_ASN_ENCODING, &certificate->pCertInfo->Subject,
                     &certificate->pCertInfo->Issuer)) goto done;
     extension = CertFindExtension(szOID_BASIC_CONSTRAINTS2, certificate->pCertInfo->cExtension,

@@ -82,7 +82,8 @@ class TLSFixtures(unittest.TestCase):
                 )
                 ca = "untrusted-ca" if "untrusted" in case else "ca"
                 self.assertEqual(
-                    metadata["issuer"], ((("commonName", "MacTMNF PUBLIC TEST ONLY " + ca),),)
+                    metadata["issuer"],
+                    ((("commonName", "TrackMania Mac PUBLIC TEST ONLY " + ca),),),
                 )
                 result = subprocess.run(
                     [

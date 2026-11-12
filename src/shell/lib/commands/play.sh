@@ -1,5 +1,5 @@
 #!/bin/bash
-# Game launching and renderer setup. Sourced by tmnf after common.sh.
+# Game launching and renderer setup. Sourced by trackmania-mac after common.sh.
 
 play_target() {
   local executable="$1"
@@ -92,7 +92,7 @@ install_d9vk() {
   wine_bin="$(wine_binary)" || die "Wine is not installed. Run src/shell/cli/install.sh first."
   cp "$TRACKMANIA_MAC_D9VK_DLL" "$PREFIX_D9VK_DLL"
   # Register the override in the prefix too, so tools launched outside
-  # tmnf (winecfg, the graphics launcher) see the same Direct3D 9.
+  # trackmania-mac (winecfg, the graphics launcher) see the same Direct3D 9.
   without_operation_lock env WINEPREFIX="$TRACKMANIA_MAC_PREFIX" WINEDEBUG=-all "$wine_bin" reg add \
     'HKCU\Software\Wine\DllOverrides' /v d3d9 /t REG_SZ /d native /f >/dev/null
   d9vk_is_installed || die "D9VK installation failed."

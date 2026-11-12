@@ -704,6 +704,8 @@ class HubBackendTests(unittest.TestCase):
 
             def fake_popen(command, **kwargs):
                 self.assertTrue(kwargs.get("start_new_session"))
+                # The doctor command must name the CLI that exists.
+                self.assertTrue(Path(command[1]).is_file(), command)
                 return real_popen([sys.executable, "-c", script, str(pidfile)], **kwargs)
 
             waits = []

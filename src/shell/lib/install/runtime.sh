@@ -243,7 +243,7 @@ install_wine_runtime() {
         if test -z "$pinned" && test "${TMNF_RUNTIME_ALLOW_UNPINNED:-0}" != 1; then
           die "No pinned checksum for runtime $RUNTIME_VERSION (config/runtime-pin or config/release-assets.sha256). Refusing to trust a checksum fetched from the release itself; set TMNF_RUNTIME_ALLOW_UNPINNED=1 to accept it anyway."
         fi
-        if curl -q --fail --location --retry 3 --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
+        if curl -q --fail --location --retry 3 --retry-all-errors --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
           --output "${staging}/release.sha256" \
           "${RUNTIME_RELEASE_URL}/${RUNTIME_ARCHIVE_NAME}.sha256"; then
           expected="$(awk 'NR==1 {print $1}' "${staging}/release.sha256")"

@@ -359,7 +359,7 @@ download_verified() (
     [[ "$max_bytes" =~ ^[1-9][0-9]{0,15}$ ]] || die "Invalid download size limit: $max_bytes"
     limit=(--max-filesize "$max_bytes")
   fi
-  curl -q --fail --location --retry 3 --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
+  curl -q --fail --location --retry 3 --retry-all-errors --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
     ${limit[@]+"${limit[@]}"} --progress-bar --output "$partial" "$url" || die "Download failed: $url"
   verify_file "$partial" "$expected" || {
     rm -f "$partial"

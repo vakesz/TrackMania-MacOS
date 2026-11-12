@@ -68,6 +68,12 @@ class DownloadVerified(unittest.TestCase):
                 self.assertEqual(arguments[0], "-q")
                 self.assertNotIn("--max-filesize", arguments)
 
+    def test_dropped_connections_are_retried(self):
+        # --retry alone skips errors such as a reset connection (curl exit 56).
+        result, arguments = self.download()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--retry-all-errors", arguments)
+
     def test_invalid_size_limit_is_rejected_before_downloading(self):
         result, arguments = self.download("12abc")
         self.assertNotEqual(result.returncode, 0)

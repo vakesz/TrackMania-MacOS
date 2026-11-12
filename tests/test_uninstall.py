@@ -9,15 +9,17 @@ import os
 from pathlib import Path
 import plistlib
 import shutil
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
 
-from tmnf.guard import uninstall
+from tmnf.guard import operation_guard, uninstall
 from tmnf.hub import registry
 
 
 ROOT = Path(__file__).resolve().parents[1]
+CLI = ROOT / "src/shell/cli/tmnf"
 
 TITLES = {title.id: title for title in registry.load_all(ROOT / "config/titles")}
 
@@ -401,6 +403,119 @@ class GuardPlanTests(unittest.TestCase):
         verbs = {line.split("\t")[0] for line in output}
         self.assertEqual(verbs, {"remove"})
         self.assertIn("remove\tsaves\t{}".format(self.fx.userdata("tmnf")), output)
+
+
+class ShellUninstallTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(dir="/private/tmp", prefix="tmnf-uninstall-cli-")
+        self.addCleanup(temporary.cleanup)
+        self.home = Path(temporary.name).resolve()
+        self.fx = Fixture(self.home)
+
+    def tmnf(self, *arguments, title="tmnf"):
+        environment = {
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(self.home),
+            "TMPDIR": str(self.home),
+            "TMNF_TITLE": title,
+            "TMNF_APPS_DIR": str(self.fx.apps),
+        }
+        return subprocess.run(
+            ["/bin/bash", str(CLI), *arguments],
+            cwd=ROOT,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
+
+    def test_include_saves_removes_one_title_and_nothing_nested_beside_it(self):
+        self.fx.install("tmnf")
+        self.fx.install("tmu")
+        shared = self.fx.cache / "directx_Jun2010_redist.exe"
+        shared.write_text("shared")
+        result = self.tmnf("uninstall", "--yes", "--include-saves")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        title = TITLES["tmnf"]
+        for path in (
+            self.fx.prefix("tmnf"),
+            self.fx.userdata("tmnf"),
+            self.fx.apps / title.app_name,
+            self.fx.apps / title.settings_app_name,
+            self.fx.support / "launchers/tmnf",
+        ):
+            self.assertFalse(os.path.lexists(path), path)
+        tmu = TITLES["tmu"]
+        for path in (
+            self.fx.prefix("tmu") / ".tmnf-prefix",
+            self.fx.userdata("tmu") / "TmForever/Replays/race.Gbx",
+            self.fx.apps / tmu.app_name,
+            self.fx.support / "launchers/tmu",
+            self.fx.support / "runtime/1",
+            shared,
+        ):
+            self.assertTrue(path.exists(), path)
+        self.assertTrue(self.fx.root("tmnf").is_dir())
+        self.assertIn("Removed {}".format(self.fx.prefix("tmnf")), result.stdout)
+
+    def test_busy_prefix_is_refused_immediately(self):
+        prefix = self.fx.install("tmnf")
+        fd = operation_guard.acquire(prefix)
+        try:
+            result = self.tmnf("uninstall", "--yes", "--include-saves")
+        finally:
+            os.close(fd)
+        # The guard exits 1, or 75 where it reports a busy prefix on its own.
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Another operation is using prefix", result.stderr)
+        self.assertTrue((prefix / ".tmnf-prefix").exists())
+        self.assertTrue(self.fx.userdata("tmnf").is_dir())
+        self.assertTrue((self.fx.apps / TITLES["tmnf"].app_name).is_dir())
+
+    def test_apps_only_title_uninstalls_without_a_prefix(self):
+        self.fx.install("tmu")
+        shutil.rmtree(self.fx.prefix("tmu"))
+        result = self.tmnf("uninstall", "--yes", title="tmu")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.fx.apps / TITLES["tmu"].app_name).exists())
+        self.assertTrue(self.fx.userdata("tmu").is_dir())
+
+    def test_unanswered_prompt_cancels(self):
+        prefix = self.fx.install("tmnf")
+        result = self.tmnf("uninstall")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Cancelled.", result.stdout)
+        self.assertIn(str(prefix), result.stdout)
+        self.assertTrue(prefix.is_dir())
+
+    def test_shell_and_python_agree_on_the_cached_installer(self):
+        for title in TITLES.values():
+            if not title.source_url:
+                continue
+            with self.subTest(title=title.id):
+                script = (
+                    'die() { echo "$*" >&2; exit 1; }; . "$1/src/shell/lib/titles.sh"; '
+                    '_cache_installer_path "$TMNF_TITLE"'
+                )
+                result = subprocess.run(
+                    ["/bin/bash", "-c", script, "bash", str(ROOT)],
+                    env={
+                        "PATH": "/usr/bin:/bin",
+                        "TMNF_PROJECT_DIR": str(ROOT),
+                        "TMNF_TITLE": title.id,
+                        "TMNF_TITLE_SOURCE_URL": title.source_url,
+                        "TMNF_CACHE": str(self.fx.cache),
+                    },
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(
+                    result.stdout.strip(),
+                    str(uninstall.installer_cache_path(title, self.fx.cache)),
+                )
 
 
 class PreviewTests(unittest.TestCase):

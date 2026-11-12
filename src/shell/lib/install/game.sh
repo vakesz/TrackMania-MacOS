@@ -12,22 +12,6 @@
 # Every installer path pins its SHA-256; every Inno Setup invocation logs to
 # drive_c/tmnf-install.log so the completion watcher can verify on its own.
 
-# _cache_installer_path TITLE — resolved path of the pinned installer download.
-_cache_installer_path() {
-  local title="$1" url="$TMNF_TITLE_SOURCE_URL"
-  test "$title" = "$TMNF_TITLE" || die "Installer cache requested for $title, not $TMNF_TITLE."
-  if test -z "$url"; then
-    die "Title $title has no pinned installer URL in config/titles."
-  fi
-  if test "$title" = tmnf; then
-    # Keep the historical single-title cache location so existing downloads
-    # stay valid.
-    printf '%s/%s\n' "$TMNF_CACHE" "${url##*/}"
-  else
-    printf '%s/games/%s/%s\n' "$TMNF_CACHE" "$title" "${url##*/}"
-  fi
-}
-
 # _installer_descendants PID — print every descendant of PID, deepest first.
 _installer_descendants() {
   local child

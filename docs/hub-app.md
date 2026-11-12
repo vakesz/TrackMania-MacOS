@@ -92,7 +92,13 @@ that is not ours, a symlink or an older launcher app is reported and kept.
 The guard plans and removes in one Python process; the shell only confirms and
 prints, and never reads a plan back. Each folder is first renamed to a tombstone
 (`.<name>.tmnf-removing.<random>`) in its own folder, so a removal that stops
-halfway is finished by the next uninstall. Paths are compared by device and
+halfway is finished by the next uninstall. Tombstones are only recognised where
+the original folder would be accepted: prefix and saves tombstones in the
+title's own root, launcher tombstones as `launchers/<id>`. Keeping saves never
+deletes a saves tombstone: it is renamed back to `UserData` when that name is
+free, and kept otherwise; the snapshot then reports it as `saves`. A planned
+folder that is itself a mount point is kept ("is a mounted volume; unmount it
+first") and left out of `removal`. Paths are compared by device and
 inode, not by spelling, because APFS is case-insensitive; removal refuses a
 path or parent that changed after it was checked, a folder with another volume
 mounted inside it, and any path containing a control character. For titles

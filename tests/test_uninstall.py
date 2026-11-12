@@ -66,6 +66,10 @@ class Fixture:
     def userdata(self, title_id):
         return self.root(title_id) / "UserData"
 
+    def save(self, title_id):
+        """The replay install(saves=True) writes, in the title's first save folder."""
+        return self.userdata(title_id) / TITLES[title_id].save_dirs[0] / "Replays/race.Gbx"
+
     def install(self, title_id, saves=True, apps=True):
         title = TITLES[title_id]
         prefix = self.prefix(title_id)
@@ -77,7 +81,7 @@ class Fixture:
         userdata.mkdir(parents=True)
         documents.symlink_to(userdata, target_is_directory=True)
         if saves:
-            save = userdata / title.save_dirs[0] / "Replays/race.Gbx"
+            save = self.save(title_id)
             save.parent.mkdir(parents=True)
             save.write_text("keep")
         if apps:
@@ -599,7 +603,7 @@ class GuardPlanTests(unittest.TestCase):
         with mock.patch.object(uninstall.os, "stat", side_effect=stat):
             with self.assertRaisesRegex(ValueError, "mounted volume"):
                 uninstall.remove([entry], report=lambda line: None)
-        self.assertTrue((userdata / "TmForever/Replays/race.Gbx").exists())
+        self.assertTrue(self.fx.save("tmnf").exists())
 
     def interrupt(self, entries, kind):
         """Remove everything before KIND, then stop while deleting KIND (real order)."""
@@ -624,7 +628,7 @@ class GuardPlanTests(unittest.TestCase):
         entries = self.plan()
         self.assertNotIn(tomb, self.removed(entries))
         uninstall.remove(entries, report=lambda line: None)
-        self.assertTrue((self.fx.userdata("tmnf") / "TmForever/Replays/race.Gbx").exists())
+        self.assertTrue((self.fx.save("tmnf")).exists())
         self.assertFalse(tomb.exists())
         # With the saves folder back in place, a second tombstone is kept, not deleted.
         second = self.fx.root("tmnf") / ".UserData.tmnf-removing.0123abcd"
@@ -774,7 +778,7 @@ class GuardPlanTests(unittest.TestCase):
         entries = uninstall.plan(**arguments)
         uninstall.remove(entries, report=lambda line: None)
         self.assertFalse(tomb.exists())
-        self.assertTrue((self.fx.userdata("tmnf") / "TmForever/Replays/race.Gbx").exists())
+        self.assertTrue((self.fx.save("tmnf")).exists())
 
     def test_restore_works_with_a_case_variant_root(self):
         probe = self.home / "CaseProbe"
@@ -788,7 +792,7 @@ class GuardPlanTests(unittest.TestCase):
         self.assertFalse(tomb.exists())
         # Restored under the canonical spelling.
         self.assertIn("UserData", os.listdir(self.fx.root("tmnf")))
-        self.assertTrue((self.fx.userdata("tmnf") / "TmForever/Replays/race.Gbx").exists())
+        self.assertTrue((self.fx.save("tmnf")).exists())
 
     def test_volume_mounted_inside_is_reported_before_any_rename(self):
         prefix = self.fx.install("tmnf")
@@ -924,7 +928,7 @@ class ShellUninstallTests(unittest.TestCase):
         tmu = TITLES["tmu"]
         for path in (
             self.fx.prefix("tmu") / ".tmnf-prefix",
-            self.fx.userdata("tmu") / "TmForever/Replays/race.Gbx",
+            self.fx.save("tmu"),
             self.fx.apps / tmu.app_name,
             self.fx.support / "launchers/tmu",
             self.fx.support / "runtime/1",
@@ -990,7 +994,7 @@ class ShellUninstallTests(unittest.TestCase):
 
     def test_cancel_then_keep_saves_never_deletes_unfinished_saves(self):
         self.fx.install("tmnf")
-        save = self.fx.userdata("tmnf") / "TmForever/Replays/race.Gbx"
+        save = self.fx.save("tmnf")
         tomb = self.fx.root("tmnf") / ".UserData.tmnf-removing.0123abcd"
         # An include-saves run that removed the prefix and stopped on the saves.
         shutil.rmtree(self.fx.prefix("tmnf"))

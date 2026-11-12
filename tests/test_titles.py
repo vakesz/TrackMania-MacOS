@@ -442,8 +442,11 @@ TITLE_CONDITIONAL_ALLOWLIST = (
         'if not identity and title.id == "tmnf" and (prefix / "system.reg").is_file():',
     ),
     ("src/python/tmnf/hub/state.py", 'if not identity and title.id == "tmnf":'),
-    # The single-title installer cache location existing downloads still use.
-    ("src/shell/lib/install/game.sh", 'if test "$title" = tmnf; then'),
+    # The single-title installer cache location existing downloads still use;
+    # uninstall mirrors it and TMNF's unprefixed log names.
+    ("src/shell/lib/titles.sh", 'if test "$title" = tmnf; then'),
+    ("src/python/tmnf/guard/uninstall.py", 'if title.id == "tmnf":'),
+    ("src/python/tmnf/guard/uninstall.py", 'if title_id != "tmnf":'),
     # The shared pre-multi-title launcher only TMNF ever installed.
     ("src/shell/lib/apps/wrappers.sh", 'test "$TMNF_TITLE" = tmnf || return 0'),
     # TMNF's app logs kept their pre-multi-title names (play.log, configure.log).

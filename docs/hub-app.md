@@ -66,8 +66,10 @@ uninstall would remove, so the confirmation dialog can name them:
 }
 ```
 
-`kind` is one of `prefix`, `game-app`, `settings-app`, `launcher`, `cache`,
-`logs` and `icon`; `saves` is `null` when the title has no saves folder.
+`kind` is one of `prefix`, `game-app`, `settings-app`, `launcher`, `leftover`,
+`cache`, `logs` and `icon`; `saves` is `null` when the title has no saves
+folder. `leftover` is a folder an interrupted uninstall renamed but did not
+finish deleting.
 Error entries carry `"removal": null`. The preview only checks what exists; the
 full checks run when the action does.
 
@@ -85,7 +87,18 @@ TMLoader, OpenAL Soft), a title root, or another title's files. Nations
 Forever's root `~/Games/TMNF` also holds the other titles' roots, so only its
 `prefix` and `UserData` folders are removed, never the root. The action refuses
 while the game is running or another operation holds the prefix, and an app
-that is not ours, a symlink or an older launcher app is reported and kept. When
+that is not ours, a symlink or an older launcher app is reported and kept.
+
+The guard plans and removes in one Python process; the shell only confirms and
+prints, and never reads a plan back. Each folder is first renamed to a tombstone
+(`.<name>.tmnf-removing.<random>`) in its own folder, so a removal that stops
+halfway is finished by the next uninstall. Paths are compared by device and
+inode, not by spelling, because APFS is case-insensitive; removal refuses a
+path or parent that changed after it was checked, a folder with another volume
+mounted inside it, and any path containing a control character. For titles
+other than Nations Forever, the download folder `games/<id>` holds no ownership
+marker, so only the pinned installer, its partial downloads and its unpacked
+staging are removed, and the folder only once it is empty. When
 it finishes, the snapshot shows the title as not installed.
 
 ## Titles

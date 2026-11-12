@@ -615,6 +615,15 @@ class RegistryValidationTests(unittest.TestCase):
             with self.subTest(changes=changes), self.assertRaises(self.registry.RegistryError):
                 self.validate(**changes)
 
+    def test_cd_key_gate_is_a_registry_fact_of_serial_titles(self):
+        self.assertTrue(self.validate().cd_key_in_nadeo_ini)
+        data = {key: value for key, value in self.data.items() if key != "cd_key_in_nadeo_ini"}
+        self.assertIsNone(self.registry._validate(data, Path("/x/tmu.json")).cd_key_in_nadeo_ini)
+        with self.assertRaisesRegex(self.registry.RegistryError, "requires requires_serial"):
+            self.validate(requires_serial=False)
+        with self.assertRaises(self.registry.RegistryError):
+            self.validate(cd_key_in_nadeo_ini="yes")
+
     def test_online_installer_requires_an_exe_pin(self):
         with self.assertRaisesRegex(self.registry.RegistryError, "requires game_exe_sha256"):
             self.validate(installer="online")

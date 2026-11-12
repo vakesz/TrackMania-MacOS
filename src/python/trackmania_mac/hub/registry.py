@@ -80,6 +80,9 @@ _FIELDS: typing.Tuple[_Field, ...] = (
     _Field("game_exe_sha256", "sha", False),
     _Field("creative_openal_sha256", "sha", False),
     _Field("requires_serial", "bool", True),
+    # The hub keeps Play off until Nadeo.ini in the game folder holds a real
+    # InstallKey (United Forever).
+    _Field("cd_key_in_nadeo_ini", "bool", False),
     _Field("notes", "notes", False),
 )
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -138,6 +141,7 @@ class Title(typing.NamedTuple):
     game_exe_sha256: typing.Optional[str]
     creative_openal_sha256: typing.Optional[str]
     requires_serial: bool
+    cd_key_in_nadeo_ini: typing.Optional[bool]
     notes: str
 
     @property
@@ -274,6 +278,8 @@ def _validate(data: object, path: pathlib.Path) -> Title:
         raise RegistryError(f"{path}: installer kind {values['installer']} must not carry pins")
     if values["needs_tmloader"] and values["game_exe"] != FOREVER_EXE:
         raise RegistryError(f"{path}: needs_tmloader requires game_exe {FOREVER_EXE}")
+    if values["cd_key_in_nadeo_ini"] and not values["requires_serial"]:
+        raise RegistryError(f"{path}: cd_key_in_nadeo_ini requires requires_serial")
     if values["game_exe_sha256"] and not values["game_version"]:
         raise RegistryError(f"{path}: game_exe_sha256 requires game_version")
     # The direct "online" flow verifies the installed executable against its pin.

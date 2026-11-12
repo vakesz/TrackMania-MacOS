@@ -16,7 +16,7 @@ from . import registry
 from trackmania_mac.guard import managed_paths, operation_guard, uninstall
 from trackmania_mac.install import modloader
 
-__all__ = ["probe", "session_active"]
+__all__ = ["install_key", "probe", "session_active"]
 
 
 class Probe(typing.NamedTuple):
@@ -152,8 +152,48 @@ def _game_ready(title: registry.Title, paths: hub_paths.TitlePaths, prefix: path
     if "competition-patch" in title.components:
         return _competition_patch_ready(prefix)
     if title.requires_serial:
-        return Probe(True, "Installed; the game asks for the serial key at first launch")
+        return Probe(True, "Installed; register your key with Register player key")
     return Probe(True, "Installed")
+
+
+# Placeholders the game ships before a real key replaces them: Steam's
+# STEAM_Nadeo.ini carries the template token, and "Ask" means no key yet.
+_CD_KEY_PLACEHOLDERS = frozenset({"", "%cdkey%", "ask"})
+
+
+def install_key(ini: pathlib.Path) -> typing.Optional[str]:
+    """The InstallKey value from the [TmForever] section of Nadeo.ini, or None."""
+    try:
+        text = ini.read_bytes().decode("latin-1")
+    except OSError:
+        return None
+    section = ""
+    found: typing.Optional[str] = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith(";"):
+            continue
+        if line.startswith("["):
+            header = line.split(";", 1)[0].strip()
+            if header.endswith("]"):
+                section = header[1:-1].strip().lower()
+                continue
+        name, sep, value = line.partition("=")
+        if sep and section == "tmforever" and name.strip().lower() == "installkey":
+            # The last line wins, as in most INI readers.
+            found = value.strip()
+    return found
+
+
+def _cd_key_ready(paths: hub_paths.TitlePaths) -> Probe:
+    """Whether Nadeo.ini holds a real InstallKey. The key itself is never reported."""
+    ini = paths.game_dir / "Nadeo.ini"
+    if not ini.is_file():
+        return Probe(False, "Nadeo.ini not found in the game folder")
+    key = install_key(ini)
+    if key is None or key.lower() in _CD_KEY_PLACEHOLDERS:
+        return Probe(False, "CD key required")
+    return Probe(True, "CD key present")
 
 
 def _app_ready(path: pathlib.Path) -> bool:
@@ -178,7 +218,11 @@ def _app_ready(path: pathlib.Path) -> bool:
 def probe(
     title: registry.Title, paths: typing.Optional[hub_paths.TitlePaths] = None
 ) -> typing.Dict[str, Probe]:
-    """State items, exactly the ones the shell flows gate on."""
+    """State items, exactly the ones the shell flows gate on, plus cdKey.
+
+    cdKey gates only the hub's Play button; it is added once the game files
+    are in place, so a title that is not installed never shows it.
+    """
     resolved = paths if paths is not None else hub_paths.compute(title)
     wine = hub_paths.wine_binary(resolved)
     items = {
@@ -190,6 +234,8 @@ def probe(
         "gameApp": Probe(_app_ready(resolved.app), ""),
         "settingsApp": Probe(_app_ready(resolved.settings_app), ""),
     }
+    if title.cd_key_in_nadeo_ini and resolved.game_exe.is_file():
+        items["cdKey"] = _cd_key_ready(resolved)
     return items
 
 

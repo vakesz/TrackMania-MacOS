@@ -21,6 +21,7 @@ def main(argv=None) -> int:
     sub_run.add_argument("action")
     sub_run.add_argument("--source", default=None)
     sub_run.add_argument("--runtime", default=None)
+    sub_run.add_argument("--include-saves", action="store_true")
 
     arguments = parser.parse_args(argv)
     try:
@@ -35,7 +36,13 @@ def main(argv=None) -> int:
             from . import diagnostics
 
             return diagnostics.main()
-        hub_run.run(arguments.title, arguments.action, arguments.source, arguments.runtime)
+        hub_run.run(
+            arguments.title,
+            arguments.action,
+            arguments.source,
+            arguments.runtime,
+            include_saves=arguments.include_saves,
+        )
     except registry.RegistryError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

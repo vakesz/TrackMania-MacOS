@@ -6,6 +6,7 @@ shared preferences (TMNF_APPS_DIR, TMNF_SUPPORT and TMNF_CACHE) survive, and
 so does TMNF_TITLES_DIR: the registry directory applies to every consumer.
 TMNF_RUNTIME_SOURCE is the exception: only the explicit --runtime flag sets it.
 TMNF_RUNTIME_ARCHIVE and TMNF_RUNTIME_SHA256 are never inherited either.
+Only uninstall accepts --include-saves, which also removes the title's saves.
 """
 
 from __future__ import annotations
@@ -71,6 +72,7 @@ def run(
     action_id: str,
     source: typing.Optional[str],
     runtime: typing.Optional[str] = None,
+    include_saves: bool = False,
 ) -> typing.NoReturn:
     title = registry.get(title_id)  # Registry-level validation with a precise message.
     if action_id == "import":
@@ -90,6 +92,8 @@ def run(
             die(f"Action {action_id} does not accept --runtime.")
         if runtime not in RUNTIME_SOURCES:
             die(f"Invalid --runtime '{runtime}': expected download or build.")
+    if include_saves and action_id != "uninstall":
+        die(f"Action {action_id} does not accept --include-saves.")
     availability = available_action_ids(title)
     if action_id not in availability:
         die(
@@ -115,5 +119,6 @@ def run(
     if action_id == "stop":
         _exec(cli, ["stop"], title_id)
     if action_id == "uninstall":
-        _exec(cli, ["uninstall", "--yes"], title_id)
+        saves = ["--include-saves"] if include_saves else []
+        _exec(cli, ["uninstall", "--yes", *saves], title_id)
     die(f"Unsupported hub action: {action_id}")

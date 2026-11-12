@@ -211,9 +211,12 @@ def app_entry(value: str, title: registry.Title, kind: str) -> typing.Optional[E
         return _keep(kind, path, "not an app this hub installed")
     try:
         with info.open("rb") as stream:
-            identifier = plistlib.load(stream).get("CFBundleIdentifier")
+            info_data = plistlib.load(stream)
     except (OSError, ValueError, plistlib.InvalidFileException):
         return _keep(kind, path, "its Info.plist cannot be read")
+    if not isinstance(info_data, dict):
+        return _keep(kind, path, "its Info.plist cannot be read")
+    identifier = info_data.get("CFBundleIdentifier")
     if marker.is_symlink() or not marker.is_file():
         if identifier == LEGACY_APP_ID:
             return _keep(kind, path, "an older launcher app; remove it yourself")

@@ -73,4 +73,4 @@ check:
 	swift test --package-path src/swift
 
 smoke:
-	@status=0; for probe in sync shaders x87 x87sidecar audio network; do ./src/shell/tools/probes/smoke-$$probe.sh || status=1; done; exit $$status
+	@status=0; for probe in sync shaders x87 x87sidecar audio network tls10; do ./src/shell/tools/probes/smoke-$$probe.sh || status=1; done; exit $$status

@@ -6,18 +6,21 @@ caller prefix, and no root is installed in macOS Keychain.
 
 import hashlib
 import json
+import os
 from pathlib import Path, PureWindowsPath
 import runpy
 import shutil
 import subprocess
 import tempfile
+import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests/fixtures/tls"
 ARCHITECTURES = ("i686", "x86_64")
 REQUEST_MODES = ("sync", "async")
-TLS_CASES = runpy.run_path(str(ROOT / "src/python/tmnf/probes/tls_test_server.py"))["CASES"]
+TLS_SERVER = runpy.run_path(str(ROOT / "src/python/tmnf/probes/tls_test_server.py"))
+TLS_CASES = TLS_SERVER["CASES"]
 
 
 def local_probe_arguments(mode, control_url, case_url, case):
@@ -169,3 +172,63 @@ def cleanup_prefixes(runtime, scratch, root_identity, owned):
         )
     shutil.rmtree(scratch)
     print("TLS cleanup: owned wineservers stopped; scratch removed", flush=True)
+
+
+class LegacyTLS10Account(unittest.TestCase):
+    """Account creation in TrackMania Forever needs WinINet to speak TLS 1.0.
+
+    Opt in with MACTMNF_TEST_RUNTIME=/absolute/path/to/runtime. The probe runs
+    in a disposable prefix and never touches the game prefix.
+    """
+
+    @unittest.skipUnless(os.environ.get("MACTMNF_TEST_RUNTIME"), "MACTMNF_TEST_RUNTIME is not set")
+    def test_wininet_request_over_tls10_with_game_retry(self):
+        runtime = Path(os.environ["MACTMNF_TEST_RUNTIME"]).resolve()
+        compiler = shutil.which("i686-w64-mingw32-gcc")
+        if compiler is None:
+            self.skipTest("i686-w64-mingw32-gcc not found (brew install mingw-w64)")
+        try:
+            server = TLS_SERVER["serve_legacy_tls10"]()
+            url, handshakes = server.__enter__()
+        except TLS_SERVER["TLS10Unavailable"] as error:
+            self.skipTest(str(error))
+        scratch = Path(tempfile.mkdtemp(prefix="mactmnf-tls10-")).resolve()
+        owned = []
+        try:
+            prefix, home = scratch / "prefix-i686", scratch / "home-i686"
+            (home / "tmp").mkdir(parents=True)
+            prefix.mkdir()
+            env = fixture_environment(runtime, home, prefix, "a" * 64)
+            env["WINEDEBUG"] = "-all"
+            owned.append((prefix, (prefix.stat().st_dev, prefix.stat().st_ino), env))
+            probe = scratch / "inet_legacy.exe"
+            subprocess.run(
+                [compiler, "-O2", "-Wall", "-Wextra", "-Werror", str(ROOT / "tests/inet_legacy.c")]
+                + ["-o", str(probe), "-lwininet"],
+                check=True,
+                capture_output=True,
+                timeout=60,
+            )
+            code, output = run([runtime / "bin/wine", "wineboot", "--init"], env, timeout=180)
+            self.assertEqual(code, 0, output)
+            port = url.rsplit(":", 1)[1].rstrip("/")
+            code, output = run([runtime / "bin/wine", probe, "127.0.0.1", port], env, timeout=60)
+            self.assertEqual(code, 0, output)
+            self.assertIn("HTTP 200", output)
+            # The self-signed fixture must go through the game's retry path.
+            self.assertIn("attempt 0 error 12045", output)
+            self.assertTrue(handshakes, "server saw no completed TLS handshake")
+            for version, cipher in handshakes:
+                self.assertEqual(version, "TLSv1", handshakes)
+                self.assertIn(cipher, TLS_SERVER["LEGACY_TLS10_CIPHERS"].split(":"))
+        finally:
+            server.__exit__(None, None, None)
+            if owned:
+                root_identity = (scratch.stat().st_dev, scratch.stat().st_ino)
+                cleanup_prefixes(runtime, scratch, root_identity, owned)
+            else:
+                shutil.rmtree(scratch)
+
+
+if __name__ == "__main__":
+    unittest.main()

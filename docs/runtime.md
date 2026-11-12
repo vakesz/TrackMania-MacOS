@@ -205,7 +205,8 @@ game may accept. Offline tests check chunk structure and unchanged default bytes
 ## Troubleshooting
 
 Start with `make doctor`. The app logs are in
-`~/Library/Logs/TMNF/play.log` and `configure.log`.
+`~/Library/Logs/TMNF/play.log` and `configure.log` for Nations Forever. Other titles write
+`<title>-play.log` and `<title>-configure.log` there, so titles never share a log.
 
 `src/python/tmnf/app/launch.py` serializes app log writers and rotates completed logs at
 launch, keeping three backups. Active or surviving writers retain direct file

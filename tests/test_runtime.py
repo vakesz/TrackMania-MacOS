@@ -489,7 +489,9 @@ class RuntimeInstall(unittest.TestCase):
     def test_release_checksum_fetch_has_connection_and_stall_timeouts(self):
         curl = self.root / "commands/curl"
         curl.write_text('#!/bin/bash\nprintf "%s\\n" "$@" >"$HOME/curl-arguments"\nexit 97\n')
-        self.assert_rejected(self.install(explicit=False))
+        self.assert_rejected(
+            self.install(explicit=False, extra_env={"TMNF_RUNTIME_ALLOW_UNPINNED": "1"})
+        )
         arguments = (self.home / "curl-arguments").read_text().splitlines()
         for option, value in (
             ("--connect-timeout", "20"),
@@ -556,7 +558,7 @@ class RuntimeInstall(unittest.TestCase):
             '#!/bin/bash\nout=\nurl=\nwhile test "$#" -gt 0; do\n'
             '  case "$1" in\n'
             '    --output) out="$2"; shift ;;\n'
-            "    --retry|--connect-timeout|--speed-limit|--speed-time) shift ;;\n"
+            "    --retry|--connect-timeout|--speed-limit|--speed-time|--max-filesize) shift ;;\n"
             "    --*) ;;\n"
             '    *) url="$1" ;;\n'
             "  esac\n  shift\ndone\n"
@@ -599,7 +601,7 @@ class RuntimeInstall(unittest.TestCase):
         built = self.project / ".build/release/runtime"
         shutil.copytree(self.bundle, built, symlinks=True)
         (built / "lib/d9vk/d3d9.dll").write_bytes(b"damaged")
-        env = self.source_env("download")
+        env = self.source_env("download", TMNF_RUNTIME_ALLOW_UNPINNED="1")
         self.serve_runtime()
         result = self.install(extra_env=env, explicit=False)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -645,13 +647,64 @@ class RuntimeInstall(unittest.TestCase):
     def test_unpinned_install_needs_the_release_checksum(self):
         self.serve_runtime()
         (self.serve / "trackmania-mac-{}-runtime.tar.xz.sha256".format(self.version)).unlink()
-        result = self.install(extra_env=self.source_env("download"), explicit=False)
+        result = self.install(
+            extra_env=self.source_env("download", TMNF_RUNTIME_ALLOW_UNPINNED="1"), explicit=False
+        )
         self.assert_rejected(result)
         self.assertIn("Cannot download runtime release", result.stderr)
 
-    def test_missing_pin_warns_that_the_checksum_is_unpinned(self):
+    def write_release_assets(self, digest=None, name=None, extra=""):
+        digest = digest or hashlib.sha256(self.archive.read_bytes()).hexdigest()
+        name = name or "trackmania-mac-{}-runtime.tar.xz".format(self.version)
+        (self.project / "config").mkdir(exist_ok=True)
+        (self.project / "config/release-assets.sha256").write_text(
+            "{}  trackmania-mac-{}-source.tar.xz\n{}  {}\n{}".format(
+                "1" * 64, self.version, digest, name, extra
+            )
+        )
+
+    def test_release_assets_entry_wins_over_a_differing_release_checksum(self):
+        self.serve_runtime()
+        self.write_release_assets(digest="0" * 64)
+        result = self.install(extra_env=self.source_env("download"), explicit=False)
+        self.assert_rejected(result)
+        self.assertIn("differs from the checksum pinned", result.stderr)
+
+    def test_release_assets_entry_installs_without_the_opt_in(self):
+        self.serve_runtime()
+        self.write_release_assets()
+        result = self.install(extra_env=self.source_env("download"), explicit=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("unpinned", result.stderr)
+        self.assert_clean()
+
+    def test_runtime_pin_takes_precedence_over_release_assets(self):
+        self.serve_runtime()
+        self.write_pin(digest="0" * 64)
+        self.write_release_assets()
+        result = self.install(extra_env=self.source_env("download"), explicit=False)
+        self.assert_rejected(result)
+        self.assertIn("0" * 64, result.stderr)
+
+    def test_release_assets_entry_must_match_the_archive_name_exactly(self):
+        self.serve_runtime()
+        self.write_release_assets(name="trackmania-mac-{}-runtime.tar.xz.sig".format(self.version))
+        result = self.install(extra_env=self.source_env("download"), explicit=False)
+        self.assert_rejected(result)
+        self.assertIn("No pinned checksum", result.stderr)
+
+    def test_no_pins_and_no_opt_in_refuses_before_any_download(self):
         self.serve_runtime()
         result = self.install(extra_env=self.source_env("download"), explicit=False)
+        self.assert_rejected(result)
+        self.assertIn("TMNF_RUNTIME_ALLOW_UNPINNED=1", result.stderr)
+        self.assertEqual(self.stub_lines(), [])
+
+    def test_opt_in_without_a_pin_warns_and_continues(self):
+        self.serve_runtime()
+        result = self.install(
+            extra_env=self.source_env("download", TMNF_RUNTIME_ALLOW_UNPINNED="1"), explicit=False
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(
             "warning: The runtime checksum is unpinned and came from the release", result.stderr
@@ -660,7 +713,9 @@ class RuntimeInstall(unittest.TestCase):
     def test_pin_for_another_version_is_ignored_with_a_warning(self):
         self.serve_runtime()
         self.write_pin(version="0.0.0-other", digest="0" * 64)
-        result = self.install(extra_env=self.source_env("download"), explicit=False)
+        result = self.install(
+            extra_env=self.source_env("download", TMNF_RUNTIME_ALLOW_UNPINNED="1"), explicit=False
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Ignoring runtime pin for version 0.0.0-other", result.stderr)
         self.assertIn("unpinned", result.stderr)
@@ -668,7 +723,9 @@ class RuntimeInstall(unittest.TestCase):
     def test_malformed_pin_is_ignored_with_a_warning(self):
         self.serve_runtime()
         self.write_pin(text="{} not-a-digest\n".format(self.version))
-        result = self.install(extra_env=self.source_env("download"), explicit=False)
+        result = self.install(
+            extra_env=self.source_env("download", TMNF_RUNTIME_ALLOW_UNPINNED="1"), explicit=False
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Ignoring malformed runtime pin", result.stderr)
 

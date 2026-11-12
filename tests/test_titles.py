@@ -415,6 +415,12 @@ TITLE_CONDITIONAL_ALLOWLIST = (
     ("src/shell/lib/install/game.sh", 'if test "$title" = tmnf; then'),
     # The shared pre-multi-title launcher only TMNF ever installed.
     ("src/shell/lib/apps/wrappers.sh", 'test "$TMNF_TITLE" = tmnf || return 0'),
+    # TMNF's app logs kept their pre-multi-title names (play.log, configure.log).
+    (
+        "src/shell/lib/apps/wrappers.sh",
+        'test "$TMNF_TITLE" = tmnf || log_name="${TMNF_TITLE}-${action}.log"',
+    ),
+    ("src/python/tmnf/hub/diagnostics.py", 'if title_id == "tmnf":'),
 )
 
 

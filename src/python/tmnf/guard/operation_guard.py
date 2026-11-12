@@ -28,6 +28,11 @@ TOKEN = "TMNF_OPERATION_FD"
 APP_TOKEN = "TMNF_APP_OPERATION_FD"
 WINE_SERVER_ROOT = Path("/tmp")
 INTERRUPT_GRACE = 2.0
+# Opt-in bounded wait, set only by the app launch path. Everything else fails at once.
+LOCK_WAIT_ENV = "TMNF_LOCK_WAIT"
+LOCK_POLL = 0.25
+WAIT_MESSAGE = "Waiting for the previous TrackMania session to finish\u2026"
+EXIT_BUSY = 75  # EX_TEMPFAIL
 
 
 def operation_lock_path(prefix):
@@ -139,9 +144,55 @@ def _open_lock(path, dir_fd, create=False):
         raise
 
 
-def acquire(prefix):
+class Busy(ValueError):
+    """The prefix is held by another session. Maps to EX_TEMPFAIL."""
+
+
+class _Waiter:
+    """One bounded retry budget shared by every busy check of a single run."""
+
+    def __init__(self, seconds):
+        self.deadline = time.monotonic() + seconds
+        self.announced = False
+
+    def retry(self, attempt):
+        while True:
+            try:
+                return attempt()
+            except Busy:
+                remaining = self.deadline - time.monotonic()
+                if remaining <= 0:
+                    raise
+                if not self.announced:
+                    self.announced = True
+                    _announce_wait()
+                time.sleep(min(LOCK_POLL, remaining))
+
+
+def _announce_wait():
+    try:
+        print(WAIT_MESSAGE, file=sys.stderr, flush=True)
+    except UnicodeEncodeError:
+        print(WAIT_MESSAGE.replace("\u2026", "..."), file=sys.stderr, flush=True)
+
+
+def lock_wait_seconds(environ=None):
+    """Seconds an opted-in launch may wait for a busy prefix; 0 means fail at once."""
+    value = (os.environ if environ is None else environ).get(LOCK_WAIT_ENV, "")
+    if value == "":
+        return 0
+    if not value.isascii() or not value.isdecimal() or len(value) > 3 or int(value) > 300:
+        raise ValueError(f"{LOCK_WAIT_ENV} must be an integer from 0 to 300")
+    return int(value)
+
+
+def acquire(prefix, waiter=None):
     """Return an exclusively locked FD, owned by the caller. Never unlink it."""
-    return _acquire(operation_lock_path(prefix), f"Another operation is using prefix: {prefix}")
+    path = operation_lock_path(prefix)
+    busy = f"Another operation is using prefix: {prefix}"
+    if waiter is not None:
+        return waiter.retry(lambda: _acquire(path, busy))
+    return _acquire(path, busy)
 
 
 def _acquire(path, busy):
@@ -153,7 +204,7 @@ def _acquire(path, busy):
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError as error:
                 if error.errno in (errno.EACCES, errno.EAGAIN):
-                    raise ValueError(busy) from error
+                    raise Busy(busy) from error
                 raise
             _check_identity(fd, path)
             return fd
@@ -203,7 +254,7 @@ def _held(path, token_name):
     return fd
 
 
-def wine_server_lock(prefix):
+def wine_server_dir(prefix):
     """Match the pinned Wine server/request.c create_server_dir layout."""
     prefix = safe_path(str(prefix))
     try:
@@ -212,12 +263,12 @@ def wine_server_lock(prefix):
         return None
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
         raise ValueError(f"Unsafe Wine prefix: {prefix}")
-    return (
-        WINE_SERVER_ROOT
-        / f".wine-{os.getuid()}"
-        / f"server-{info.st_dev:x}-{info.st_ino:x}"
-        / "lock"
-    )
+    return WINE_SERVER_ROOT / f".wine-{os.getuid()}" / f"server-{info.st_dev:x}-{info.st_ino:x}"
+
+
+def wine_server_lock(prefix):
+    directory = wine_server_dir(prefix)
+    return None if directory is None else directory / "lock"
 
 
 def check_inactive(prefix):
@@ -237,7 +288,7 @@ def check_inactive(prefix):
                 fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB, 1, 0, os.SEEK_SET)
             except OSError as error:
                 if error.errno in (errno.EACCES, errno.EAGAIN):
-                    raise ValueError(f"Wine is active for prefix: {prefix}") from error
+                    raise Busy(f"Wine is active for prefix: {prefix}") from error
                 raise
             else:
                 fcntl.lockf(fd, fcntl.LOCK_UN, 1, 0, os.SEEK_SET)
@@ -255,6 +306,102 @@ def check_inactive(prefix):
     finally:
         for directory in reversed(directories):
             os.close(directory)
+
+
+def _ancestors():
+    """Our pid and every parent up to launchd, so reap never signals its own chain."""
+    pids = {os.getpid()}
+    pid = os.getppid()
+    while pid > 1 and pid not in pids:
+        pids.add(pid)
+        result = subprocess.run(
+            ["/bin/ps", "-o", "ppid=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        try:
+            pid = int(result.stdout.strip())
+        except ValueError:
+            break
+    return pids
+
+
+def _server_dir_holders(directory):
+    """PIDs of this user's processes holding files in a Wine server directory open."""
+    result = subprocess.run(
+        ["/usr/sbin/lsof", "-t", "-a", "-u", str(os.getuid()), "+d", str(directory)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    # lsof exits 1 when nothing matches; anything else with no output is an error.
+    if result.returncode not in (0, 1):
+        raise RuntimeError(f"lsof failed: {result.stderr.strip() or result.returncode}")
+    return {int(token) for token in result.stdout.split() if token.isdecimal()}
+
+
+def reap(prefix, grace=INTERRUPT_GRACE):
+    """Stop Wine processes still attached to a prefix whose wineserver is gone.
+
+    Wine reparents services.exe, explorer.exe and friends to launchd, so a
+    process-tree walk cannot find them. Each still holds the dead server's
+    directory open, which names its prefix. Does not touch the operation lock.
+    """
+    directory = wine_server_dir(prefix)
+    if directory is None:
+        return 0
+    # /tmp is shared: open the chain like check_inactive (no symlinks, and
+    # .wine-<uid> and the server dir private to us) so another user cannot point
+    # this at a directory our unrelated processes hold open.
+    directories = []
+    try:
+        root = directory.parents[1].resolve()
+        directories.append(_open_directory(root))
+        directories.append(_open_directory(directory.parent.name, directories[-1], private=True))
+        directories.append(_open_directory(directory.name, directories[-1], private=True))
+    except FileNotFoundError:
+        for fd in reversed(directories):
+            os.close(fd)
+        return 0
+    except BaseException:
+        for fd in reversed(directories):
+            os.close(fd)
+        raise
+    try:
+        verified = root / directory.parent.name / directory.name
+        excluded = _ancestors()
+        victims = _server_dir_holders(verified) - excluded
+        # Signal only if the path still names the directory we validated.
+        _check_dir_identity(directories[-1], directory.name, directories[-2])
+        _check_dir_identity(directories[-2], directory.parent.name, directories[-3])
+        return _stop(verified, victims, excluded, grace)
+    finally:
+        for fd in reversed(directories):
+            os.close(fd)
+
+
+def _stop(directory, victims, excluded, grace):
+    if not victims:
+        return 0
+    stopped = len(victims)
+    for pid in victims:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    deadline = time.monotonic() + grace
+    remaining = victims
+    while remaining and time.monotonic() < deadline:
+        time.sleep(0.1)
+        remaining = _server_dir_holders(directory) - excluded
+    for pid in remaining:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    print(f"Stopped {stopped} Wine processes left behind by the installer.", flush=True)
+    return stopped
 
 
 def _signal_group(pid, signum):
@@ -296,13 +443,21 @@ def _signal_group(pid, signum):
             raise signal_error from error
 
 
-def run(prefix, command):
-    """Run a command with the operation FD inherited; return shell exit status."""
+def run(prefix, command, wait=0):
+    """Run a command with the operation FD inherited; return shell exit status.
+
+    A positive wait is a budget in seconds for the prefix lock and for Wine to
+    finish exiting; a prefix still busy after it raises Busy.
+    """
     if not command:
         raise ValueError("run requires a command")
-    fd = acquire(prefix)
+    waiter = _Waiter(wait) if wait > 0 else None
+    fd = acquire(prefix, waiter)
     try:
-        check_inactive(prefix)
+        if waiter is None:
+            check_inactive(prefix)
+        else:
+            waiter.retry(lambda: check_inactive(prefix))
         return _run(command, {TOKEN: fd})
     finally:
         os.close(fd)
@@ -374,7 +529,7 @@ def _run(command, tokens, grace=INTERRUPT_GRACE):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("run", "held", "app-run", "app-held"))
+    parser.add_argument("action", choices=("run", "held", "app-run", "app-held", "reap"))
     parser.add_argument("prefix")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
@@ -386,9 +541,17 @@ def main(argv=None):
             if args.action == "app-held":
                 app_held()
             return 0
+        if args.action == "reap":
+            if args.command:
+                raise ValueError("reap does not accept a command")
+            reap(args.prefix)
+            return 0
         if args.action == "app-run":
             return app_run(args.prefix, args.command)
-        return run(args.prefix, args.command)
+        return run(args.prefix, args.command, lock_wait_seconds())
+    except Busy as error:
+        print(f"error: {error}", file=sys.stderr)
+        return EXIT_BUSY
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

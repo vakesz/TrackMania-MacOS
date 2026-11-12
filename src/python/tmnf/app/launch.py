@@ -18,6 +18,9 @@ import sys
 import tempfile
 
 ROTATE_BYTES = 2 * 1024 * 1024
+# A closed session may still be shutting Wine down; wait this long (seconds) for
+# the prefix instead of failing the next launch at once. The guard does the waiting.
+LOCK_WAIT_SECONDS = "30"
 
 
 def _check_file(path):
@@ -108,7 +111,15 @@ def run(launcher, action, log_path):
             try:
                 for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
                     handlers[signum] = signal.signal(signum, interrupt)
-                child = subprocess.Popen([launcher, action], stdout=output, stderr=output)
+                child = subprocess.Popen(
+                    [launcher, action],
+                    stdout=output,
+                    stderr=output,
+                    env=dict(
+                        os.environ,
+                        TMNF_LOCK_WAIT=os.environ.get("TMNF_LOCK_WAIT", LOCK_WAIT_SECONDS),
+                    ),
+                )
                 forwarded = False
                 while True:
                     if interrupted and not forwarded:

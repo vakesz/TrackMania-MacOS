@@ -337,7 +337,8 @@ download_verified() (
   local url="$1"
   local destination="$2"
   local expected="$3"
-  local partial cleanup
+  local max_bytes="${4:-}"
+  local partial cleanup limit=()
 
   [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || die "Invalid download SHA-256."
   expected="$(printf '%s' "$expected" | tr 'A-F' 'a-f')"
@@ -354,8 +355,12 @@ download_verified() (
   # shellcheck disable=SC2064
   trap "$cleanup" EXIT
   trap 'exit 1' HUP INT TERM
-  curl -q --fail --location --retry 3 --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
-    --progress-bar --output "$partial" "$url" || die "Download failed: $url"
+  if test -n "$max_bytes"; then
+    [[ "$max_bytes" =~ ^[1-9][0-9]{0,15}$ ]] || die "Invalid download size limit: $max_bytes"
+    limit=(--max-filesize "$max_bytes")
+  fi
+  curl -q --fail --location --retry 3 --retry-all-errors --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
+    ${limit[@]+"${limit[@]}"} --progress-bar --output "$partial" "$url" || die "Download failed: $url"
   verify_file "$partial" "$expected" || {
     rm -f "$partial"
     die "SHA-256 verification failed for $url"

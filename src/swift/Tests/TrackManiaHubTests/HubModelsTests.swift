@@ -293,6 +293,22 @@ final class HubProcessTests: XCTestCase {
         XCTAssertTrue(result.output.contains(launcher.deletingLastPathComponent().resolvingSymlinksInPath().path))
     }
 
+    func testSeparateStderrKeepsStdoutClean() throws {
+        let launcher = try script("echo '{}'; echo warning >&2; exit 3\n")
+        let result = try HubBackend.execute(launcher: launcher, arguments: [], separateStderr: true)
+        XCTAssertEqual(result.status, 3)
+        XCTAssertEqual(result.output, "{}\n")
+        XCTAssertEqual(result.stderr, "warning\n")
+        let message = HubBackendError.commandFailed(result).errorDescription ?? ""
+        XCTAssertTrue(message.contains("warning"))
+    }
+
+    func testMergedModeStillInterleavesStderr() throws {
+        let result = try HubBackend.execute(launcher: try script("echo err >&2\n"), arguments: [])
+        XCTAssertTrue(result.output.contains("err"))
+        XCTAssertEqual(result.stderr, "")
+    }
+
     func testReportsExitStatus() throws {
         let result = try HubBackend.execute(launcher: try script("exit 7\n"), arguments: [])
         XCTAssertEqual(result.status, 7)

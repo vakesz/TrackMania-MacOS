@@ -1,4 +1,7 @@
+import contextlib
 import errno
+import io
+import shutil
 import fcntl
 import os
 import select
@@ -285,6 +288,81 @@ class Operations(unittest.TestCase):
         first.communicate("", timeout=5)
         self.assertEqual(first.returncode, 0)
         self.assertEqual(self.cli("run", self.prefix, sys.executable, "-c", "pass").returncode, 0)
+
+    def hold_prefix(self):
+        ready = self.root / "holder-ready"
+        holder = self.spawn(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "run",
+                str(self.prefix),
+                sys.executable,
+                "-c",
+                (
+                    'import os, pathlib, sys; os.close(int(os.environ.pop("TMNF_OPERATION_FD"))); '
+                    "pathlib.Path(sys.argv[1]).touch(); sys.stdin.read()"
+                ),
+                str(ready),
+            ],
+            stdin=subprocess.PIPE,
+        )
+        self.wait_file(ready, holder)
+        return holder
+
+    def wait_env(self, seconds):
+        return dict(self.env, TMNF_LOCK_WAIT=str(seconds))
+
+    def test_opt_in_wait_succeeds_when_holder_releases_in_window(self):
+        holder = self.hold_prefix()
+        self.env["TMNF_LOCK_WAIT"] = "10"
+        waiter = self.spawn(
+            [sys.executable, str(SCRIPT), "run", str(self.prefix), sys.executable, "-c", "pass"],
+            stdin=subprocess.DEVNULL,
+        )
+        time.sleep(0.6)
+        self.assertIsNone(waiter.poll())
+        holder.communicate("", timeout=5)
+        out, err = waiter.communicate(timeout=8)
+        self.assertEqual(waiter.returncode, 0, err)
+        self.assertEqual(err.count("Waiting for the previous TrackMania session to finish"), 1)
+
+    def test_opt_in_wait_times_out_with_busy_status(self):
+        self.hold_prefix()
+        started = time.monotonic()
+        result = self.cli(
+            "run", self.prefix, sys.executable, "-c", 'print("no")', env=self.wait_env(1)
+        )
+        self.assertEqual(result.returncode, 75, result.stderr)
+        self.assertGreaterEqual(time.monotonic() - started, 0.9)
+        self.assertIn("Another operation is using prefix", result.stderr)
+        self.assertEqual(result.stderr.count("Waiting for the previous"), 1)
+        self.assertEqual(result.stdout, "")
+
+    def test_no_wait_without_opt_in_and_zero_means_none(self):
+        self.hold_prefix()
+        for env in (self.env, self.wait_env(0)):
+            started = time.monotonic()
+            result = self.cli("run", self.prefix, sys.executable, "-c", "pass", env=env)
+            self.assertEqual(result.returncode, 75, result.stderr)
+            self.assertLess(time.monotonic() - started, 0.9)
+            self.assertNotIn("Waiting for", result.stderr)
+
+    def test_wait_also_covers_active_wine_and_shares_one_budget(self):
+        self.hold_record_lock(self.server_lock())
+        started = time.monotonic()
+        with mock.patch.dict(os.environ, {"TMNF_LOCK_WAIT": "1"}):
+            with self.assertRaises(guard.Busy):
+                guard.run(self.prefix, ["/usr/bin/true"], guard.lock_wait_seconds())
+        self.assertGreaterEqual(time.monotonic() - started, 0.9)
+
+    def test_lock_wait_value_is_validated(self):
+        for value in ("-1", "301", "1.5", "abc", " 5", "1000", "\u0663"):
+            result = self.cli("run", self.prefix, "/usr/bin/true", env=self.wait_env(value))
+            self.assertEqual(result.returncode, 1, value)
+            self.assertIn("TMNF_LOCK_WAIT must be an integer from 0 to 300", result.stderr)
+        self.assertEqual(guard.lock_wait_seconds({"TMNF_LOCK_WAIT": "300"}), 300)
+        self.assertEqual(guard.lock_wait_seconds({}), 0)
 
     def test_nested_shell_held_checks_keep_parent_lock(self):
         result = self.cli(
@@ -808,7 +886,13 @@ class Operations(unittest.TestCase):
             "if os.fork(): sys.exit(0)\n"
             "os.setsid()\n"
             "pathlib.Path(sys.argv[1]).touch()\n"
-            "while not pathlib.Path(sys.argv[2]).exists(): time.sleep(0.01)"
+            # Also stop once the test's temp dir is gone or a minute has passed: the
+            # release file can be removed with the dir between two polls, and a
+            # detached child must never outlive the test.
+            "release = pathlib.Path(sys.argv[2])\n"
+            "deadline = time.monotonic() + 60\n"
+            "while not release.exists() and release.parent.is_dir()"
+            " and time.monotonic() < deadline: time.sleep(0.01)"
         )
         self.addCleanup(release.touch)
         result = self.cli(
@@ -837,6 +921,122 @@ class Operations(unittest.TestCase):
         result = self.cli("run", self.prefix, sys.executable, "-c", "pass", env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
         release.touch()
+
+
+HOLDER = """
+import os, signal, sys, time
+if sys.argv[2] == "ignore":
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+fd = os.open(sys.argv[1], os.O_RDONLY)
+print("ready", flush=True)
+deadline = time.monotonic() + 30
+while time.monotonic() < deadline:
+    time.sleep(0.05)
+"""
+
+
+@unittest.skipUnless(
+    shutil.which("lsof") or os.path.exists("/usr/sbin/lsof"), "lsof is not available"
+)
+class Reap(unittest.TestCase):
+    setUp = Operations.setUp
+    stop = Operations.stop
+    spawn = Operations.spawn
+
+    def holder(self, path, mode="term"):
+        process = self.spawn([sys.executable, "-c", HOLDER, str(path), mode])
+        self.assertEqual(process.stdout.readline().strip(), "ready")
+        return process
+
+    def server_dir(self):
+        self.prefix.mkdir(parents=True, exist_ok=True)
+        directory = guard.wine_server_dir(self.prefix)
+        # Wine creates both levels private to the user; reap refuses anything else.
+        directory.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        directory.parent.chmod(0o700)
+        directory.mkdir(mode=0o700)
+        return directory
+
+    def reap(self, grace=0.5):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            count = guard.reap(self.prefix, grace=grace)
+        return count, out.getvalue()
+
+    def test_stops_holders_including_one_that_ignores_sigterm(self):
+        directory = self.server_dir()
+        (directory / "lock").touch()
+        polite = self.holder(directory)  # holds the directory itself, like services.exe
+        stubborn = self.holder(directory / "lock", "ignore")
+        count, output = self.reap()
+        self.assertEqual(count, 2)
+        self.assertEqual(output, "Stopped 2 Wine processes left behind by the installer.\n")
+        self.assertEqual(polite.wait(timeout=5), -signal.SIGTERM)
+        self.assertEqual(stubborn.wait(timeout=5), -signal.SIGKILL)
+
+    def test_leaves_unrelated_processes_alone(self):
+        directory = self.server_dir()
+        other = self.root / "other-dir"
+        other.mkdir()
+        bystander = self.holder(other)
+        victim = self.holder(directory)
+        count, _ = self.reap()
+        self.assertEqual(count, 1)
+        victim.wait(timeout=5)
+        self.assertIsNone(bystander.poll())
+
+    def test_refuses_a_server_dir_that_is_not_private_or_is_a_symlink(self):
+        # /tmp is shared: another user could plant the path to aim reap at a
+        # directory our unrelated processes hold open.
+        bystander_dir = self.root / "bystander"
+        bystander_dir.mkdir()
+        bystander = self.holder(bystander_dir)
+        self.prefix.mkdir(parents=True, exist_ok=True)
+        directory = guard.wine_server_dir(self.prefix)
+        directory.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        directory.parent.chmod(0o700)
+        directory.symlink_to(bystander_dir)
+        with self.assertRaises(OSError):
+            self.reap()
+        directory.unlink()
+        directory.mkdir(mode=0o700)
+        directory.parent.chmod(0o755)
+        with self.assertRaisesRegex(ValueError, "Unsafe lock directory"):
+            self.reap()
+        self.assertIsNone(bystander.poll())
+
+    def test_nothing_to_do_prints_nothing(self):
+        self.server_dir()
+        self.assertEqual(self.reap(), (0, ""))
+
+    def test_missing_server_dir_is_a_noop(self):
+        self.prefix.mkdir()
+        self.assertEqual(self.reap(), (0, ""))
+        shutil.rmtree(self.prefix)
+        self.assertEqual(self.reap(), (0, ""))
+
+    def test_cli_exits_zero(self):
+        directory = self.server_dir()
+        victim = self.holder(directory)
+        env = dict(self.env, TMNF_TEST_SERVER_ROOT=str(self.server_root))
+        code = (
+            "import os,sys;from pathlib import Path;"
+            "from tmnf.guard import operation_guard as g;"
+            "g.WINE_SERVER_ROOT=Path(os.environ['TMNF_TEST_SERVER_ROOT']);"
+            "g.INTERRUPT_GRACE=0.5;"
+            "sys.exit(g.main(['reap',sys.argv[1]]))"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code, str(self.prefix)],
+            env=dict(env, PYTHONPATH=str(ROOT / "src/python")),
+            text=True,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Stopped 1 Wine processes", result.stdout)
+        victim.wait(timeout=5)
 
 
 if __name__ == "__main__":

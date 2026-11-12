@@ -7,7 +7,7 @@ update_game() {
 
   case "$kind" in
     online-retail|online-trial)
-      say "Re-running the pinned $label installer (repair)."
+      say "Checking the platform and components for $label and repairing what is missing; the installed game files are kept."
       exec "${TMNF_PROJECT_DIR}/src/shell/cli/install.sh"
       ;;
     steam-copy|disk-image)
@@ -63,7 +63,7 @@ doctor() {
       # contention degrades; any other failure is reported as itself.
       validate_managed_layout || die "Unsafe installation layout."
       local busy_probe
-      if busy_probe="$(tmnf_python -m tmnf.guard.operation_guard run "$TMNF_PREFIX" /usr/bin/true 2>&1)"; then
+      if busy_probe="$(TMNF_LOCK_WAIT=0 tmnf_python -m tmnf.guard.operation_guard run "$TMNF_PREFIX" /usr/bin/true 2>&1)"; then
         # A diagnostic Windows process must not race prefix repair or deletion.
         guard_prefix_operation "${TMNF_PROJECT_DIR}/src/shell/cli/tmnf" doctor
       elif case "$busy_probe" in *"Another operation is using prefix"*|*"Wine is active for prefix"*) true ;; *) false ;; esac; then

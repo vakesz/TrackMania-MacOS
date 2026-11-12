@@ -78,6 +78,8 @@ def _prefix_ready(title: registry.Title, prefix: pathlib.Path) -> Probe:
         identity = marker.read_text().strip()
     except (OSError, UnicodeDecodeError):
         return Probe(False, "Wine prefix not created")
+    if (prefix / ".tmnf-initializing").exists():
+        return Probe(False, "Initialization is incomplete; run install again")
     if identity == expected and (prefix / "system.reg").is_file():
         return Probe(True, "Managed wine prefix initialized")
     if not identity and title.id == "tmnf" and (prefix / "system.reg").is_file():

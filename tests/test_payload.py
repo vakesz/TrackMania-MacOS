@@ -128,6 +128,18 @@ class BuildRevisionRecord(unittest.TestCase):
     def test_no_pin_means_none_is_staged(self):
         self.assertFalse((self.stage().parent / "runtime-pin").exists())
 
+    def test_release_assets_digests_are_copied_and_restaged(self):
+        source = self.project / "config/release-assets.sha256"
+        source.write_text("a" * 64 + "  trackmania-mac-1.2.3-runtime.tar.xz\n")
+        first = self.stage().parent / "release-assets.sha256"
+        self.assertEqual(first.read_text(), source.read_text())
+        second = self.stage(project=first.parent.parent, name="restaged").parent
+        self.assertEqual((second / "release-assets.sha256").read_text(), source.read_text())
+
+    def test_missing_release_assets_means_none_is_staged(self):
+        (self.project / "config/release-assets.sha256").unlink()
+        self.assertFalse((self.stage().parent / "release-assets.sha256").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

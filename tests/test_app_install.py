@@ -201,6 +201,8 @@ class AppInstallTests(unittest.TestCase):
             self.assertIn(f"export TMNF_TITLE={title}; fi\n", settings)
             wrapper = (self.home / f"apps/{title}-Game.app/Contents/MacOS/TMNF").read_text()
             self.assertIn(str(launcher / "python/bin/python3"), wrapper)
+            log_name = "play.log" if title == "tmnf" else f"{title}-play.log"
+            self.assertIn(f"Library/Logs/TMNF/{log_name}", wrapper)
         self.assertNotIn(
             "TMNF_TITLE=tmu", (support / "launchers/tmnf/config/installation.sh").read_text()
         )
@@ -274,6 +276,37 @@ class AppInstallTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("launcher support files are missing", alerts.read_text())
+
+    def run_wrapper_with_status(self, status):
+        entry = self.app / "Contents/MacOS/TMNF"
+        python = self.launcher / "python/bin/python3"
+        python.parent.mkdir(parents=True, exist_ok=True)
+        python.write_text(f"#!/bin/bash\nexit {status}\n")
+        python.chmod(0o755)
+        alerts = self.home / "alerts"
+        alerts.unlink(missing_ok=True)
+        alert = self.home / "alert"
+        alert.write_text(f'#!/bin/bash\necho "$@" >> {alerts}\n')
+        alert.chmod(0o755)
+        entry.write_text(entry.read_text().replace("/usr/bin/osascript", str(alert)))
+        result = subprocess.run(
+            ["/bin/bash", str(entry)], env=self.env, text=True, capture_output=True, timeout=15
+        )
+        return result, alerts.read_text() if alerts.exists() else ""
+
+    def test_wrapper_maps_busy_status_to_its_own_alert(self):
+        result, alerts = self.run_wrapper_with_status(75)
+        self.assertEqual(result.returncode, 75, result.stderr)
+        self.assertIn("Another TrackMania session is still finishing", alerts)
+        self.assertNotIn("failed or its state is uncertain", alerts)
+
+    def test_wrapper_keeps_failure_alert_for_other_statuses_and_none_on_success(self):
+        result, alerts = self.run_wrapper_with_status(1)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("failed or its state is uncertain", alerts)
+        self.assertNotIn("still finishing", alerts)
+        result, alerts = self.run_wrapper_with_status(0)
+        self.assertEqual((result.returncode, alerts), (0, ""))
 
     def stub_icon_tool(self):
         (self.project / "src/python/tmnf/app/icon.py").write_text(

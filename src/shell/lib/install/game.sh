@@ -28,6 +28,42 @@ _cache_installer_path() {
   fi
 }
 
+# _installer_descendants PID — print every descendant of PID, deepest first.
+_installer_descendants() {
+  local child
+  for child in $(pgrep -P "$1" 2>/dev/null); do
+    _installer_descendants "$child"
+    printf '%s\n' "$child"
+  done
+}
+
+# stop_installer_tree PID — after `wineserver -k`, give the installer a short
+# grace period to exit, then SIGKILL it and its descendants. A Wine client
+# (start.exe) has been seen ignoring both the wineserver shutdown and SIGTERM,
+# which left a bare `wait` blocked forever. Only the tree below PID is touched.
+stop_installer_tree() {
+  local pid="$1" grace="${TMNF_INSTALL_KILL_GRACE:-15}" waited=0 victim victims
+  while kill -0 "$pid" 2>/dev/null && test "$waited" -lt "$grace"; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    warn "Stopping the installer processes that did not exit after Wine shut down."
+    victims="$(_installer_descendants "$pid")"
+    for victim in $victims "$pid"; do
+      kill -KILL "$victim" 2>/dev/null || true
+    done
+  fi
+  wait "$pid" 2>/dev/null || true
+}
+
+# reap_prefix_leftovers — after `wineserver -k` and stop_installer_tree, stop
+# Wine processes (services.exe, explorer.exe, ...) that were reparented to
+# launchd and still hold the dead server's directory open. Setup steps only.
+reap_prefix_leftovers() {
+  without_operation_lock tmnf_python -m tmnf.guard.operation_guard reap "$TMNF_PREFIX" || true
+}
+
 # wait_inno_setup PID LOG LABEL: watch a running Inno Setup in the prefix.
 # The legacy Inno Setup versions used by every title can spin during teardown
 # under WoW64/Rosetta. Only stop them once their own log documents a
@@ -46,7 +82,8 @@ wait_inno_setup() {
         say "$label installation completed; stopping the legacy installer after its shutdown wait."
         server_bin="$(wineserver_binary "$(wine_binary)")" || die "Cannot locate wineserver."
         without_operation_lock env WINEPREFIX="$TMNF_PREFIX" "$server_bin" -k || true
-        wait "$installer_pid" 2>/dev/null || true
+        stop_installer_tree "$installer_pid"
+        reap_prefix_leftovers
         break
       fi
     fi
@@ -55,11 +92,14 @@ wait_inno_setup() {
         warn "The installer completed its file installation but did not exit after ${max_wait}s; stopping this prefix."
         server_bin="$(wineserver_binary "$(wine_binary)")" || die "Cannot locate wineserver."
         without_operation_lock env WINEPREFIX="$TMNF_PREFIX" "$server_bin" -k || true
-        wait "$installer_pid" 2>/dev/null || true
+        stop_installer_tree "$installer_pid"
+        reap_prefix_leftovers
         break
       fi
       server_bin="$(wineserver_binary "$(wine_binary)")" || die "Cannot locate wineserver."
       without_operation_lock env WINEPREFIX="$TMNF_PREFIX" "$server_bin" -k || true
+      stop_installer_tree "$installer_pid"
+      reap_prefix_leftovers
       die "$label installation timed out. See $installer_log; rerun make install to retry."
     fi
     sleep 2
@@ -111,12 +151,29 @@ $entries"
   printf '%s\n' "$staging/$exe_name"
 }
 
+# remove_inno_staging DIR — delete the unpacked inner installer (about 1.2 GB for TMU)
+# once Setup no longer needs it. Only `*.inner` directories under a managed root.
+remove_inno_staging() {
+  local dir="$1"
+  case "$dir" in
+    *.inner) ;;
+    *) return 0 ;;
+  esac
+  test -d "$dir" || return 0
+  if is_safe_managed_path "$dir" 2>/dev/null; then
+    rm -rf -- "$dir"
+  else
+    warn "Leaving the unpacked installer in place (unsafe path): $dir"
+  fi
+}
+
 download_pinned_installer() {
   local title="$1"
   test -n "$TMNF_TITLE_SOURCE_URL" && test -n "$TMNF_TITLE_SOURCE_SHA256" \
     || die "Title $title has no pinned installer URL and checksum in config/titles."
+  # The registry pins the installer size (empty when unknown); cap the download at it.
   download_verified "$TMNF_TITLE_SOURCE_URL" "$(_cache_installer_path "$title")" \
-    "$TMNF_TITLE_SOURCE_SHA256"
+    "$TMNF_TITLE_SOURCE_SHA256" "${TMNF_TITLE_SOURCE_SIZE:-}"
 }
 
 verify_installed_game() {
@@ -161,7 +218,7 @@ install_game() {
 
 install_pinned_inno_game() {
   local kind="$1" title_id="$TMNF_TITLE"
-  local title_name installer_path installer_log inner
+  local title_name installer_path installer_log inner cleanup
 
   title_name="$TMNF_TITLE_NAME"
   installer_log="${TMNF_PREFIX}/drive_c/tmnf-install.log"
@@ -178,9 +235,16 @@ install_pinned_inno_game() {
   rm -f "$installer_log"
   # Inside double quotes "\$" is a literal dollar sign, so the separator
   # before the expansion must be an escaped backslash.
-  TMNF_INNO_DIR="C:\\Program Files (x86)\\${TMNF_TITLE_GAME_DIR_NAME}" \
-    run_released_installer "$inner" "$title_name"
-  wait_inno_setup "$TMNF_INSTALLER_PID" "$installer_log" "$title_name"
+  # The subshell's EXIT trap removes the unpacked installer when die exits it; the trap
+  # does not outlive the subshell.
+  printf -v cleanup 'remove_inno_staging %q' "$(dirname "$inner")"
+  (
+    # shellcheck disable=SC2064
+    trap "$cleanup" EXIT
+    TMNF_INNO_DIR="C:\\Program Files (x86)\\${TMNF_TITLE_GAME_DIR_NAME}" \
+      run_released_installer "$inner" "$title_name"
+    wait_inno_setup "$TMNF_INSTALLER_PID" "$installer_log" "$title_name"
+  ) || exit "$?"
   verify_installed_game "$GAME_EXE" "" "$title_name"
   say "Installed $title_name at $GAME_DIR"
 }

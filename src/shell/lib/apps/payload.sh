@@ -46,6 +46,11 @@ stage_launcher_payload() {
   if test -f "${project}/config/runtime-pin" && test ! -L "${project}/config/runtime-pin"; then
     cp "${project}/config/runtime-pin" "${destination}/config/runtime-pin"
   fi
+  # The release asset digests are the fallback trust root for the runtime download.
+  rm -f -- "${destination}/config/release-assets.sha256"
+  if test -f "${project}/config/release-assets.sha256" && test ! -L "${project}/config/release-assets.sha256"; then
+    cp "${project}/config/release-assets.sha256" "${destination}/config/release-assets.sha256"
+  fi
   # Original per-title artwork, rasterized to PNG at package time. A checkout
   # has no PNGs; the hub then falls back to the SVGs in assets/titles.
   if test -d "${project}/assets/titles"; then

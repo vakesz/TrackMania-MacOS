@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest a new feature, title or improvement.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you want to do
+      description: The problem or goal, in terms of what you are trying to do as a player.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: How you'd like it to work. Optional if you're not sure.
+    validations:
+      required: false
+  - type: dropdown
+    id: title
+    attributes:
+      label: Title it concerns
+      options:
+        - TrackMania Nations Forever
+        - TrackMania United Forever
+        - A title that isn't supported yet
+        - All titles or the app itself
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: Links, screenshots, or how other tools handle it. For a new title, say where the game files come from (freeware download, Steam, disc).
+    validations:
+      required: false

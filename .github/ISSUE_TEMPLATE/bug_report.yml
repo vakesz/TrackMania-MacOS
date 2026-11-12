@@ -1,17 +1,37 @@
 name: Bug report
-description: Something is broken when installing, building or playing TMNF.
+description: Something is broken when installing, updating or playing a title.
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
-        Run `./src/shell/cli/tmnf doctor` first. It prints most of what is asked below.
+        In the TrackMania Mac app, select the title and choose **Create diagnostics report**.
+        It writes a redacted zip to `~/Library/Logs/TMNF`; attach it below.
+        From a source checkout, `./src/shell/cli/tmnf diagnostics` does the same.
         For a security problem, use the security policy instead of a public issue.
+  - type: dropdown
+    id: title
+    attributes:
+      label: Title
+      options:
+        - TrackMania Nations Forever
+        - TrackMania United Forever
+        - Other
+    validations:
+      required: true
   - type: textarea
     id: what
     attributes:
       label: What happened
-      description: What you did and what went wrong. Paste exact error text.
+      description: What you did and what went wrong. Paste exact error text or add a screenshot.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: TrackMania Mac version
+      description: Shown in the app's About window (TrackMania Mac > About).
+      placeholder: e.g. 0.4.3
     validations:
       required: true
   - type: input
@@ -26,22 +46,22 @@ body:
     attributes:
       label: How you installed
       options:
-        - Release runtime archive
+        - TrackMania Mac app (release download)
         - Built from source
     validations:
       required: true
   - type: textarea
-    id: doctor
+    id: diagnostics
     attributes:
-      label: Output of make doctor
-      render: text
+      label: Diagnostics report
+      description: Drag the diagnostics zip here. If you can't create one, paste the output of `tmnf doctor` instead.
     validations:
       required: true
   - type: textarea
     id: logs
     attributes:
       label: Relevant logs
-      description: From ~/Library/Logs/TMNF (play.log, configure.log). Trim long files.
+      description: From ~/Library/Logs/TMNF (play.log, or <title>-play.log for other titles). Trim long files.
       render: text
     validations:
       required: false

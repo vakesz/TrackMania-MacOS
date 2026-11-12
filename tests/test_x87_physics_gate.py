@@ -5,6 +5,7 @@ Needs no game, Wine or compiler; the names are taken from the game's linker map.
 
 import unittest
 
+from tmnf.hub import registry
 from tmnf.probes import x87_physics_gate as gate
 
 MAP = """
@@ -16,6 +17,12 @@ MAP = """
  0001:004e10d0       ?ConvertMethodGet@GmUnit@@SAHABVCFastString@@AAW4EConvertMethod@1@AAVCFastStringInt@@@Z 008e20d0 f   geom:GmUnit.obj
  0002:00001000       ?s_Zero@GmVec3@@2V1@B     00b31000     geom:GmVec3.obj
 """
+
+
+class GameExeTests(unittest.TestCase):
+    def test_game_path_comes_from_the_registry(self):
+        exe = gate.game_exe_windows(registry.get(gate.TITLE_ID))
+        self.assertEqual(exe, "C:\\Program Files (x86)\\TmNationsForever\\TmForever.exe")
 
 
 class ParseTests(unittest.TestCase):

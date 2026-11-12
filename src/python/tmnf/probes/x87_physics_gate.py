@@ -35,11 +35,21 @@ import sys
 import tempfile
 
 from . import x87_wine
+from tmnf.hub import registry
 
 ROOT = x87_wine.ROOT
 SOURCE = ROOT / "tests/x87-gamecode.c"
 SKIP = ROOT / "tests/x87-gamecode-skip.txt"
-GAME_EXE = r"C:\Program Files (x86)\TmNationsForever\TmForever.exe"
+# The call table comes from the TMNF build's TmForever.map, so the gate always
+# targets that title; its install path comes from the registry.
+TITLE_ID = "tmnf"
+
+
+def game_exe_windows(title):
+    """The title's installed executable as the Windows path Wine runs."""
+    return "C:\\Program Files (x86)\\{}\\{}".format(title.game_dir_name, title.game_exe)
+
+
 # Classes whose functions need allocated game objects or archives, not plain structs.
 EXCLUDED_CLASSES = (
     "GmArchive",
@@ -248,8 +258,9 @@ class Gate:
         )
 
     def run(self, sidecar, args, timeout):
+        exe = game_exe_windows(registry.get(TITLE_ID))
         env = x87_wine.environment(self.prefix, sidecar)
-        return x87_wine.run(env, [str(self.wine), str(self.exe), GAME_EXE, *args], timeout)
+        return x87_wine.run(env, [str(self.wine), str(self.exe), exe, *args], timeout)
 
     def hashes(self, sidecar, learn=False):
         """{(function, mode): hash} over all functions, resuming after a crash.
@@ -333,8 +344,9 @@ def main():
     parser.add_argument("--json", type=Path, help="save every hash to this file")
     args = parser.parse_args()
     _, _, installed, game = x87_wine.settings()
-    map_path = game / "TmForever.map"
-    if not (game / "TmForever.exe").is_file() or not map_path.is_file():
+    title = registry.get(TITLE_ID)
+    map_path = game / Path(title.game_exe).with_suffix(".map").name
+    if not (game / title.game_exe).is_file() or not map_path.is_file():
         raise SystemExit(f"The game is not installed in {game}. Run make install first.")
     named = [x87_wine.parse_sidecar(arg) for arg in args.sidecar] or [("installed", installed)]
 

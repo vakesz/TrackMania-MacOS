@@ -117,11 +117,12 @@ def alive(pid):
     return True
 
 
-def game_pid():
-    """Host process ID of TmForever.exe; Wine shows the Windows path as its command line."""
+def game_pid(exe_name):
+    """Host process ID of the game exe; Wine shows the Windows path as its command line."""
+    pattern = r"[A-Za-z]:\\(?:.*\\)?{}(?:\s|$)".format(re.escape(exe_name))
     for line in output("ps", "-axo", "pid=,command=").splitlines():
         pid, _, command = line.strip().partition(" ")
-        if re.match(r"[A-Za-z]:\\(?:.*\\)?TmForever\.exe(?:\s|$)", command.strip(), re.I):
+        if re.match(pattern, command.strip(), re.I):
             return int(pid)
     return None
 
@@ -134,8 +135,8 @@ class GameTracker:
     while no game is known, and at most every RESCAN_SECONDS.
     """
 
-    def __init__(self, libproc=None, scan=game_pid, clock=time.monotonic):
-        self.libproc, self.scan, self.clock = libproc, scan, clock
+    def __init__(self, exe_name, libproc=None, scan=game_pid, clock=time.monotonic):
+        self.exe_name, self.libproc, self.scan, self.clock = exe_name, libproc, scan, clock
         self.pid = self.started = None
         self.last_scan = float("-inf")
 
@@ -146,7 +147,7 @@ class GameTracker:
             self.pid = self.started = None
         if self.pid is None and self.clock() - self.last_scan >= RESCAN_SECONDS:
             self.last_scan = self.clock()
-            self.pid = self.scan()
+            self.pid = self.scan(self.exe_name)
             if self.pid is not None:
                 self.started = start_time(self.pid, self.libproc)
         return self.pid
@@ -264,6 +265,7 @@ def main():
     parser.add_argument("--prefix", required=True)
     parser.add_argument("--wine", required=True)
     parser.add_argument("--cache", required=True)
+    parser.add_argument("--game-exe", required=True, help="the title's executable file name")
     parser.add_argument("--interval", type=float, default=5.0, help="seconds between CPU samples")
     args = parser.parse_args()
     try:
@@ -283,7 +285,7 @@ def main():
         libproc = None
 
     helper = start_state_helper(args.cache, args.prefix, args.wine)
-    tracker, front = GameTracker(libproc), FrontTracker()
+    tracker, front = GameTracker(args.game_exe, libproc), FrontTracker()
     focus = power = None
     last_power = last_sample = float("-inf")
     previous: dict = {}

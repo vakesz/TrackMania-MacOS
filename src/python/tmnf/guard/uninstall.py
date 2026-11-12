@@ -1,27 +1,36 @@
-"""Per-title uninstall plan: every path one title's uninstall may remove.
+"""Per-title uninstall: plan every path one title owns, then remove exactly those.
 
-`plan` validates and prints each path to remove, resolved exactly once; the
-shell removes those paths and nothing else. `preview` is the cheap read-only
-view the hub snapshot shows in the confirmation dialog. Both use the same rules.
+`plan` validates every path and describes it for the confirmation prompt;
+`remove` builds the same plan in this process and deletes it. No other layer
+parses a plan, so no path or app metadata can be read back as an instruction.
+`preview` is the cheap read-only view the hub snapshot shows in its dialog.
 
 What a title owns:
 - its prefix (`check_prefix` accepts it) and, only with include_saves, its
   default UserData folder, which is the prefix's Windows Documents folder;
 - its two app wrappers, only when they carry our `.tmnf-app` marker and this
   title's bundle identifier;
-- its launcher support directory, cached installer, logs and extracted icon.
+- its launcher support directory, cached installer, logs and extracted icon;
+- tombstones a previous, interrupted uninstall left beside any of these.
 
 Never removed: a title root (tmnf's root `~/Games/TMNF` holds the other
 titles' roots and every root holds its operation lock), the runtime, shared
 downloads, another title's paths, or anything outside the managed roots.
+
+Removal renames each folder to a tombstone in its own parent first, so a
+removal that stops halfway never leaves a folder that has lost its ownership
+marker under its real name; the next run finds the tombstone and finishes it.
 """
 
 from __future__ import annotations
 
 import argparse
+import errno
 import os
 import plistlib
 import re
+import secrets
+import shutil
 import stat
 import sys
 import typing
@@ -36,29 +45,61 @@ if typing.TYPE_CHECKING:
 
 LEGACY_APP_ID = "local.tmnf.launcher"
 LOG_SUFFIXES = ("", ".1", ".2", ".3")
+TOMBSTONE = re.compile(r"^\.(?P<name>.+)\.tmnf-removing\.[0-9a-f]{8}$")
+# plan exits with this status when nothing is left to remove.
+NOTHING_TO_REMOVE = 3
+
+Identity = typing.Tuple[int, int]
 
 
 class Entry(typing.NamedTuple):
-    verb: str  # "remove" or "keep"
+    verb: str  # "remove", "prune" (remove only if empty) or "keep"
     kind: str
     path: Path
     reason: str = ""
+    # (st_dev, st_ino) of the path and of its parent when planned; removal
+    # refuses to act on anything that no longer matches.
+    identity: typing.Optional[Identity] = None
+    parent: typing.Optional[Identity] = None
 
-    def line(self) -> str:
-        if self.verb == "remove":
-            return "remove\t{}\t{}".format(self.kind, self.path)
-        return "keep\t{}\t{}\t{}".format(self.kind, self.reason, self.path)
+    def describe(self) -> str:
+        if self.verb == "keep":
+            return "{} ({})".format(self.path, self.reason)
+        return str(self.path)
+
+
+def _identity(info: os.stat_result) -> Identity:
+    return (info.st_dev, info.st_ino)
+
+
+def _planned(verb: str, kind: str, path: Path) -> Entry:
+    """A removal of PATH (resolved, not a symlink) with its identity recorded."""
+    return Entry(
+        verb,
+        kind,
+        path,
+        identity=_identity(os.lstat(path)),
+        parent=_identity(os.lstat(path.parent)),
+    )
+
+
+def _remove(kind: str, path: Path) -> Entry:
+    return _planned("remove", kind, path)
 
 
 def _keep(kind: str, path: Path, reason: str) -> Entry:
     return Entry("keep", kind, path, reason)
 
 
+def _printable(text: str) -> bool:
+    return not any(ord(char) < 32 or ord(char) == 127 for char in text)
+
+
 def _plain_absolute(value: str, what: str) -> Path:
     if (
         not value.startswith("/")
         or any(part in (".", "..") for part in value.split("/"))
-        or any(ord(char) < 32 for char in value)
+        or not _printable(value)
     ):
         raise ValueError("Unsafe {} path: {!r}".format(what, value))
     return Path(value.rstrip("/") or "/")
@@ -66,6 +107,14 @@ def _plain_absolute(value: str, what: str) -> Path:
 
 def _owned(path: Path) -> bool:
     return os.lstat(path).st_uid == os.getuid()
+
+
+def _same(left: Path, right: Path) -> bool:
+    """Same file by device and inode: APFS compares names case-insensitively."""
+    try:
+        return os.path.samefile(left, right)
+    except OSError:
+        return False
 
 
 def load_titles() -> typing.Tuple[registry.Title, typing.List[registry.Title]]:
@@ -92,6 +141,13 @@ def load_titles() -> typing.Tuple[registry.Title, typing.List[registry.Title]]:
         titles.extend(loaded)
         if index == 0:
             current = next((title for title in loaded if title.id == title_id), None)
+    conflicts = registry.subdir_conflicts(titles)
+    if conflicts:
+        raise ValueError(
+            "Fix the title registry before uninstalling: {}".format(
+                "; ".join(f"{key}: {message}" for key, message in sorted(conflicts.items()))
+            )
+        )
     if current is None:
         raise ValueError("Unknown title: {}".format(title_id))
     return current, titles
@@ -136,22 +192,52 @@ def log_names(title_id: str) -> typing.Set[str]:
     return {base + suffix for base in bases for suffix in LOG_SUFFIXES}
 
 
-class Limits(typing.NamedTuple):
-    """Paths a removal must never equal or contain, and areas it must stay out of."""
+def _chain(path: Path) -> typing.Set[Identity]:
+    """Identities of PATH (if it exists) and of every existing ancestor, symlinks followed."""
+    found = set()
+    for candidate in (path, *path.parents):
+        try:
+            found.add(_identity(os.stat(candidate)))
+        except OSError:
+            continue
+    return found
 
-    protected: typing.Tuple[Path, ...]
-    foreign: typing.Tuple[Path, ...]
 
-    def check(self, path: Path) -> None:
-        for other in self.protected:
-            if path == other or path in other.parents:
-                raise ValueError(
-                    "Refusing to remove {}: it is or contains {}, which is kept".format(path, other)
+class Limits:
+    """Paths a removal must never equal or contain, and areas it must stay out of.
+
+    Compared by (st_dev, st_ino), never by spelling: APFS is case-insensitive,
+    so "games/tmnf" and "Games/TMNF" are the same folder.
+    """
+
+    def __init__(self, protected: typing.Sequence[Path], foreign: typing.Sequence[Path]):
+        # A removal equals or contains a protected path exactly when its identity
+        # is that path's own or one of its existing ancestors'.
+        self.containing: typing.Dict[Identity, Path] = {}
+        for path in protected:
+            for identity in _chain(path):
+                self.containing.setdefault(identity, path)
+        self.foreign: typing.Dict[Identity, Path] = {}
+        for area in foreign:
+            try:
+                self.foreign[_identity(os.stat(area))] = area
+            except OSError:
+                continue  # Nothing can be inside an area that does not exist.
+
+    def check(self, entry: Entry) -> None:
+        identity = entry.identity or _identity(os.lstat(entry.path))
+        if identity in self.containing:
+            raise ValueError(
+                "Refusing to remove {}: it is or contains {}, which is kept".format(
+                    entry.path, self.containing[identity]
                 )
-        for area in self.foreign:
-            if path == area or area in path.parents:
+            )
+        for ancestor in _chain(entry.path.parent):
+            if ancestor in self.foreign:
                 raise ValueError(
-                    "Refusing to remove {}: it belongs to another title ({})".format(path, area)
+                    "Refusing to remove {}: it belongs to another title ({})".format(
+                        entry.path, self.foreign[ancestor]
+                    )
                 )
 
 
@@ -183,13 +269,33 @@ def limits(
         root = title_root(other, home)
         protected += [root, root / "prefix", root / "UserData"]
         foreign += [root / "prefix", root / "UserData"]
-    return Limits(
-        tuple(path.resolve() for path in protected), tuple(path.resolve() for path in foreign)
-    )
+    return Limits(protected, foreign)
 
 
 def logs_dir(home: Path) -> Path:
     return home / "Library" / "Logs" / "TMNF"
+
+
+def tombstone_name(name: str) -> str:
+    return ".{}.tmnf-removing.{}".format(name, secrets.token_hex(4))
+
+
+def leftover_entries(directory: Path, name: str, kind: str) -> typing.List[Entry]:
+    """Tombstones of NAME that an interrupted uninstall left in DIRECTORY."""
+    if not directory.is_dir():
+        return []
+    entries = []
+    for child in sorted(os.listdir(directory)):
+        match = TOMBSTONE.match(child)
+        if not match or match.group("name") != name:
+            continue
+        path = directory.resolve(strict=True) / child
+        info = os.lstat(path)
+        if stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid():
+            entries.append(_remove(kind, path))
+        else:
+            entries.append(_keep(kind, path, "not a folder this hub left behind"))
+    return entries
 
 
 def app_entry(value: str, title: registry.Title, kind: str) -> typing.Optional[Entry]:
@@ -223,10 +329,11 @@ def app_entry(value: str, title: registry.Title, kind: str) -> typing.Optional[E
         return _keep(kind, path, "not an app this hub installed")
     wanted = title.bundle_id_game if kind == "game-app" else title.bundle_id_settings
     if identifier != wanted:
-        return _keep(kind, path, "belongs to another app ({})".format(identifier))
+        # The identifier comes from a file anyone could have written: repr() it.
+        return _keep(kind, path, "belongs to another app ({!r})".format(identifier))
     if not _owned(path):
         return _keep(kind, path, "owned by another user")
-    return Entry("remove", kind, path.parent.resolve(strict=True) / path.name)
+    return _remove(kind, path.parent.resolve(strict=True) / path.name)
 
 
 def launcher_entry(value: str, support: Path, title: registry.Title) -> typing.Optional[Entry]:
@@ -237,13 +344,13 @@ def launcher_entry(value: str, support: Path, title: registry.Title) -> typing.O
         return _keep("launcher", path, "a symlink")
     resolved = managed_paths.safe_path(value)
     marker = resolved / ".tmnf-launcher"
-    if resolved.name != title.id or resolved.parent != support / "launchers":
+    if resolved.name != title.id or not _same(resolved.parent, support / "launchers"):
         return _keep("launcher", path, "not this game's launcher folder")
     if marker.is_symlink() or not marker.is_file() or not resolved.is_dir():
         return _keep("launcher", path, "not a launcher folder this hub installed")
     if not _owned(resolved):
         return _keep("launcher", path, "owned by another user")
-    return Entry("remove", "launcher", resolved)
+    return _remove("launcher", resolved)
 
 
 def _regular_file(path: Path) -> bool:
@@ -251,39 +358,58 @@ def _regular_file(path: Path) -> bool:
     return stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid()
 
 
-def cache_entries(title: registry.Title, cache: Path) -> typing.List[Entry]:
-    """The title's cached installer: a file in the shared cache for tmnf, else a folder."""
-    target = installer_cache_path(title, cache)
-    if target is None or not os.path.lexists(cache):
-        return []
-    if title.id != "tmnf":
-        folder = cache / "games" / title.id
-        if not os.path.lexists(folder):
-            return []
-        if folder.is_symlink():
-            return [_keep("cache", folder, "a symlink")]
-        resolved = managed_paths.safe_path(str(folder))
-        if resolved != cache.resolve() / "games" / title.id or not resolved.is_dir():
-            return [_keep("cache", folder, "not this game's cache folder")]
-        if not _owned(resolved):
-            return [_keep("cache", folder, "owned by another user")]
-        return [Entry("remove", "cache", resolved)]
-    name = target.name
-    if not name or name in shared_cache_names():
-        raise ValueError("The cached installer name {!r} is shared by every title".format(name))
-    resolved_cache = managed_paths.safe_path(str(cache)) if not cache.is_symlink() else None
-    if resolved_cache is None or not resolved_cache.is_dir():
-        return []
+def _installer_files(directory: Path, name: str) -> typing.List[Entry]:
+    """NAME and its `.partial.XXXXXX` downloads in DIRECTORY (see download_verified)."""
     partial = re.compile(r"^{}\.partial\.[A-Za-z0-9]{{6}}$".format(re.escape(name)))
     entries = []
-    for child in sorted(os.listdir(resolved_cache)):
+    for child in sorted(os.listdir(directory)):
         if child != name and not partial.match(child):
             continue
-        path = resolved_cache / child
+        path = directory / child
         if _regular_file(path):
-            entries.append(Entry("remove", "cache", path))
+            entries.append(_remove("cache", path))
         else:
             entries.append(_keep("cache", path, "not a regular file"))
+    return entries
+
+
+def cache_entries(title: registry.Title, cache: Path) -> typing.List[Entry]:
+    """The title's cached installer, its partial downloads and its unpacked staging.
+
+    tmnf's installer sits directly in the shared cache. Other titles download
+    to `games/<id>`, which carries no ownership marker, so only the known
+    files in it are removed and the folder itself only once it is empty.
+    """
+    target = installer_cache_path(title, cache)
+    if target is None or not os.path.lexists(cache) or cache.is_symlink():
+        return []
+    name = target.name
+    if title.id == "tmnf":
+        if not name or name in shared_cache_names():
+            raise ValueError("The cached installer name {!r} is shared by every title".format(name))
+        resolved_cache = managed_paths.safe_path(str(cache))
+        return _installer_files(resolved_cache, name) if resolved_cache.is_dir() else []
+    folder = cache / "games" / title.id
+    if not os.path.lexists(folder):
+        return []
+    if folder.is_symlink():
+        return [_keep("cache", folder, "a symlink")]
+    resolved = managed_paths.safe_path(str(folder))
+    if not resolved.is_dir() or not _same(resolved.parent, cache / "games"):
+        return [_keep("cache", folder, "not this game's cache folder")]
+    entries = _installer_files(resolved, name)
+    # unpack_inner_inno stages `${installer%.exe}.inner` next to the installer.
+    staging = (name[: -len(".exe")] if name.endswith(".exe") else name) + ".inner"
+    inner = resolved / staging
+    if os.path.lexists(inner):
+        info = os.lstat(inner)
+        if stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid():
+            entries.append(_remove("cache", inner))
+        else:
+            entries.append(_keep("cache", inner, "not a folder this hub unpacked"))
+    entries += leftover_entries(resolved, staging, "cache")
+    if _owned(resolved):
+        entries.append(_planned("prune", "cache", resolved))
     return entries
 
 
@@ -303,7 +429,7 @@ def log_entries(title: registry.Title, home: Path) -> typing.List[Entry]:
             continue
         path = resolved / child
         if _regular_file(path):
-            entries.append(Entry("remove", "logs", path))
+            entries.append(_remove("logs", path))
         else:
             entries.append(_keep("logs", path, "not a regular file"))
     return entries
@@ -315,7 +441,7 @@ def icon_entry(title: registry.Title, support: Path) -> typing.Optional[Entry]:
         return None
     if path.is_symlink() or not _regular_file(path):
         return _keep("icon", path, "not a regular file")
-    return Entry("remove", "icon", managed_paths.safe_path(str(path)))
+    return _remove("icon", managed_paths.safe_path(str(path)))
 
 
 def _external_saves(prefix: Path, userdata: Path, warnings: typing.List[str]) -> typing.List[Entry]:
@@ -332,18 +458,24 @@ def _external_saves(prefix: Path, userdata: Path, warnings: typing.List[str]) ->
             "Could not read where the prefix keeps Documents ({}). Files outside the prefix "
             "and the saves folder are never removed.".format(error)
         )
+    own = set()
+    for path in (prefix, userdata):
+        try:
+            own.add(_identity(os.stat(path)))
+        except OSError:
+            continue
     entries: typing.List[Entry] = []
-    seen = set()
+    seen: typing.Set[Identity] = set()
     for location in locations:
         try:
             resolved = location.resolve(strict=True)
+            identity = _identity(os.stat(resolved))
         except OSError:
             continue
-        if resolved == prefix or prefix in resolved.parents:
+        # Inside the prefix or the saves folder (by identity, at any depth): not elsewhere.
+        if identity in seen or own & _chain(resolved):
             continue
-        if resolved == userdata or userdata in resolved.parents or resolved in seen:
-            continue
-        seen.add(resolved)
+        seen.add(identity)
         entries.append(_keep("saves-elsewhere", resolved, "outside the managed folders"))
     return entries
 
@@ -360,12 +492,12 @@ def prefix_entries(
     if not include_saves:
         # Saves inside the prefix block this removal, exactly as before.
         prefix = managed_paths.check_uninstall(prefix_value, userdata_value, title=title.id)
-        return [Entry("remove", "prefix", prefix)]
+        return [_remove("prefix", prefix)]
     managed_paths.check_layout([prefix_value, userdata_value])
     managed_paths.check_prefix(prefix_value, title=title.id)
     prefix = managed_paths.safe_path(prefix_value)
     userdata = Path(userdata_value).resolve()
-    return [Entry("remove", "prefix", prefix)] + _external_saves(prefix, userdata, warnings)
+    return [_remove("prefix", prefix)] + _external_saves(prefix, userdata, warnings)
 
 
 def userdata_entries(
@@ -389,13 +521,14 @@ def userdata_entries(
     if path.is_symlink():
         raise ValueError("The saves folder is a symlink: {}".format(path))
     resolved = managed_paths.safe_path(value)
-    if resolved != default_userdata(title, home).resolve():
+    if not _same(resolved, default_userdata(title, home)):
         raise ValueError(
             "Your saves are in a custom folder ({}) that this uninstall does not remove. "
             "Remove it yourself, or uninstall without removing saves.".format(path)
         )
     if not resolved.is_dir() or not _owned(resolved):
         raise ValueError("The saves folder is not a folder you own: {}".format(path))
+    ours = _identity(os.stat(resolved))
     for other in titles:
         if other.id == title.id:
             continue
@@ -403,15 +536,35 @@ def userdata_entries(
         if not other_prefix.is_dir():
             continue
         try:
+            # Both the profile folders and any user.reg redirection of Documents.
             documents = list(managed_paths.profile_documents(other_prefix))
-            targets = [location.resolve(strict=True) for location in documents]
+            documents += managed_paths.redirected_documents(other_prefix)
+            chains = [_chain(location.resolve(strict=True)) for location in documents]
         except (OSError, ValueError) as error:
             raise ValueError(
                 "Cannot check whether {} uses {}: {}".format(other.name, path, error)
             ) from error
-        if any(target == resolved or resolved in target.parents for target in targets):
+        if any(ours in chain for chain in chains):
             raise ValueError("{} also keeps its saves in {}".format(other.name, path))
-    return [Entry("remove", "saves", resolved)]
+    return [_remove("saves", resolved)]
+
+
+def _leftovers(
+    prefix: Path, userdata: Path, apps: typing.Sequence[Path], launcher: Path
+) -> typing.List[Entry]:
+    """Tombstones of every folder this title's uninstall renames before deleting."""
+    entries = []
+    for path, kind in (
+        (prefix, "prefix"),
+        (userdata, "saves"),
+        (apps[0], "game-app"),
+        (apps[1], "settings-app"),
+        (launcher, "launcher"),
+    ):
+        parent = path.parent
+        if os.path.lexists(parent) and not parent.is_symlink():
+            entries += leftover_entries(parent, path.name, kind)
+    return entries
 
 
 def plan(
@@ -435,7 +588,9 @@ def plan(
     home = Path.home().resolve()
     app_path = _plain_absolute(app, "app")
     settings_path = _plain_absolute(settings_app, "app")
-    if app_path.parent.resolve() != settings_path.parent.resolve():
+    if not _same(app_path.parent, settings_path.parent) and (
+        app_path.parent.resolve() != settings_path.parent.resolve()
+    ):
         raise ValueError("The game and settings apps must be in the same folder")
     support_path = _plain_absolute(support, "support").resolve()
     cache_path = _plain_absolute(cache, "cache")
@@ -452,15 +607,94 @@ def plan(
         entries.append(entry)
     entries += prefix_entries(prefix, userdata, title, include_saves, warnings)
     entries += userdata_entries(userdata, title, titles, home, include_saves)
+    entries += _leftovers(
+        _plain_absolute(prefix, "prefix"),
+        _plain_absolute(userdata, "saves"),
+        (app_path, settings_path),
+        _plain_absolute(launcher, "launcher"),
+    )
     entries += cache_entries(title, cache_path)
     entries += log_entries(title, home)
     entry = icon_entry(title, support_path)
     if entry is not None:
         entries.append(entry)
     for entry in entries:
-        if entry.verb == "remove":
-            bounds.check(entry.path)
+        # Fail closed: a resolved path or reason that could break a line of
+        # output is never shown, let alone removed.
+        if not _printable(str(entry.path)) or not _printable(entry.reason):
+            raise ValueError("Unsafe path in the uninstall plan: {!r}".format(str(entry.path)))
+        if entry.verb != "keep":
+            bounds.check(entry)
     return entries
+
+
+def _same_volume(path: Path, device: int) -> None:
+    """Refuse a tree with another volume mounted inside it; nothing is crossed."""
+    for root, directories, files in os.walk(path, followlinks=False):
+        for name in directories + files:
+            if os.lstat(os.path.join(root, name)).st_dev != device:
+                raise ValueError(
+                    "{} has another volume mounted inside it ({!r}); unmount it and "
+                    "uninstall again".format(path, os.path.join(root, name))
+                )
+
+
+def _apply(entry: Entry) -> bool:
+    """Remove one planned entry; False when it was already gone or not empty."""
+    assert entry.identity is not None and entry.parent is not None
+    parent = entry.path.parent
+    # O_NOFOLLOW refuses a parent swapped for a symlink; the identity check
+    # refuses one swapped for another folder anywhere along its path.
+    descriptor = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        if _identity(os.fstat(descriptor)) != entry.parent:
+            raise ValueError("{} changed after it was checked".format(parent))
+        try:
+            info = os.stat(entry.path.name, dir_fd=descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            return False
+        if _identity(info) != entry.identity:
+            raise ValueError("{} changed after it was checked".format(entry.path))
+        if entry.verb == "prune":
+            try:
+                os.rmdir(entry.path.name, dir_fd=descriptor)
+            except OSError as error:
+                if error.errno in (errno.ENOTEMPTY, errno.EEXIST):
+                    return False
+                raise
+            return True
+        if not stat.S_ISDIR(info.st_mode):
+            os.unlink(entry.path.name, dir_fd=descriptor)
+            return True
+        _same_volume(entry.path, info.st_dev)
+        name = entry.path.name
+        if not TOMBSTONE.match(name):
+            name = tombstone_name(name)
+            os.rename(entry.path.name, name, src_dir_fd=descriptor, dst_dir_fd=descriptor)
+        shutil.rmtree(parent / name)
+        return True
+    finally:
+        os.close(descriptor)
+
+
+def remove(
+    entries: typing.Sequence[Entry],
+    report: typing.Optional[typing.Callable[[str], None]] = None,
+) -> int:
+    """Remove every planned entry in order and report each; returns how many went."""
+    report = report or print
+    if not shutil.rmtree.avoids_symlink_attacks:
+        raise RuntimeError(
+            "This Python cannot remove folders without following symlinks; nothing was removed"
+        )
+    removed = 0
+    for entry in entries:
+        if entry.verb == "keep":
+            report("Kept {}".format(entry.describe()))
+        elif _apply(entry):
+            removed += 1
+            report("Removed {}".format(entry.path))
+    return removed
 
 
 PREVIEW_LABELS = {
@@ -468,12 +702,13 @@ PREVIEW_LABELS = {
     "game-app": "Game app",
     "settings-app": "Settings app",
     "launcher": "Launcher files",
+    "leftover": "Files left by an unfinished uninstall",
     "cache": "Cached installer",
     "logs": "Logs for this game",
     "icon": "Game icon",
 }
 # Any of these makes the title uninstallable; cache, logs and icon alone do not.
-REMOVABLE_KINDS = ("prefix", "game-app", "settings-app", "launcher")
+REMOVABLE_KINDS = ("prefix", "game-app", "settings-app", "launcher", "leftover")
 
 
 def preview(title: registry.Title, paths: "TitlePaths") -> dict:
@@ -511,11 +746,15 @@ def preview(title: registry.Title, paths: "TitlePaths") -> dict:
     entry = attempt(launcher_entry, str(paths.launcher), paths.support.resolve(), title)
     if entry is not None and entry.verb == "remove":
         add("launcher", paths.launcher)
+    leftovers = attempt(
+        _leftovers, paths.prefix, paths.userdata, (paths.app, paths.settings_app), paths.launcher
+    )
+    for entry in leftovers or ():
+        if entry.verb == "remove":
+            add("leftover", entry.path)
     cache = [e for e in attempt(cache_entries, title, paths.cache) or () if e.verb == "remove"]
     if cache:
-        # tmnf's installer is one file in the shared cache; other titles own a folder.
-        shown = installer_cache_path(title, paths.cache) if title.id == "tmnf" else None
-        add("cache", shown or cache[0].path)
+        add("cache", cache[0].path)
     logs = [e for e in attempt(log_entries, title, Path.home()) or () if e.verb == "remove"]
     if logs:
         add("logs", logs_dir(Path.home()))
@@ -537,7 +776,7 @@ def removable(removal: dict) -> bool:
 
 def main(argv: typing.Optional[typing.List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("command", choices=("plan",))
+    parser.add_argument("command", choices=("plan", "remove"))
     parser.add_argument("--include-saves", action="store_true")
     for name in ("prefix", "userdata", "app", "settings_app", "launcher", "support", "cache"):
         parser.add_argument(name)
@@ -555,13 +794,27 @@ def main(argv: typing.Optional[typing.List[str]] = None) -> int:
             include_saves=args.include_saves,
             warnings=warnings,
         )
+        for warning in warnings:
+            print("warning: {}".format(warning), file=sys.stderr)
+        if args.command == "remove":
+            if not remove(entries):
+                print("Nothing was left to remove.")
+            return 0
     except (OSError, ValueError, RuntimeError, registry.RegistryError) as error:
         print("error: {}".format(error), file=sys.stderr)
         return 1
-    for warning in warnings:
-        print("warning: {}".format(warning), file=sys.stderr)
-    for entry in entries:
-        print(entry.line())
+    removals = [entry for entry in entries if entry.verb == "remove"]
+    kept = [entry for entry in entries if entry.verb == "keep"]
+    if not removals:
+        print("Nothing is left to remove.")
+        return NOTHING_TO_REMOVE
+    print("This removes:")
+    for entry in removals:
+        print("  {}".format(entry.describe()))
+    if kept:
+        print("This keeps:")
+        for entry in kept:
+            print("  {}".format(entry.describe()))
     return 0
 
 

@@ -198,8 +198,8 @@ stop_game() {
 }
 
 uninstall_game() {
-  local answer="" option plan verb detail path assume_yes=false removed=0
-  local -a plan_options=()
+  local answer="" option status=0 assume_yes=false
+  local -a plan_options=() locations
   for option in "$@"; do
     case "$option" in
       --yes) assume_yes=true ;;
@@ -216,16 +216,18 @@ uninstall_game() {
   tmnf_python -m tmnf.guard.operation_guard app-held "$TMNF_PREFIX" \
     || die "Invalid app operation lock."
   validate_managed_layout || die "Unsafe installation layout; userdata must be outside the prefix."
-  # The guard prints each path resolved once; removal acts on those paths only.
-  plan="$(tmnf_python -m tmnf.guard.uninstall plan ${plan_options[@]+"${plan_options[@]}"} \
-    "$TMNF_PREFIX" "$TMNF_USERDATA" "$TMNF_APP" "$TMNF_SETTINGS_APP" "$TMNF_LAUNCHER" \
-    "$TMNF_SUPPORT" "$TMNF_CACHE")" \
-    || die "Refusing removal until the reported locations are safe."
+  locations=("$TMNF_PREFIX" "$TMNF_USERDATA" "$TMNF_APP" "$TMNF_SETTINGS_APP" "$TMNF_LAUNCHER" \
+    "$TMNF_SUPPORT" "$TMNF_CACHE")
+  # The guard plans and removes in one process; this shell only asks and never
+  # reads the plan back, so nothing in a path or an app can become a command.
   if test "$assume_yes" != true; then
-    say "This removes:"
-    while IFS=$'\t' read -r verb _ detail path; do
-      if test "$verb" = remove; then say "  $detail"; fi
-    done <<<"$plan"
+    tmnf_python -m tmnf.guard.uninstall plan ${plan_options[@]+"${plan_options[@]}"} "${locations[@]}" \
+      || status=$?
+    case "$status" in
+      0) ;;
+      3) return 0 ;;
+      *) die "Refusing removal until the reported locations are safe." ;;
+    esac
     printf 'Remove these files from %s? [y/N] ' "$TMNF_TITLE_NAME"
     read -r answer || answer=""
     case "$answer" in
@@ -233,16 +235,7 @@ uninstall_game() {
       *) say "Cancelled."; return 0 ;;
     esac
   fi
-  while IFS=$'\t' read -r verb _ detail path; do
-    case "$verb" in
-      remove)
-        rm -rf -- "$detail" || die "Could not remove $detail; the items after it were not removed."
-        say "Removed $detail"
-        removed=$((removed + 1))
-        ;;
-      keep) say "Kept $path ($detail)" ;;
-    esac
-  done <<<"$plan"
-  test "$removed" -gt 0 || say "Nothing of $TMNF_TITLE_NAME was left to remove."
+  tmnf_python -m tmnf.guard.uninstall remove ${plan_options[@]+"${plan_options[@]}"} "${locations[@]}" \
+    || die "The uninstall did not finish. Run it again to remove what is left."
   say "The Wine runtime and downloads shared with other games were kept."
 }

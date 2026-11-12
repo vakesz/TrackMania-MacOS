@@ -17,7 +17,8 @@ named after the game. For Nations Forever they are:
 The hub opens those app wrappers through macOS; it does not replace them.
 For titles that need a serial (`requiresSerial`), the hub replaces the Settings button
 with "Register player key", which opens the same Settings app, and notes that the key is
-entered there before pressing Play.
+entered there before pressing Play. Once a title's `cdKey` item (below) is ready, the
+key is registered and the plain Settings button comes back.
 
 A title with `cd_key_in_nadeo_ini` in its registry entry (United Forever)
 also carries a `cdKey` item in `state` once its game files are installed. It is

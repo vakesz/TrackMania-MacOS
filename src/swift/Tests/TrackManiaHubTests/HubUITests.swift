@@ -235,6 +235,10 @@ final class HubUITests: XCTestCase {
         XCTAssertFalse(unlocked.needsCDKey)
         XCTAssertTrue(unlocked.playEnabled)
         XCTAssertEqual(unlocked.availability, "Ready to play")
+        // Registered: the register button and its note give way to Settings.
+        XCTAssertTrue(locked.showsRegisterKey)
+        XCTAssertFalse(unlocked.showsRegisterKey)
+        XCTAssertNil(unlocked.registerKeyTarget)
     }
 
     func testTitlesWithoutCDKeyProbeAreNeverGated() {

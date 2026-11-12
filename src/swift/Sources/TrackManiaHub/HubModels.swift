@@ -489,8 +489,9 @@ extension HubTitle {
 
     /// Titles that ask for a player key show a register button and a note. The key can only be
     /// entered in the game's own launcher, which the Settings app opens; Play cannot ask for it.
+    /// Once the backend reports the key as present, the plain Settings button returns.
     var showsRegisterKey: Bool {
-        requiresSerial == true && isInstalled && state.settingsApp?.ready == true
+        requiresSerial == true && isInstalled && state.settingsApp?.ready == true && state.cdKey?.ready != true
     }
 
     /// The app the register button opens: the Settings app, or nil when the button is hidden.

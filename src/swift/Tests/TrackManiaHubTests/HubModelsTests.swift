@@ -69,6 +69,31 @@ final class HubModelsTests: XCTestCase {
                        ["hub", "run", "tmnf", "install"])
     }
 
+    func testRunArgumentsAppendIncludeSavesOnlyWhenChosen() {
+        XCTAssertEqual(HubBackend.runArguments(titleID: "tmu", actionID: "uninstall", includeSaves: true),
+                       ["hub", "run", "tmu", "uninstall", "--include-saves"])
+        XCTAssertEqual(HubBackend.runArguments(titleID: "tmu", actionID: "uninstall"),
+                       ["hub", "run", "tmu", "uninstall"])
+    }
+
+    func testRemovalPreviewDecodesAndToleratesBadItems() throws {
+        let snapshot = try HubBackend.decodeSnapshot(Data("""
+            {"schema":2,"titles":[
+              {"id":"a","name":"A","status":"supported","notes":"",
+               "removal":{"items":[{"kind":"prefix","label":"Wine prefix and game files","path":"/p"},
+                                   {"kind":"logs"}],
+                          "saves":"/u"}},
+              {"id":"b","name":"B","status":"supported","notes":"","removal":null},
+              {"id":"c","name":"C","status":"supported","notes":""}]}
+            """.utf8))
+        let titles = Dictionary(uniqueKeysWithValues: snapshot.titles.map { ($0.id, $0) })
+        XCTAssertEqual(titles["a"]?.removal,
+                       HubRemoval(items: [HubRemovalItem(kind: "prefix", label: "Wine prefix and game files", path: "/p")],
+                                  saves: "/u"))
+        XCTAssertNil(titles["b"]?.removal)
+        XCTAssertNil(titles["c"]?.removal)
+    }
+
     func testRuntimeChoiceIsNeededOnlyForInstallActionsWithoutRuntime() {
         let install = HubAction(id: "install", label: "Install", kind: .install)
         let platform = HubAction(id: "install-platform", label: "Install", kind: .install)

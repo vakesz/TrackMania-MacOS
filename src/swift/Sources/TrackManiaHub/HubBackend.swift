@@ -155,13 +155,16 @@ final class HubBackend: Sendable {
     }
 
     static func runArguments(titleID: String, actionID: String, source: URL? = nil,
-                             runtime: RuntimeSource? = nil) -> [String] {
+                             runtime: RuntimeSource? = nil, includeSaves: Bool = false) -> [String] {
         var arguments = ["hub", "run", titleID, actionID]
         if let source {
             arguments += ["--source", source.path]
         }
         if let runtime {
             arguments += ["--runtime", runtime.rawValue]
+        }
+        if includeSaves {
+            arguments.append("--include-saves")
         }
         return arguments
     }
@@ -188,12 +191,12 @@ final class HubBackend: Sendable {
     }
 
     func run(titleID: String, actionID: String, source: URL? = nil,
-             runtime: RuntimeSource? = nil,
+             runtime: RuntimeSource? = nil, includeSaves: Bool = false,
              handle: HubCommandHandle = HubCommandHandle(),
              onOutput: @escaping @Sendable (String) -> Void = { _ in }) async throws -> HubCommandResult {
         let result = try await run(
             arguments: Self.runArguments(titleID: titleID, actionID: actionID, source: source,
-                                         runtime: runtime),
+                                         runtime: runtime, includeSaves: includeSaves),
             handle: handle, onOutput: onOutput)
         guard result.status == 0 else { throw HubBackendError.commandFailed(result) }
         return result

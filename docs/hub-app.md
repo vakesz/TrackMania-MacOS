@@ -98,7 +98,9 @@ title's own root, launcher tombstones as `launchers/<id>`. Keeping saves never
 deletes a saves tombstone: it is renamed back to `UserData` when that name is
 free, and kept otherwise; the snapshot then reports it as `saves`. A planned
 folder that is itself a mount point is kept ("is a mounted volume; unmount it
-first") and left out of `removal`. Paths are compared by device and
+first") and left out of `removal`; a prefix or saves folder with a volume
+mounted inside it is kept too, naming the mount point, before anything is
+renamed. Paths are compared by device and
 inode, not by spelling, because APFS is case-insensitive; removal refuses a
 path or parent that changed after it was checked, a folder with another volume
 mounted inside it, and any path containing a control character. For titles

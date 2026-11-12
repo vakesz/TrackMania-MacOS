@@ -537,9 +537,9 @@ class GuardPlanTests(unittest.TestCase):
         root = os.open(self.fx.root("tmnf"), os.O_RDONLY | os.O_DIRECTORY)
         try:
             device = os.lstat(self.fx.prefix("tmnf")).st_dev
-            uninstall._same_volume(root, "prefix", device)
-            with self.assertRaisesRegex(ValueError, "another volume"):
-                uninstall._same_volume(root, "prefix", device + 1)
+            uninstall._same_volume(root, self.fx.root("tmnf"), "prefix", device)
+            with self.assertRaisesRegex(ValueError, "contains a mounted volume at /"):
+                uninstall._same_volume(root, self.fx.root("tmnf"), "prefix", device + 1)
         finally:
             os.close(root)
 
@@ -751,6 +751,113 @@ class GuardPlanTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Canyon keeps its saves inside"):
                     self.plan(include_saves=include_saves)
         self.assertTrue(prefix.is_dir())
+
+    def unfinished_saves(self):
+        """The state an include-saves run leaves when it stops on the saves folder."""
+        self.fx.install("tmnf")
+        shutil.rmtree(self.fx.prefix("tmnf"))
+        tomb = self.fx.root("tmnf") / ".UserData.tmnf-removing.0123abcd"
+        self.fx.userdata("tmnf").rename(tomb)
+        return tomb
+
+    def test_restore_works_with_home_reached_through_a_symlink(self):
+        if not Path("/tmp").is_symlink() or Path("/tmp").resolve() != Path("/private/tmp"):
+            self.skipTest("/tmp is not a symlink to /private/tmp here")
+        tomb = self.unfinished_saves()
+        linked = "/tmp/" + self.home.name
+        os.environ["HOME"] = linked
+        arguments = {
+            key: value.replace(str(self.home), linked)
+            for key, value in self.fx.arguments("tmnf").items()
+        }
+        os.environ["TMNF_TITLE"] = "tmnf"
+        entries = uninstall.plan(**arguments)
+        uninstall.remove(entries, report=lambda line: None)
+        self.assertFalse(tomb.exists())
+        self.assertTrue((self.fx.userdata("tmnf") / "TmForever/Replays/race.Gbx").exists())
+
+    def test_restore_works_with_a_case_variant_root(self):
+        probe = self.home / "CaseProbe"
+        probe.mkdir()
+        if not (self.home / "caseprobe").is_dir():
+            self.skipTest("this volume is case-sensitive")
+        tomb = self.unfinished_saves()
+        variant = str(self.fx.root("tmnf")).replace("Games/TMNF", "games/tmnf")
+        entries = self.plan(prefix=variant + "/prefix", userdata=variant + "/userdata")
+        uninstall.remove(entries, report=lambda line: None)
+        self.assertFalse(tomb.exists())
+        # Restored under the canonical spelling.
+        self.assertIn("UserData", os.listdir(self.fx.root("tmnf")))
+        self.assertTrue((self.fx.userdata("tmnf") / "TmForever/Replays/race.Gbx").exists())
+
+    def test_volume_mounted_inside_is_reported_before_any_rename(self):
+        prefix = self.fx.install("tmnf")
+        inner = prefix / "drive_c"
+        real_lstat = os.lstat
+
+        def lstat(path, *args, **kwargs):
+            info = real_lstat(path, *args, **kwargs)
+            return faked_device(info, info.st_dev + 1) if str(path) == str(inner) else info
+
+        with mock.patch.object(uninstall.os, "lstat", side_effect=lstat):
+            entries = self.plan()
+        self.assertEqual(
+            self.kept(entries)[prefix].reason,
+            "contains a mounted volume at {}; unmount it first".format(inner),
+        )
+        entries = self.plan()
+        real_stat = os.stat
+
+        def stat(path, *args, **kwargs):
+            info = real_stat(path, *args, **kwargs)
+            return faked_device(info, info.st_dev + 1) if path == "drive_c" else info
+
+        with mock.patch.object(uninstall.os, "stat", side_effect=stat):
+            with self.assertRaisesRegex(ValueError, "mounted volume at {}".format(inner)):
+                uninstall.remove(
+                    [e for e in entries if e.kind == "prefix"], report=lambda line: None
+                )
+        self.assertTrue(prefix.is_dir())  # never renamed
+        self.assertEqual([n for n in os.listdir(self.fx.root("tmnf")) if "removing" in n], [])
+
+    def test_symlinked_root_does_not_make_another_root_ours(self):
+        turbo = self.fx.root("tm-turbo")
+        (turbo / "x").mkdir(parents=True)
+        self.fx.root("tm-canyon").symlink_to(turbo)
+        os.environ["TMNF_TITLE"] = "tm-canyon"
+        title, titles = uninstall.load_titles()
+        bounds = uninstall.limits(
+            title, titles, self.home, self.fx.support, self.fx.cache, self.fx.apps
+        )
+        with self.assertRaisesRegex(ValueError, "belongs to another title"):
+            bounds.check(uninstall._remove("prefix", turbo / "x"))
+
+    def test_keep_saves_checks_a_prefix_tombstone_for_saves(self):
+        prefix = self.fx.install("tmnf", saves=False)
+        documents = prefix / "drive_c/users/player/Documents"
+        documents.unlink()
+        (documents / "TmForever").mkdir(parents=True)
+        (documents / "TmForever/settings").write_text("keep")
+        tomb = self.fx.root("tmnf") / ".prefix.tmnf-removing.0123abcd"
+        prefix.rename(tomb)
+        with self.assertRaisesRegex(ValueError, "Back up"):
+            self.plan()
+        self.assertTrue((tomb / "drive_c/users/player/Documents/TmForever/settings").exists())
+        self.assertIn(tomb, self.removed(self.plan(include_saves=True)))
+
+    def test_error_messages_never_print_raw_controls(self):
+        prefix = self.fx.install("tmnf", saves=False)
+        documents = prefix / "drive_c/users/player/Documents"
+        documents.unlink()
+        (documents / "TmForever").mkdir(parents=True)
+        (documents / "TmForever/\u202eevil").write_text("x")
+        printed = []
+        with mock.patch("builtins.print", side_effect=lambda *a, **k: printed.append(a[0])):
+            status = uninstall.main(["plan", *self.fx.arguments("tmnf").values()])
+        self.assertEqual(status, 1)
+        (line,) = printed
+        self.assertTrue(uninstall._printable(line), repr(line))
+        self.assertIn("\\u202e", line)
 
     def test_saves_folder_used_through_another_titles_user_reg_is_refused(self):
         self.fx.install("tmnf")

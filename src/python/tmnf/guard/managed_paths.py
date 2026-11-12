@@ -456,7 +456,17 @@ def check_uninstall(prefix, userdata, title=None):
     check_layout([str(prefix), str(userdata)])
     check_prefix(str(prefix), title=title)
     prefix = safe_path(str(prefix))
+    check_prefix_saves(prefix)
+    return prefix
 
+
+def check_prefix_saves(prefix):
+    """Raise unless no user file in PREFIX's Documents would go with it.
+
+    PREFIX is an already resolved folder; ownership is the caller's concern
+    (check_uninstall checks the marker, an uninstall tombstone has none).
+    """
+    prefix = Path(prefix)
     max_depth = 32
     max_entries = 200_000
     state = {"entries": 0}
@@ -475,12 +485,12 @@ def check_uninstall(prefix, userdata, title=None):
             )
         resolved = path.resolve(strict=True)
         if resolved in ancestors:
-            raise ValueError("Cyclic save location: {}".format(path))
+            raise ValueError("Cyclic save location: {!r}".format(str(path)))
         if resolved.is_dir():
             for child in path.iterdir():
                 inspect(child, ancestors + (resolved,), depth + 1)
         elif prefix in resolved.parents:
-            raise ValueError("Back up user files before uninstalling: {}".format(path))
+            raise ValueError("Back up user files before uninstalling: {!r}".format(str(path)))
 
     names = save_dir_names()
     checked = set()
@@ -503,7 +513,6 @@ def check_uninstall(prefix, userdata, title=None):
         check_location(documents)
     for documents in redirected_documents(prefix):
         check_location(documents)
-    return prefix
 
 
 def _links_to_userdata(path, userdata):

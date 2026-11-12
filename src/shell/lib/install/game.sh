@@ -28,6 +28,35 @@ _cache_installer_path() {
   fi
 }
 
+# _installer_descendants PID — print every descendant of PID, deepest first.
+_installer_descendants() {
+  local child
+  for child in $(pgrep -P "$1" 2>/dev/null); do
+    _installer_descendants "$child"
+    printf '%s\n' "$child"
+  done
+}
+
+# stop_installer_tree PID — after `wineserver -k`, give the installer a short
+# grace period to exit, then SIGKILL it and its descendants. A Wine client
+# (start.exe) has been seen ignoring both the wineserver shutdown and SIGTERM,
+# which left a bare `wait` blocked forever. Only the tree below PID is touched.
+stop_installer_tree() {
+  local pid="$1" grace="${TMNF_INSTALL_KILL_GRACE:-15}" waited=0 victim victims
+  while kill -0 "$pid" 2>/dev/null && test "$waited" -lt "$grace"; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    warn "Stopping the installer processes that did not exit after Wine shut down."
+    victims="$(_installer_descendants "$pid")"
+    for victim in $victims "$pid"; do
+      kill -KILL "$victim" 2>/dev/null || true
+    done
+  fi
+  wait "$pid" 2>/dev/null || true
+}
+
 # wait_inno_setup PID LOG LABEL: watch a running Inno Setup in the prefix.
 # The legacy Inno Setup versions used by every title can spin during teardown
 # under WoW64/Rosetta. Only stop them once their own log documents a
@@ -46,7 +75,7 @@ wait_inno_setup() {
         say "$label installation completed; stopping the legacy installer after its shutdown wait."
         server_bin="$(wineserver_binary "$(wine_binary)")" || die "Cannot locate wineserver."
         without_operation_lock env WINEPREFIX="$TMNF_PREFIX" "$server_bin" -k || true
-        wait "$installer_pid" 2>/dev/null || true
+        stop_installer_tree "$installer_pid"
         break
       fi
     fi
@@ -55,11 +84,12 @@ wait_inno_setup() {
         warn "The installer completed its file installation but did not exit after ${max_wait}s; stopping this prefix."
         server_bin="$(wineserver_binary "$(wine_binary)")" || die "Cannot locate wineserver."
         without_operation_lock env WINEPREFIX="$TMNF_PREFIX" "$server_bin" -k || true
-        wait "$installer_pid" 2>/dev/null || true
+        stop_installer_tree "$installer_pid"
         break
       fi
       server_bin="$(wineserver_binary "$(wine_binary)")" || die "Cannot locate wineserver."
       without_operation_lock env WINEPREFIX="$TMNF_PREFIX" "$server_bin" -k || true
+      stop_installer_tree "$installer_pid"
       die "$label installation timed out. See $installer_log; rerun make install to retry."
     fi
     sleep 2

@@ -1,8 +1,10 @@
 # Contributing
 
-Thanks for helping improve TrackMania-MacOS. This is a runtime for the TrackMania
-Forever family on Apple Silicon, so a change is judged by whether the supported
-title (Nations Forever) still installs, builds and plays correctly.
+Thanks for helping improve TrackMania-MacOS. This is a runtime and hub for a
+collection of TrackMania titles on Apple Silicon. A change is judged against
+Nations Forever, the supported title, which must still install, build and play
+correctly, and it must not break the other titles' install paths. Please follow
+the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## Before you start
 
@@ -11,26 +13,30 @@ title (Nations Forever) still installs, builds and plays correctly.
   an M1 Pro with macOS 27 and Xcode 27. Building the runtime needs the full Xcode
   app, not just the command line tools.
 - Read [docs/building.md](../docs/building.md) for the build and release layout,
-  and [docs/runtime.md](../docs/runtime.md) for what each patch does.
+  [docs/runtime.md](../docs/runtime.md) for what each patch does, and
+  [docs/hub-app.md](../docs/hub-app.md) for the contract between the hub app and
+  the command line, which changes only together with its tests.
 - Open an issue before a large change so the approach can be agreed first.
 
-## Building
+## Commands
 
 Use a checkout path without spaces; Wine's makefiles require it.
 
 ```sh
 sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
-make build
-make install
+make build     # compile the runtime from the pinned sources (hours)
+make install   # install the runtime and game via the bundled installer
+make check     # everything CI runs
 ```
 
-## Before you open a pull request
+`make check` runs Bash syntax checks, ShellCheck, Ruff, mypy, pytest, the CLI
+integration test, SwiftLint and the Swift tests. It needs `shellcheck`, `uv` and
+`swiftlint`. The `make` targets act on the title in `TRACKMANIA_MAC_TITLE`
+(default `tmnf`, Nations Forever). A command run from a checkout with your real
+home folder moves an existing install from an earlier release into
+`~/Library/TrackManiaMacOS` first.
 
-```sh
-make check     # shell syntax, shellcheck, ruff, Python and Swift tests
-```
-
-`make install` installs the runtime and game via the bundled installer.
+## Guidelines
 
 - Keep shell scripts shellcheck-clean. CI runs the parts of `make check` that a pull request touches; `.github/scripts/ci-areas.sh` decides which.
 - A runtime patch goes under `patches/<component>/`. It must apply with
@@ -43,7 +49,9 @@ make check     # shell syntax, shellcheck, ruff, Python and Swift tests
 
 ## Commits and pull requests
 
+- Name branches `type/short-desc`, with a type such as `fix`, `feat`, `improve`,
+  `ci` or `hub`.
 - Write commit messages in the imperative mood and explain the why, not just the
   what.
-- Fill in the pull request template. Say how you tested, on which macOS version
-  and which Mac.
+- Pull requests are squash-merged. Fill in the pull request template. Say how
+  you tested, which titles you tried, on which macOS version and which Mac.

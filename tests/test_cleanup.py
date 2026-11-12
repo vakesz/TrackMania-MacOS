@@ -116,7 +116,7 @@ class SwapTmloaderTests(unittest.TestCase):
         (swap_tmloader_dir "$1")
         echo rc=$?
         """
-        return bash(script, self.new, home=self.root, TMNF_PREFIX=str(self.prefix))
+        return bash(script, self.new, home=self.root, TRACKMANIA_MAC_PREFIX=str(self.prefix))
 
     def test_success_replaces_and_removes_old(self):
         result = self.swap()

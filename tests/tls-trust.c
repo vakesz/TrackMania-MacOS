@@ -31,11 +31,11 @@ int main(int argc, char **argv)
     nonce_length = strlen(argv[2]);
     if (nonce_length < 32 || nonce_length > 128 ||
             strspn(argv[2], "0123456789abcdefABCDEF") != nonce_length ||
-            GetEnvironmentVariableA("MACTMNF_DISPOSABLE_TEST", environment, sizeof(environment)) != nonce_length ||
+            GetEnvironmentVariableA("TRACKMANIA_MAC_DISPOSABLE_TEST", environment, sizeof(environment)) != nonce_length ||
             strcmp(environment, argv[2])) goto done;
 
     /* Hold the exact C: marker without write/delete sharing through the import. */
-    marker = CreateFileW(L"C:\\mactmnf-test-prefix.txt", GENERIC_READ, FILE_SHARE_READ,
+    marker = CreateFileW(L"C:\\trackmania-mac-test-prefix.txt", GENERIC_READ, FILE_SHARE_READ,
             NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL);
     if (marker == INVALID_HANDLE_VALUE || GetFileType(marker) != FILE_TYPE_DISK ||
             !GetFileInformationByHandle(marker, &information) ||

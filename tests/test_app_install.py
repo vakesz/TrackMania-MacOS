@@ -9,7 +9,8 @@ import tempfile
 import time
 import unittest
 
-from tmnf.guard import operation_guard as guard
+from trackmania_mac.guard import operation_guard as guard
+from trackmania_mac.install import version as project_version
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,14 +18,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class AppInstallTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="tmnf-app-", dir="/private/tmp")
+        temporary = tempfile.TemporaryDirectory(prefix="trackmania-mac-app-", dir="/private/tmp")
         self.addCleanup(temporary.cleanup)
         self.home = Path(temporary.name)
         self.project = self.home / "current project"
         self.project.mkdir()
         for name in ("src", "config"):
             shutil.copytree(ROOT / name, self.project / name)
-        shutil.copy2(ROOT / "VERSION", self.project / "VERSION")
+        shutil.copy2(ROOT / "pyproject.toml", self.project / "pyproject.toml")
         tools = self.home / "tools"
         tools.mkdir()
         (tools / "python3").symlink_to(sys.executable)
@@ -36,22 +37,22 @@ class AppInstallTests(unittest.TestCase):
             HOME=str(self.home),
             PATH=str(tools) + ":" + os.environ["PATH"],
             PYTHONDONTWRITEBYTECODE="1",
-            TMNF_ROOT=str(self.home / "game"),
-            TMNF_PREFIX=str(self.prefix),
-            TMNF_RUNTIME=str(self.home / "runtime"),
-            TMNF_SUPPORT=str(self.home / "support"),
-            TMNF_CACHE=str(self.home / "cache"),
-            TMNF_USERDATA=str(self.home / "userdata"),
-            TMNF_LAUNCHER=str(self.launcher),
-            TMNF_APP=str(self.app),
-            TMNF_SETTINGS_APP=str(self.settings),
-            TMNF_APPS_DIR=str(self.home / "apps"),
-            TMNF_X87="off",
+            TRACKMANIA_MAC_ROOT=str(self.home / "game"),
+            TRACKMANIA_MAC_PREFIX=str(self.prefix),
+            TRACKMANIA_MAC_RUNTIME=str(self.home / "runtime"),
+            TRACKMANIA_MAC_SUPPORT=str(self.home / "support"),
+            TRACKMANIA_MAC_CACHE=str(self.home / "cache"),
+            TRACKMANIA_MAC_USERDATA=str(self.home / "userdata"),
+            TRACKMANIA_MAC_LAUNCHER=str(self.launcher),
+            TRACKMANIA_MAC_APP=str(self.app),
+            TRACKMANIA_MAC_SETTINGS_APP=str(self.settings),
+            TRACKMANIA_MAC_APPS_DIR=str(self.home / "apps"),
+            TRACKMANIA_MAC_X87="off",
         )
         self.game_exe = self.prefix / "drive_c/Program Files (x86)/TmNationsForever/TmForever.exe"
         self.game_exe.parent.mkdir(parents=True)
         self.game_exe.write_bytes(b"MZ")
-        self.cli = ["/bin/bash", str(self.project / "src/shell/cli/tmnf"), "app"]
+        self.cli = ["/bin/bash", str(self.project / "src/shell/cli/trackmania-mac"), "app"]
         result = self.run_app()
         self.assertEqual(result.returncode, 0, result.stderr)
         (self.app / "keep").write_text("old game content")
@@ -73,10 +74,10 @@ class AppInstallTests(unittest.TestCase):
 
     def blocking_icon(self):
         ready = self.home / "icon-ready"
-        (self.project / "src/python/tmnf/app/icon.py").write_text(
+        (self.project / "src/python/trackmania_mac/app/icon.py").write_text(
             "import os, pathlib, time\n"
-            'assert "TMNF_OPERATION_FD" not in os.environ\n'
-            'assert "TMNF_APP_OPERATION_FD" not in os.environ\n'
+            'assert "TRACKMANIA_MAC_OPERATION_FD" not in os.environ\n'
+            'assert "TRACKMANIA_MAC_APP_OPERATION_FD" not in os.environ\n'
             f"pathlib.Path({str(ready)!r}).touch()\n"
             "time.sleep(60)\n"
         )
@@ -90,7 +91,7 @@ class AppInstallTests(unittest.TestCase):
         process = subprocess.Popen(
             [
                 sys.executable,
-                str(self.project / "src/python/tmnf/guard/operation_guard.py"),
+                str(self.project / "src/python/trackmania_mac/guard/operation_guard.py"),
                 "app-run",
                 str(self.prefix),
                 *self.cli,
@@ -108,7 +109,7 @@ class AppInstallTests(unittest.TestCase):
                     self.fail(str(process.communicate()))
                 self.assertLess(time.monotonic(), deadline, "Icon extractor did not start")
                 time.sleep(0.01)
-            result = self.run_app(TMNF_PREFIX=str(self.home / "second-prefix"))
+            result = self.run_app(TRACKMANIA_MAC_PREFIX=str(self.home / "second-prefix"))
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("Another app installation", result.stderr)
             self.assertEqual(self.snapshot(), self.before)
@@ -118,8 +119,10 @@ class AppInstallTests(unittest.TestCase):
             self.assertEqual(self.snapshot(), self.before)
             with self.assertRaisesRegex(ValueError, "Another operation"):
                 guard.acquire(self.prefix)
-            (self.project / "src/python/tmnf/app/icon.py").write_text("raise SystemExit(1)\n")
-            result = self.run_app(TMNF_PREFIX=str(self.home / "second-prefix"))
+            (self.project / "src/python/trackmania_mac/app/icon.py").write_text(
+                "raise SystemExit(1)\n"
+            )
+            result = self.run_app(TRACKMANIA_MAC_PREFIX=str(self.home / "second-prefix"))
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((self.app / "keep").read_text(), "old game content")
             self.assertEqual((self.settings / "keep").read_text(), "old settings content")
@@ -130,9 +133,9 @@ class AppInstallTests(unittest.TestCase):
 
     def test_overlap_and_forged_token_preserve_existing_content(self):
         for overrides in (
-            {"TMNF_APP": str(self.launcher / "Game.app")},
-            {"TMNF_LAUNCHER": str(self.app / "support")},
-            {"TMNF_SETTINGS_APP": str(self.app)},
+            {"TRACKMANIA_MAC_APP": str(self.launcher / "Game.app")},
+            {"TRACKMANIA_MAC_LAUNCHER": str(self.app / "support")},
+            {"TRACKMANIA_MAC_SETTINGS_APP": str(self.app)},
             {guard.APP_TOKEN: "999999"},
         ):
             with self.subTest(overrides=overrides):
@@ -141,7 +144,7 @@ class AppInstallTests(unittest.TestCase):
                 self.assertEqual(self.snapshot(), self.before)
 
     def test_sourced_install_app_returns_and_uses_current_project(self):
-        (self.project / "VERSION").write_text("fixture-current\n")
+        (self.project / "pyproject.toml").write_text('[project]\nversion = "fixture-current"\n')
         fd = guard.acquire(self.prefix)
         self.addCleanup(os.close, fd)
         result = subprocess.run(
@@ -149,7 +152,7 @@ class AppInstallTests(unittest.TestCase):
                 "/bin/bash",
                 "-euc",
                 ". ./src/shell/cli/install.sh; . ./src/shell/lib/apps/wrappers.sh; install_app; "
-                'PYTHONPATH=src/python python3 -m tmnf.guard.operation_guard held "$TMNF_PREFIX"; printf "returned\\n"',
+                'PYTHONPATH=src/python python3 -m trackmania_mac.guard.operation_guard held "$TRACKMANIA_MAC_PREFIX"; printf "returned\\n"',
             ],
             cwd=self.project,
             env=dict(self.env, **{guard.TOKEN: str(fd)}),
@@ -160,7 +163,7 @@ class AppInstallTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("returned", result.stdout)
-        self.assertEqual((self.launcher / "VERSION").read_text(), "fixture-current\n")
+        self.assertEqual(project_version.read(self.launcher), "fixture-current")
 
     def test_refresh_carries_a_bundled_python_into_installed_app_support(self):
         bundled = self.project / "python/bin/python3"
@@ -172,17 +175,17 @@ class AppInstallTests(unittest.TestCase):
         installed = self.launcher / "python/bin/python3"
         self.assertTrue(installed.is_file())
         self.assertTrue(os.access(installed, os.X_OK))
-        wrapper = (self.app / "Contents/MacOS/TMNF").read_text()
+        wrapper = (self.app / "Contents/MacOS/TrackManiaMac").read_text()
         self.assertIn(str(installed), wrapper)
 
     def per_title_env(self, title, **extra):
         """Environment for a title using the default per-title launcher location."""
-        env = {k: v for k, v in self.env.items() if k != "TMNF_LAUNCHER"}
+        env = {k: v for k, v in self.env.items() if k != "TRACKMANIA_MAC_LAUNCHER"}
         env.update(
-            TMNF_TITLE=title,
-            TMNF_PREFIX=str(self.home / f"{title}-prefix"),
-            TMNF_APP=str(self.home / f"apps/{title}-Game.app"),
-            TMNF_SETTINGS_APP=str(self.home / f"apps/{title}-Settings.app"),
+            TRACKMANIA_MAC_TITLE=title,
+            TRACKMANIA_MAC_PREFIX=str(self.home / f"{title}-prefix"),
+            TRACKMANIA_MAC_APP=str(self.home / f"apps/{title}-Game.app"),
+            TRACKMANIA_MAC_SETTINGS_APP=str(self.home / f"apps/{title}-Settings.app"),
         )
         env.update(extra)
         return env
@@ -198,34 +201,37 @@ class AppInstallTests(unittest.TestCase):
         for title in ("tmnf", "tmu"):
             launcher = support / "launchers" / title
             settings = (launcher / "config/installation.sh").read_text()
-            self.assertIn(f"export TMNF_TITLE={title}; fi\n", settings)
-            wrapper = (self.home / f"apps/{title}-Game.app/Contents/MacOS/TMNF").read_text()
+            self.assertIn(f"export TRACKMANIA_MAC_TITLE={title}; fi\n", settings)
+            wrapper = (
+                self.home / f"apps/{title}-Game.app/Contents/MacOS/TrackManiaMac"
+            ).read_text()
             self.assertIn(str(launcher / "python/bin/python3"), wrapper)
             log_name = "play.log" if title == "tmnf" else f"{title}-play.log"
-            self.assertIn(f"Library/Logs/TMNF/{log_name}", wrapper)
+            self.assertIn(f"Library/TrackManiaMacOS/logs/{log_name}", wrapper)
         self.assertNotIn(
-            "TMNF_TITLE=tmu", (support / "launchers/tmnf/config/installation.sh").read_text()
+            "TRACKMANIA_MAC_TITLE=tmu",
+            (support / "launchers/tmnf/config/installation.sh").read_text(),
         )
 
     def test_legacy_shared_launcher_is_removed_only_when_it_is_this_titles(self):
         support = self.home / "support"
         legacy = support / "launcher"
-        result = self.run_env(self.per_title_env("tmnf", TMNF_LAUNCHER=str(legacy)))
+        result = self.run_env(self.per_title_env("tmnf", TRACKMANIA_MAC_LAUNCHER=str(legacy)))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(legacy.is_dir())
         result = self.run_env(self.per_title_env("tmnf"))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(legacy.exists())
-        wrapper = (self.home / "apps/tmnf-Game.app/Contents/MacOS/TMNF").read_text()
+        wrapper = (self.home / "apps/tmnf-Game.app/Contents/MacOS/TrackManiaMac").read_text()
         self.assertIn(str(support / "launchers/tmnf/python/bin/python3"), wrapper)
 
         # A legacy launcher last installed for another title is left alone.
-        result = self.run_env(self.per_title_env("tmu", TMNF_LAUNCHER=str(legacy)))
+        result = self.run_env(self.per_title_env("tmu", TRACKMANIA_MAC_LAUNCHER=str(legacy)))
         self.assertEqual(result.returncode, 0, result.stderr)
         result = self.run_env(self.per_title_env("tmnf"))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("another title", result.stderr)
-        self.assertTrue((legacy / ".tmnf-launcher").exists())
+        self.assertTrue((legacy / ".trackmania-mac-launcher").exists())
 
     def test_symlinked_legacy_launcher_is_never_followed(self):
         support = self.home / "support"
@@ -241,13 +247,13 @@ class AppInstallTests(unittest.TestCase):
 
     def test_plist_values_are_xml_escaped(self):
         app = self.home / 'apps/R&D <"it\'s">.app'
-        result = self.run_app(TMNF_APP=str(app))
+        result = self.run_app(TRACKMANIA_MAC_APP=str(app))
         self.assertEqual(result.returncode, 0, result.stderr)
         plist = plistlib.loads((app / "Contents/Info.plist").read_bytes())
         self.assertEqual(plist["CFBundleName"], 'R&D <"it\'s">')
 
     def test_symlinked_executable_or_icon_is_refused(self):
-        for relative in ("Contents/MacOS/TMNF", "Contents/Resources/AppIcon.icns"):
+        for relative in ("Contents/MacOS/TrackManiaMac", "Contents/Resources/AppIcon.icns"):
             with self.subTest(relative=relative):
                 target = self.home / "target"
                 target.write_text("untouched")
@@ -262,7 +268,7 @@ class AppInstallTests(unittest.TestCase):
                 self.assertEqual(self.run_app().returncode, 0)
 
     def test_wrapper_fails_closed_without_launcher_python(self):
-        entry = self.app / "Contents/MacOS/TMNF"
+        entry = self.app / "Contents/MacOS/TrackManiaMac"
         self.assertEqual(os.stat(entry).st_mode & 0o111, 0o111)
         self.assertFalse((self.launcher / "python/bin/python3").exists())
         alerts = self.home / "alerts"
@@ -278,7 +284,7 @@ class AppInstallTests(unittest.TestCase):
         self.assertIn("launcher support files are missing", alerts.read_text())
 
     def run_wrapper_with_status(self, status):
-        entry = self.app / "Contents/MacOS/TMNF"
+        entry = self.app / "Contents/MacOS/TrackManiaMac"
         python = self.launcher / "python/bin/python3"
         python.parent.mkdir(parents=True, exist_ok=True)
         python.write_text(f"#!/bin/bash\nexit {status}\n")
@@ -309,7 +315,7 @@ class AppInstallTests(unittest.TestCase):
         self.assertEqual((result.returncode, alerts), (0, ""))
 
     def stub_icon_tool(self):
-        (self.project / "src/python/tmnf/app/icon.py").write_text(
+        (self.project / "src/python/trackmania_mac/app/icon.py").write_text(
             "import pathlib, sys\n"
             'pathlib.Path(sys.argv[-1]).write_bytes(b"icns-converted" if sys.argv[1] == "--from-png" '
             'else b"icns-extracted")\n'

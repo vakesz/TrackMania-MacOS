@@ -136,15 +136,15 @@ jobs:
           HOMEBREW_NO_INSTALL_CLEANUP: '1'
         run: brew install mingw-w64
       - name: Compile session.c
-        # Flags of session() in src/python/tmnf/build/runtime_builder.py.
+        # Flags of session() in src/python/trackmania_mac/build/runtime_builder.py.
         run: |
           set -euo pipefail
           x86_64-w64-mingw32-gcc --version | head -1
           x86_64-w64-mingw32-gcc -municode -O2 -Wall -Wextra -Werror \
-            "-ffile-prefix-map=${GITHUB_WORKSPACE}=/tmnf" \
-            src/c/session.c -o "${RUNNER_TEMP}/tmnf-session.exe"
+            "-ffile-prefix-map=${GITHUB_WORKSPACE}=/trackmania-mac" \
+            src/c/session.c -o "${RUNNER_TEMP}/trackmania-mac-session.exe"
       - name: Compile game-state.c
-        # Flags of start_state_helper() in src/python/tmnf/session/monitor.py.
+        # Flags of start_state_helper() in src/python/trackmania_mac/session/monitor.py.
         run: |
           set -euo pipefail
           x86_64-w64-mingw32-gcc -O2 -Wall -Wextra -Werror \

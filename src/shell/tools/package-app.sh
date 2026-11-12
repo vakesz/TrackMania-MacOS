@@ -1,28 +1,30 @@
 #!/bin/bash
 # Native hub .app packager. No Homebrew, Wine build, or Rosetta is required.
-# Signing: set TMNF_SIGN_IDENTITY="Developer ID Application: Name (TEAMID)"
+# Signing: set TRACKMANIA_MAC_SIGN_IDENTITY="Developer ID Application: Name (TEAMID)"
 # for distribution; otherwise ad-hoc signs. Notarization of the zip is opt-in
-# via TMNF_NOTARIZE=1 with TMNF_NOTARY_PROFILE naming a notarytool keychain
+# via TRACKMANIA_MAC_NOTARIZE=1 with TRACKMANIA_MAC_NOTARY_PROFILE naming a notarytool keychain
 # profile (xcrun notarytool store-credentials); no password is passed on argv.
 #
 # Commands:
 #   build-unsigned  Build the unsigned .app (swift build, bundled Python, runtime
 #                   pin). Needs no signing identity or credentials.
 #   sign            Sign an already built .app, write the zip and its checksum,
-#                   and notarize when TMNF_NOTARIZE=1. Builds nothing, so it can
+#                   and notarize when TRACKMANIA_MAC_NOTARIZE=1. Builds nothing, so it can
 #                   run in a separate process (or CI job) from build-unsigned.
 #   appbundle       build-unsigned, then sign the app.
 #   zip | all       build-unsigned, then sign (sign also writes the zip).
 set -euo pipefail
 
 PROJECT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)"
-VERSION="$(cat "${PROJECT_DIR}/VERSION")"
+# shellcheck source=src/shell/lib/version.sh
+. "${PROJECT_DIR}/src/shell/lib/version.sh"
+VERSION="$(trackmania_mac_project_version "$PROJECT_DIR")"
 HUB_NAME="TrackMania Mac"
 APP_DIR="${PROJECT_DIR}/.build/app/${HUB_NAME}.app"
 DIST_DIR="${PROJECT_DIR}/.build/dist"
 ZIP_NAME="TrackMania-Mac-${VERSION}.app.zip"
-BUNDLE_ID="${TMNF_HUB_BUNDLE_ID:-local.tmnf.hub}"
-BUNDLED_PYTHON_VERSION="${TMNF_BUNDLED_PYTHON_VERSION:-3.12.14}"
+BUNDLE_ID="${TRACKMANIA_MAC_HUB_BUNDLE_ID:-local.trackmania-mac.hub}"
+BUNDLED_PYTHON_VERSION="${TRACKMANIA_MAC_BUNDLED_PYTHON_VERSION:-3.12.14}"
 HUB_ICON_SOURCE="${PROJECT_DIR}/assets/branding/trackmania-mac-icon.svg"
 
 # shellcheck source=src/shell/lib/apps/payload.sh
@@ -49,11 +51,11 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
 bundled_python_root() {
   local python root
-  if test -n "${TMNF_BUNDLED_PYTHON_ROOT:-}"; then
-    root="${TMNF_BUNDLED_PYTHON_ROOT}"
+  if test -n "${TRACKMANIA_MAC_BUNDLED_PYTHON_ROOT:-}"; then
+    root="${TRACKMANIA_MAC_BUNDLED_PYTHON_ROOT}"
   else
     command -v uv >/dev/null 2>&1 \
-      || die "uv is required to bundle Python (or set TMNF_BUNDLED_PYTHON_ROOT)."
+      || die "uv is required to bundle Python (or set TRACKMANIA_MAC_BUNDLED_PYTHON_ROOT)."
     uv python install --no-progress "$BUNDLED_PYTHON_VERSION" >&2
     python="$(uv python find --no-project --managed-python --resolve-links "$BUNDLED_PYTHON_VERSION")" \
       || die "Cannot find the managed Python $BUNDLED_PYTHON_VERSION installed by uv."
@@ -180,20 +182,20 @@ stage_title_art() {
 
 # Write config/runtime-pin ("<version> <sha256>") into the staged launcher so
 # the codesigned hub pins the runtime archive it will install. The hash comes
-# from TMNF_RUNTIME_PIN_SHA256 (the digest CI verified for the release asset).
+# from TRACKMANIA_MAC_RUNTIME_PIN_SHA256 (the digest CI verified for the release asset).
 # Without it no pin is written; a release build must then fail (see
-# TMNF_REQUIRE_RUNTIME_PIN).
+# TRACKMANIA_MAC_REQUIRE_RUNTIME_PIN).
 write_runtime_pin() {
-  local launcher="$1" hash="${TMNF_RUNTIME_PIN_SHA256:-}"
+  local launcher="$1" hash="${TRACKMANIA_MAC_RUNTIME_PIN_SHA256:-}"
   if test -z "$hash"; then
-    if test "${TMNF_REQUIRE_RUNTIME_PIN:-0}" = 1; then
-      die "TMNF_RUNTIME_PIN_SHA256 is required for this build."
+    if test "${TRACKMANIA_MAC_REQUIRE_RUNTIME_PIN:-0}" = 1; then
+      die "TRACKMANIA_MAC_RUNTIME_PIN_SHA256 is required for this build."
     fi
-    say "Note: TMNF_RUNTIME_PIN_SHA256 is not set; this hub carries no runtime checksum pin."
+    say "Note: TRACKMANIA_MAC_RUNTIME_PIN_SHA256 is not set; this hub carries no runtime checksum pin."
     return 0
   fi
   [[ "$hash" =~ ^[0-9a-fA-F]{64}$ ]] \
-    || die "TMNF_RUNTIME_PIN_SHA256 must be 64 hexadecimal characters."
+    || die "TRACKMANIA_MAC_RUNTIME_PIN_SHA256 must be 64 hexadecimal characters."
   hash="$(printf '%s' "$hash" | tr 'A-F' 'a-f')"
   printf '%s %s\n' "$VERSION" "$hash" >"${launcher}/config/runtime-pin"
   say "Pinned runtime ${VERSION} to sha256:${hash}"
@@ -238,10 +240,10 @@ EOF
 
 sign_one() {
   local target="$1"
-  if test -z "${TMNF_SIGN_IDENTITY:-}"; then
+  if test -z "${TRACKMANIA_MAC_SIGN_IDENTITY:-}"; then
     codesign --force --sign - "$target" || die "Ad-hoc signing failed: $target"
   else
-    codesign --force --options runtime --timestamp --sign "$TMNF_SIGN_IDENTITY" "$target" \
+    codesign --force --options runtime --timestamp --sign "$TRACKMANIA_MAC_SIGN_IDENTITY" "$target" \
       || die "Developer ID signing failed: $target"
   fi
   codesign --verify --strict "$target" || die "Signature verification failed: $target"
@@ -275,7 +277,7 @@ check_staged_app() {
 }
 
 sign_appbundle() {
-  local identity="${TMNF_SIGN_IDENTITY:-}"
+  local identity="${TRACKMANIA_MAC_SIGN_IDENTITY:-}"
   check_staged_app
   sign_bundled_machos "${APP_DIR}/Contents/Resources/launcher/python"
   sign_one "${APP_DIR}/Contents/MacOS/${HUB_NAME}"
@@ -298,11 +300,11 @@ build_zip() {
   # signature. --keepParent keeps the top-level .app folder inside the archive.
   ditto --norsrc -c -k --keepParent "$APP_DIR" "$zip" || die "App archive creation failed."
   say "Wrote $zip"
-  if test "${TMNF_NOTARIZE:-0}" = 1; then
+  if test "${TRACKMANIA_MAC_NOTARIZE:-0}" = 1; then
     local result
-    test -n "${TMNF_NOTARY_PROFILE:-}" || die "Set TMNF_NOTARY_PROFILE for notarization."
-    test -n "${TMNF_SIGN_IDENTITY:-}" || die "Notarization requires TMNF_SIGN_IDENTITY."
-    result="$(xcrun notarytool submit "$zip" --keychain-profile "$TMNF_NOTARY_PROFILE" --wait 2>&1)" \
+    test -n "${TRACKMANIA_MAC_NOTARY_PROFILE:-}" || die "Set TRACKMANIA_MAC_NOTARY_PROFILE for notarization."
+    test -n "${TRACKMANIA_MAC_SIGN_IDENTITY:-}" || die "Notarization requires TRACKMANIA_MAC_SIGN_IDENTITY."
+    result="$(xcrun notarytool submit "$zip" --keychain-profile "$TRACKMANIA_MAC_NOTARY_PROFILE" --wait 2>&1)" \
       || { printf '%s\n' "$result" >&2; die "Notarization failed."; }
     printf '%s\n' "$result"
     grep -q 'status: Accepted' <<<"$result" || die "Notarization was not accepted."
@@ -313,7 +315,7 @@ build_zip() {
     ditto --norsrc -c -k --keepParent "$APP_DIR" "$zip" || die "App re-archive failed."
     say "Notarized, stapled and re-archived $zip"
   else
-    say "Skipped notarization (TMNF_NOTARIZE=1 to enable)."
+    say "Skipped notarization (TRACKMANIA_MAC_NOTARIZE=1 to enable)."
   fi
   (cd "$DIST_DIR" && shasum -a 256 "$ZIP_NAME" >"${ZIP_NAME}.sha256")
 }

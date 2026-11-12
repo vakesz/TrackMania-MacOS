@@ -66,7 +66,7 @@ final class HubUITests: XCTestCase {
 
     func testDecodesNewFields() throws {
         let json = #"""
-        {"schema":2,"hubVersion":"0.4.1","titles":[{"id":"tmnf","name":"N","sourceSize":1500000000,
+        {"schema":3,"hubVersion":"0.4.1","titles":[{"id":"tmnf","name":"N","sourceSize":1500000000,
          "sessionActive":true,"locations":{"root":"/r","prefix":"/p","gameDir":"/g","userdata":"/u","logs":"/l"},
          "actions":[{"id":"doctor","label":"Run checks","kind":"maintenance"},
                     {"id":"uninstall","label":"Uninstall…","kind":"destructive"}]}]}
@@ -82,7 +82,7 @@ final class HubUITests: XCTestCase {
     }
 
     func testOldBackendLeavesNewFieldsAbsent() throws {
-        let snapshot = try HubBackend.decodeSnapshot(Data(#"{"schema":2,"titles":[{"id":"x","name":"X"}]}"#.utf8))
+        let snapshot = try HubBackend.decodeSnapshot(Data(#"{"schema":3,"titles":[{"id":"x","name":"X"}]}"#.utf8))
         let title = try XCTUnwrap(snapshot.titles.first)
         XCTAssertNil(snapshot.hubVersion)
         XCTAssertNil(title.sourceSize)
@@ -106,9 +106,45 @@ final class HubUITests: XCTestCase {
         XCTAssertEqual(HubTitle(id: "x", name: "X", state: state).summary.first?.note, "missing")
     }
 
+    func testSettingsOfTheEarlierBundleIdentifierAreCopiedOnceAndOnlyRead() throws {
+        let suite = "trackmania-mac.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let legacy: [String: Any] = [
+            HubDefaults.didShowWelcome: true, HubDefaults.checkForUpdates: false, "unrelated": 1
+        ]
+        HubDefaults.adoptLegacySettings(into: defaults, from: legacy)
+        XCTAssertEqual(defaults.object(forKey: HubDefaults.didShowWelcome) as? Bool, true)
+        XCTAssertEqual(defaults.object(forKey: HubDefaults.checkForUpdates) as? Bool, false)
+        XCTAssertNil(defaults.object(forKey: HubDefaults.dismissedUpdate))
+        XCTAssertNil(defaults.object(forKey: "unrelated"))
+        // Once anything is set under the current identifier, nothing is copied again.
+        defaults.set(true, forKey: HubDefaults.checkForUpdates)
+        HubDefaults.adoptLegacySettings(into: defaults, from: [HubDefaults.checkForUpdates: false])
+        XCTAssertEqual(defaults.object(forKey: HubDefaults.checkForUpdates) as? Bool, true)
+        // No earlier domain: nothing changes.
+        let fresh = try XCTUnwrap(UserDefaults(suiteName: suite + ".fresh"))
+        defer { fresh.removePersistentDomain(forName: suite + ".fresh") }
+        HubDefaults.adoptLegacySettings(into: fresh, from: nil)
+        XCTAssertTrue(HubDefaults.keys.allSatisfy { fresh.object(forKey: $0) == nil })
+    }
+
+    func testMigrationStartsByItselfOnceAndNeverDuringARun() {
+        let pending = HubSnapshot(schema: 3, titles: [], error: nil, migration: HubMigration(state: .pending))
+        XCTAssertTrue(HubViewModel.shouldMigrate(pending, attempted: false, busy: false))
+        XCTAssertFalse(HubViewModel.shouldMigrate(pending, attempted: true, busy: false))
+        XCTAssertFalse(HubViewModel.shouldMigrate(pending, attempted: false, busy: true))
+        for state in [HubMigration.State.none, .blocked, .unknown("later")] {
+            let snapshot = HubSnapshot(schema: 3, titles: [], error: nil, migration: HubMigration(state: state))
+            XCTAssertFalse(HubViewModel.shouldMigrate(snapshot, attempted: false, busy: false))
+        }
+        XCTAssertFalse(HubViewModel.shouldMigrate(HubSnapshot(schema: 3, titles: [], error: nil),
+                                                  attempted: false, busy: false))
+    }
+
     func testReportPathAndFailureReason() {
-        let out = "Doing\nDiagnostics report: /Users/me/Library/Logs/TMNF/d.zip\n"
-        XCTAssertEqual(HubViewModel.reportPath(in: out), "/Users/me/Library/Logs/TMNF/d.zip")
+        let out = "Doing\nDiagnostics report: /Users/me/Library/TrackManiaMacOS/logs/d.zip\n"
+        XCTAssertEqual(HubViewModel.reportPath(in: out), "/Users/me/Library/TrackManiaMacOS/logs/d.zip")
         XCTAssertNil(HubViewModel.reportPath(in: "nothing"))
         XCTAssertEqual(HubViewModel.failureReason(in: "a\nerror: no disk space\n"), "no disk space")
     }

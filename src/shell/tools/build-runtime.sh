@@ -17,7 +17,7 @@ if test "$readonly_action" = 1; then
   python="$(command -v python3.14 || command -v python3 || true)"
   test -n "$python" || { echo 'Python 3.9 or newer is required for help and packaging.' >&2; exit 1; }
   PYTHONPATH="${project}/src/python${PYTHONPATH:+:${PYTHONPATH}}" \
-    exec "$python" -m tmnf.build.runtime_builder "$@"
+    exec "$python" -m trackmania_mac.build.runtime_builder "$@"
 fi
 session_only=0
 if { test "$#" = 1 && test "$1" = --only=session; } ||
@@ -25,8 +25,8 @@ if { test "$#" = 1 && test "$1" = --only=session; } ||
   session_only=1
 fi
 # Default to every core; Python applies the same default.
-if ! [[ "${TMNF_JOBS-$(sysctl -n hw.ncpu)}" =~ ^[0-9]*[1-9][0-9]*$ ]]; then
-  echo 'TMNF_JOBS must be a positive integer' >&2
+if ! [[ "${TRACKMANIA_MAC_JOBS-$(sysctl -n hw.ncpu)}" =~ ^[0-9]*[1-9][0-9]*$ ]]; then
+  echo 'TRACKMANIA_MAC_JOBS must be a positive integer' >&2
   exit 1
 fi
 # Python invalidates completion under the release lock, after bootstrap succeeds.
@@ -52,4 +52,4 @@ if test "$session_only" = 0; then
 fi
 export PATH
 PYTHONPATH="${project}/src/python${PYTHONPATH:+:${PYTHONPATH}}" \
-  exec "$(brew --prefix python@3.14)/bin/python3.14" -m tmnf.build.runtime_builder "$@"
+  exec "$(brew --prefix python@3.14)/bin/python3.14" -m trackmania_mac.build.runtime_builder "$@"

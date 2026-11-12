@@ -10,14 +10,14 @@ ENV = {"PATH": "/usr/bin:/bin", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NO
 
 class BuildRevisionRecord(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="tmnf-payload-")
+        temporary = tempfile.TemporaryDirectory(prefix="trackmania-mac-payload-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         self.project = self.root / "project"
         ignore = shutil.ignore_patterns("__pycache__", "*.pyc")
         shutil.copytree(ROOT / "src", self.project / "src", ignore=ignore)
         shutil.copytree(ROOT / "config", self.project / "config")
-        shutil.copy2(ROOT / "VERSION", self.project / "VERSION")
+        shutil.copy2(ROOT / "pyproject.toml", self.project / "pyproject.toml")
 
     def git(self, *arguments):
         return subprocess.run(
@@ -67,7 +67,7 @@ class BuildRevisionRecord(unittest.TestCase):
         revision = self.commit()
         self.assertRegex(revision, r"^[0-9a-f]{40}$")
         self.assertEqual(self.stage().read_text(), revision + "\nclean\n")
-        (self.project / "VERSION").write_text("9.9.9\n")
+        (self.project / "pyproject.toml").write_text('[project]\nversion = "9.9.9"\n')
         self.assertEqual(self.stage(name="dirty").read_text(), revision + "\ndirty\n")
 
     def test_a_staged_payload_passes_its_record_on(self):

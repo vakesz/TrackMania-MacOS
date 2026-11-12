@@ -1,13 +1,13 @@
 /* Report TMNF's game state (menu, race, finish, ...) and map while the game runs.
  *
- * Diagnostic helper for TMNF_DIAG=on; tmnf.session.monitor builds it on demand and
+ * Diagnostic helper for TRACKMANIA_MAC_DIAG=on; trackmania_mac.session.monitor builds it on demand and
  * runs it in the game's prefix. It is not part of the runtime.
  *
  * It waits for TmForever.exe, checks that the executable is the build whose
  * layout is known, then reads the state and the current map's name from the
  * game's memory every 100 ms and prints a line whenever one changes:
- *   tmnf-state: <seconds> 0x<state>    or    tmnf-state: <seconds> unknown
- *   tmnf-map: <seconds> <name>         (none when no map is loaded)
+ *   trackmania-mac-state: <seconds> 0x<state>    or    trackmania-mac-state: <seconds> unknown
+ *   trackmania-mac-map: <seconds> <name>         (none when no map is loaded)
  * <seconds> is QueryPerformanceCounter time, the clock of Wine's +timestamp
  * debug prefix, so the lines can be matched with Wine's +fps lines.
  */
@@ -98,7 +98,7 @@ int main(void)
             return 1;
     }
     if (stamp != known_stamp) {
-        printf("tmnf-state: %.3f unsupported 0x%lx\n", seconds(), (unsigned long)stamp);
+        printf("trackmania-mac-state: %.3f unsupported 0x%lx\n", seconds(), (unsigned long)stamp);
         return 0;
     }
 
@@ -116,9 +116,9 @@ int main(void)
         ok = ok && read32(process, pointer, &value);
         if (!reported || ok != had || (ok && value != last)) {
             if (ok)
-                printf("tmnf-state: %.3f 0x%lx\n", seconds(), (unsigned long)value);
+                printf("trackmania-mac-state: %.3f 0x%lx\n", seconds(), (unsigned long)value);
             else
-                printf("tmnf-state: %.3f unknown\n", seconds());
+                printf("trackmania-mac-state: %.3f unknown\n", seconds());
             fflush(stdout);
             reported = TRUE;
             had = ok;
@@ -126,11 +126,11 @@ int main(void)
         }
         read_map(process, map, sizeof(map));
         if (strcmp(map, last_map) != 0) {
-            printf("tmnf-map: %.3f %s\n", seconds(), map[0] ? map : "unknown");
+            printf("trackmania-mac-map: %.3f %s\n", seconds(), map[0] ? map : "unknown");
             fflush(stdout);
             strcpy(last_map, map);
         }
     }
-    printf("tmnf-state: %.3f exited\n", seconds());
+    printf("trackmania-mac-state: %.3f exited\n", seconds());
     return 0;
 }

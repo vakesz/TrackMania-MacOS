@@ -117,16 +117,74 @@ extension KeyedDecodingContainer {
     }
 }
 
+/// Whether files of an earlier release still wait to move into the shared data folder.
+struct HubMigration: Decodable, Equatable {
+    enum State: Equatable {
+        /// Nothing to move.
+        case none
+        /// The hub moves the files now (`trackmania-mac hub migrate`).
+        case pending
+        /// Nothing was moved; `reason` says why.
+        case blocked
+        case unknown(String)
+
+        init(_ raw: String) {
+            switch raw {
+            case "none": self = .none
+            case "pending": self = .pending
+            case "blocked": self = .blocked
+            default: self = .unknown(raw)
+            }
+        }
+    }
+
+    let state: State
+    let reason: String?
+    /// Part of the move has already happened: the apps of the earlier release may not
+    /// work until it finishes. The CLI decides on the same field.
+    let partial: Bool
+    /// The old folders that still hold something to move.
+    let from: [String]
+    /// The data folder everything moves into.
+    let to: String?
+
+    init(state: State, reason: String? = nil, partial: Bool = false, from: [String] = [], to: String? = nil) {
+        self.state = state
+        self.reason = reason
+        self.partial = partial
+        self.from = from
+        self.to = to
+    }
+
+    private enum CodingKeys: String, CodingKey { case state, reason, partial, from, to }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        state = State((try? container.decodeIfPresent(String.self, forKey: .state)) ?? "")
+        reason = try? container.decodeIfPresent(String.self, forKey: .reason)
+        partial = ((try? container.decodeIfPresent(Bool.self, forKey: .partial)) ?? nil) ?? false
+        from = ((try? container.decodeIfPresent([String].self, forKey: .from)) ?? nil) ?? []
+        to = try? container.decodeIfPresent(String.self, forKey: .to)
+    }
+
+    /// True while titles must wait: their actions stay empty until the files have moved.
+    var waiting: Bool { state != .none }
+}
+
 struct HubSnapshot: Decodable, Equatable {
     let schema: Int
     let titles: [HubTitle]
     let error: String?
-    /// The project VERSION reported by the backend; absent from older backends.
+    /// Absent means nothing to move.
+    let migration: HubMigration?
+    /// The release version (pyproject.toml) reported by the backend; absent from older backends.
     let hubVersion: String?
     /// Descriptions of title entries that could not be decoded and were skipped.
     let skippedTitles: [String]
 
-    init(schema: Int, titles: [HubTitle], error: String?, hubVersion: String? = nil, skippedTitles: [String] = []) {
+    init(schema: Int, titles: [HubTitle], error: String?, hubVersion: String? = nil, skippedTitles: [String] = [],
+         migration: HubMigration? = nil) {
+        self.migration = migration
         self.hubVersion = hubVersion
         self.schema = schema
         self.titles = titles
@@ -134,13 +192,14 @@ struct HubSnapshot: Decodable, Equatable {
         self.skippedTitles = skippedTitles
     }
 
-    private enum CodingKeys: String, CodingKey { case schema, titles, error, hubVersion }
+    private enum CodingKeys: String, CodingKey { case schema, titles, error, hubVersion, migration }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         schema = try container.decode(Int.self, forKey: .schema)
         error = try? container.decodeIfPresent(String.self, forKey: .error)
         hubVersion = try? container.decodeIfPresent(String.self, forKey: .hubVersion)
+        migration = (try? container.decodeIfPresent(HubMigration.self, forKey: .migration)) ?? nil
         let entries = (try? container.decodeIfPresent([Lossy<HubTitle>].self, forKey: .titles)) ?? nil
         titles = (entries ?? []).compactMap(\.value)
         skippedTitles = (entries ?? []).enumerated().compactMap { index, entry in

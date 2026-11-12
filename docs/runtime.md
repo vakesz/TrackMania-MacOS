@@ -1,5 +1,11 @@
 # Runtime fixes
 
+The runtime and its patches are shared by every title the hub installs. Some
+sections below apply only to Nations and United Forever, because they depend on
+`TmForever.exe`, the Competition Patch or a pinned Creative OpenAL library; each
+of those says so on an "Applies to" line. The Wine, D9VK and x87sidecar patches,
+the renderer settings and the session helper apply to all titles.
+
 All active patches live under `patches/`. The build applies them in filename
 order to the exact revisions in `config/sources.json`.
 
@@ -8,7 +14,7 @@ order to the exact revisions in `config/sources.json`.
 | Wine 0001 | Lower legacy `texm3x3` instructions without changing eye-vector magnitude | Separate SPIR-V translation regression; Wine GPU path still needs qualification |
 | Wine 0002 | Isolate multimedia timer state from the shared winmm lock | Direct multimedia-timer concurrency, reentry, cancellation and restart probe |
 | Wine 0005 | Avoid a wineserver round trip for empty alertable yields on Darwin while preserving APC delivery | 32-bit and 64-bit alertable-wait probes |
-| Wine 0006 | Accept legacy HLSL function targets used by TMNF materials | Shader probes |
+| Wine 0006 | Accept legacy HLSL function targets used by Nations Forever materials | Shader probes |
 | Wine 0007 | Honor the legacy D3DX compiler flag | Shader probes; material appearance requires a manual game check |
 | Wine 0008 | Start x87sidecar through a cooperative per-process handshake | 32-bit and 64-bit precision probes |
 | Wine 0009 | Disable audio capture on macOS, so the game never opens a microphone | Audio probes |
@@ -32,6 +38,10 @@ but Wine's existing FX2 PixelShader assignment emission still blocks full effect
 output. That limitation is not hidden by the profile or GPU tests.
 
 ## Numeric limits
+
+Applies to: every title, because x87sidecar is on by default for all of them
+(`TRACKMANIA_MAC_X87=off` turns it off). The physics checks use `TmForever.exe`, so they
+cover the Forever games only.
 
 Since 0b7c5e5 the translator keeps x87 registers in their native 80-bit layout
 between translated runs and converts a slot to binary64 only where an
@@ -69,7 +79,7 @@ The remaining tuning overrides are retained pending controlled frame-time and
 visual comparisons, including the latency/throughput tradeoff of a one-frame queue.
 
 With the D9VK renderer, wined3d runs with `renderer=gdi` (its no-3D adapter).
-TMNF and its launcher call `DirectDrawCreateEx` during startup, and Wine's
+Nations Forever and its launcher call `DirectDrawCreateEx` during startup, and Wine's
 ddraw would otherwise create a wined3d OpenGL adapter that nothing renders
 with. That GL context work, spread over the main thread and the network-check
 splash thread, crashed about half of all launches under Rosetta. The 32-bit
@@ -89,7 +99,7 @@ explicitly and Play overrides them to the Wine copies. Other d3dx9 versions stay
 as the installer left them.
 
 Prefix setup skips optional Mono and Gecko downloads. DirectX setup treats
-.NET as unavailable because TMNF uses the native components. Setup also points
+.NET as unavailable because the games use the native components. Setup also points
 the Windows profile folders (Desktop, Downloads, Music, Pictures, Videos) into
 the prefix instead of the real macOS home, and keeps Documents on the game's
 own UserData, so the game never trips a macOS privacy prompt for folders it does
@@ -126,7 +136,7 @@ byte equality with the bundled reference, and a retained parent in the same
 job. Only its completed zero-status lifecycle is exempt from unknown-child
 handling; a namesake or modified image is not trusted as infrastructure.
 
-`src/python/tmnf/session/supervisor.py` preserves the reported unsigned Windows exit status before
+`src/python/trackmania_mac/session/supervisor.py` preserves the reported unsigned Windows exit status before
 cleanup. A validated completed session permits bounded, prefix-specific
 wineserver shutdown; `stop` is the explicit user-authorized version of that
 operation. Timeout or interruption before completion terminates only the host
@@ -144,7 +154,12 @@ mixing. Listen in game to verify those. x87sidecar runs
 with FMA contraction and fast rounding disabled. It uses cooperative attachment;
 no system Rosetta files, privileged service or debugger entitlement is needed.
 
-TMNF plays its sound through `OpenAL32.dll` in the game directory. The game ships
+### OpenAL
+
+Applies to: Nations Forever today. Only a title whose registry entry sets
+`creative_openal_sha256` gets this replacement, and only `tmnf` does.
+
+Nations Forever plays its sound through `OpenAL32.dll` in the game directory. The game ships
 Creative's OpenAL router with its `wrap_oal.dll` software mixer, which on macOS 27
 keeps a real-time thread busy for much of a core and lowers race frame rates.
 `make install` replaces it with OpenAL Soft's official 32-bit `soft_oal.dll`
@@ -157,11 +172,16 @@ speakers, so OpenAL Soft's automatic HRTF never turns on for headphones; for
 binaural sound on headphones, put `stereo-encoding = hrtf` under `[general]` in
 the prefix user's `AppData/Roaming/alsoft.ini`.
 
-`TMNF_OPENAL=creative make install` restores Creative's library; later installs
-and updates keep that choice until `TMNF_OPENAL=soft make install`. A different
+`TRACKMANIA_MAC_OPENAL=creative make install` restores Creative's library; later installs
+and updates keep that choice until `TRACKMANIA_MAC_OPENAL=soft make install`. A different
 `OpenAL32.dll` placed there by the user is left unchanged. Only a library
-whose hash the title registry pins (`creative_openal_sha256`, today TMNF's) is
+whose hash the title registry pins (`creative_openal_sha256`, today Nations Forever's) is
 replaced; other titles keep the OpenAL they ship.
+
+### Launcher and first launch
+
+Applies to: Nations and United Forever. Both start `TmForeverLauncher.exe` and
+`TmForever.exe`.
 
 The original graphics launcher receives a known Nvidia PCI identity (GeForce
 8800 GT) for that executable only. The wined3d renderers read it from the
@@ -173,27 +193,33 @@ Rosetta, and its older adapter probing could crash. The game keeps its actual
 renderer identity. The launcher runs with the same environment as the game, so
 a benchmark or game started from it inherits the D9VK settings and x87sidecar.
 
-The first launch shows TMNF's own "Network check" dialog, which confirms the
+The first launch shows the game's own "Network check" dialog, which confirms the
 peer-to-peer firewall test, followed by the account screen. Both are the
 game's normal first-run behavior and are remembered in the SystemConfig.
 Windows opened by the game are ordinary macOS windows; check behind other
 windows if a launch seems silent.
 
+### Display mode, icons and initial settings
+
+Applies to: every title, except that the initial settings file
+(`config/game-settings.json` and `Default.SystemConfig.Gbx`) is seeded only for
+Nations and United Forever, the titles with `TmForever.exe` as `game_exe`.
+
 By default the launcher runs the game directly, so it uses the display mode set
 in TrackMania Settings (fullscreen or windowed, at the chosen resolution).
-`TMNF_WINDOW_SIZE=WxH` instead runs it inside an explorer virtual desktop of
+`TRACKMANIA_MAC_WINDOW_SIZE=WxH` instead runs it inside an explorer virtual desktop of
 that size; the desktop's title bar shrinks the drawable below the requested
 height, which clips the bottom of the game's fixed-size menu, so the direct
 launch is the default. Fullscreen uses the primary display; on multiple monitors
 set the game's resolution to the primary's.
 
-The two apps carry TMNF's own icon, extracted at install time from the
-installed `TmForever.exe` by `src/python/tmnf/app/icon.py` using Python's standard library,
+The two apps carry the game's own icon, extracted at install time from the
+installed `TmForever.exe` by `src/python/trackmania_mac/app/icon.py` using Python's standard library,
 sips and iconutil. Malformed or unsupported icons fall back to generic app artwork
 without blocking installation. Nothing of Nadeo's is stored in this repository.
 
 `config/game-settings.json` describes the initial graphics preset.
-`src/python/tmnf/build/game_profile.py` generates only display and opponent chunks in a GBX
+`src/python/trackmania_mac/build/game_profile.py` generates only display and opponent chunks in a GBX
 SystemConfig file, with no player profile, account or network fields. Existing
 profiles are never replaced. The chunk formats are documented by
 [GBX.NET](https://github.com/BigBang1112/gbx-net/tree/master/Src/GBX.NET/Engines/System).
@@ -203,6 +229,8 @@ types, integer encoding limits and preset enum ranges, not every setting the
 game may accept. Offline tests check chunk structure and unchanged default bytes.
 
 ## Account creation over TLS 1.0
+
+Applies to: Nations and United Forever.
 
 TrackMania Nations and United Forever create accounts through WinINet.
 The game calls `HttpOpenRequestA` with `INTERNET_FLAG_SECURE` and the
@@ -223,7 +251,7 @@ probe (`tests/inet_legacy.c`) that repeats the game's flags and retry. The probe
 must get HTTP 200, and the server must have negotiated TLS 1.0:
 
 ```sh
-MACTMNF_TEST_RUNTIME=/absolute/path/to/runtime \
+TRACKMANIA_MAC_TEST_RUNTIME=/absolute/path/to/runtime \
   uv run --frozen --group test pytest -q tests/test_network_runtime.py
 ```
 
@@ -237,11 +265,14 @@ and the GnuTLS build options first.
 
 ## Troubleshooting
 
-Start with `make doctor`. The app logs are in
-`~/Library/Logs/TMNF/play.log` and `configure.log` for Nations Forever. Other titles write
+Start with `make doctor`, which checks the title in `TRACKMANIA_MAC_TITLE` (default
+`tmnf`); for example, `TRACKMANIA_MAC_TITLE=tmu make doctor`. In the hub, **⋯ > Create
+diagnostics report** bundles the same checks with recent logs for the selected
+game. The app logs are in the `logs` folder of `~/Library/TrackManiaMacOS`:
+`play.log` and `configure.log` for Nations Forever. Other titles write
 `<title>-play.log` and `<title>-configure.log` there, so titles never share a log.
 
-`src/python/tmnf/app/launch.py` serializes app log writers and rotates completed logs at
+`src/python/trackmania_mac/app/launch.py` serializes app log writers and rotates completed logs at
 launch, keeping three backups. Active or surviving writers retain direct file
 descriptors and can exceed the 2 MiB rotation threshold.
 
@@ -256,7 +287,7 @@ launcher; external Wine invocations do not participate in its operation lock.
   Rosetta, which can be substantially slower on this game's math workload.
   x87sidecar supports Rosetta from macOS 15.4 on; macOS 14 through 15.3 ship
   an older Rosetta it can't hook, so update macOS. If a newer macOS update
-  breaks the probe, rebuild against a newer x87sidecar. `TMNF_X87=off` skips
+  breaks the probe, rebuild against a newer x87sidecar. `TRACKMANIA_MAC_X87=off` skips
   the sidecar entirely.
 - If sound is missing, check the game's audio settings and macOS output device.
   Run `./src/shell/tools/probes/smoke-audio.sh` from a source checkout to test Wine playback.
@@ -267,16 +298,16 @@ launcher; external Wine invocations do not participate in its operation lock.
   not race benchmarks.
 - For a frame-rate report by game state, play with `make diag` and read the
   report it prints when the game exits (`make report` shows it again,
-  `PYTHONPATH=src/python python3 -m tmnf.session.report --list` lists earlier
-  sessions). The session goes to `~/Library/Logs/TMNF/play.log` with Wine's
-  `+fps` channel, about one line a second, and `tmnf.session.monitor` adds window
+  `PYTHONPATH=src/python python3 -m trackmania_mac.session.report --list` lists earlier
+  sessions). The session goes to `play.log` in the logs folder with Wine's
+  `+fps` channel, about one line a second, and `trackmania_mac.session.monitor` adds window
   focus, power state and the busiest threads every five seconds. A small helper,
   `src/c/game-state.c`, reads the game's own state
   (menu, race, finish, replay and others) and the current map's name from its
   memory, so the report also groups races by map; MinGW builds it on
-  first use (`brew install mingw-w64`). It knows the layout of TMNF 2.11.26,
+  first use (`brew install mingw-w64`). It knows the layout of Nations Forever 2.11.26,
   which the Competition Patch build shares; with another build, or without
-  MinGW, the state is reported as unknown. `TMNF_DIAG=on` enables the same
+  MinGW, the state is reported as unknown. `TRACKMANIA_MAC_DIAG=on` enables the same
   logging for any launch from a checkout.
 - Avoid verbose Wine traces and MoltenVK performance logging during ordinary
   play. Earlier diagnostic runs reduced menu performance severely.

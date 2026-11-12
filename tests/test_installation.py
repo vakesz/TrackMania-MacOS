@@ -10,7 +10,7 @@ import unittest
 from unittest import mock
 import zipfile
 
-from tmnf.guard.managed_paths import (
+from trackmania_mac.guard.managed_paths import (
     check_layout,
     check_prefix,
     check_uninstall,
@@ -18,7 +18,13 @@ from tmnf.guard.managed_paths import (
     safe_path,
     setup_documents,
 )
-from tmnf.install.runtime_manifest import EXECUTABLES, REQUIRED_FILES, digest, verify_runtime
+from trackmania_mac.install import version as project_version
+from trackmania_mac.install.runtime_manifest import (
+    EXECUTABLES,
+    REQUIRED_FILES,
+    digest,
+    verify_runtime,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,7 +41,7 @@ def set_title_pins(project, title_id, **pins):
 
 class InstallationTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="tmnf-installation-")
+        temporary = tempfile.TemporaryDirectory(prefix="trackmania-mac-installation-")
         self.addCleanup(temporary.cleanup)
         self.home = Path(temporary.name).resolve()
         self.prefix = self.home / "game/prefix"
@@ -48,13 +54,13 @@ class InstallationTests(unittest.TestCase):
             PATH=str(tools) + os.pathsep + os.environ["PATH"],
             HOME=str(self.home),
             TMPDIR=str(self.home),
-            TMNF_ROOT=str(self.home / "game"),
-            TMNF_PREFIX=str(self.prefix),
-            TMNF_RUNTIME=str(self.runtime),
-            TMNF_SUPPORT=str(self.home / "support"),
-            TMNF_APPS_DIR=str(self.home / "apps"),
-            TMNF_CACHE=str(self.home / "cache"),
-            TMNF_X87="off",
+            TRACKMANIA_MAC_ROOT=str(self.home / "game"),
+            TRACKMANIA_MAC_PREFIX=str(self.prefix),
+            TRACKMANIA_MAC_RUNTIME=str(self.runtime),
+            TRACKMANIA_MAC_SUPPORT=str(self.home / "support"),
+            TRACKMANIA_MAC_APPS_DIR=str(self.home / "apps"),
+            TRACKMANIA_MAC_CACHE=str(self.home / "cache"),
+            TRACKMANIA_MAC_X87="off",
             TEST_LOG=str(self.log),
         )
         for name in REQUIRED_FILES + EXECUTABLES + ("licenses/COPYING",):
@@ -78,7 +84,7 @@ if args == ['--version']:
     print('wine-test')
 elif args and args[0].endswith('cmd.exe'):
     print('Microsoft Windows fixture')
-elif args and Path(args[0]).name == 'tmnf-session.exe':
+elif args and Path(args[0]).name == 'trackmania-mac-session.exe':
     options = args[1:args.index('--')]
     result = Path(options[options.index('--result') + 1])
     temporary = result.with_suffix('.tmp')
@@ -87,8 +93,8 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
     temporary.replace(result)
 """)
         shutil.copy2(wine, self.runtime / "bin/wineserver")
-        version = (ROOT / "VERSION").read_text().strip()
-        (self.runtime / ".tmnf-runtime").write_text(version + "\n")
+        version = project_version.read(ROOT)
+        (self.runtime / ".trackmania-mac-runtime").write_text(version + "\n")
         (self.runtime / "SHA256SUMS").write_text(
             "".join(
                 "{}  {}\n".format(digest(path), path.relative_to(self.runtime))
@@ -123,7 +129,7 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         project.mkdir()
         for name in ("src", "config"):
             shutil.copytree(ROOT / name, project / name)
-        shutil.copy2(ROOT / "VERSION", project / "VERSION")
+        shutil.copy2(ROOT / "pyproject.toml", project / "pyproject.toml")
         result = self.shell(
             '. ./src/shell/lib/common.sh; printf "%s\\n" "$GAME_EXE" "$TMLOADER_EXE" '
             '"$TMCOMP_DLL" "$TMLOADER_GAME_EXE" "$TMLOADER_COREMOD_DLL"',
@@ -136,7 +142,7 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         # Only this copy accepts fake payloads. Pin the base game too so update
         # repairs the profile without downloading the official installer.
         for constant, path in (
-            ("TMNF_TITLE_GAME_EXE_SHA256", game),
+            ("TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256", game),
             ("TMLOADER_EXE_SHA256", loader),
             ("TMCOMP_DLL_SHA256", patch),
             ("TMLOADER_GAME_SHA256", target),
@@ -149,7 +155,7 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         set_title_pins(project, "tmnf", game_exe_sha256=digest(game))
         pins_file.write_text(json.dumps(pins))
         (game.parent / "TmForeverLauncher.exe").touch()
-        (self.prefix / ".tmnf-prefix").write_text("tmnf:1\n")
+        (self.prefix / ".trackmania-mac-prefix").write_text("tmnf:1\n")
         (self.prefix / "system.reg").touch()
         for directory in ("syswow64", "system32"):
             (self.prefix / "drive_c/windows" / directory).mkdir(parents=True)
@@ -167,19 +173,19 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
 
     def owned_prefix(self):
         self.prefix.mkdir(parents=True)
-        (self.prefix / ".tmnf-prefix").write_text("tmnf:1\n")
+        (self.prefix / ".trackmania-mac-prefix").write_text("tmnf:1\n")
 
     def guard(self, command, paths, **overrides):
         return self.shell(
-            ". ./src/shell/lib/common.sh; PYTHONPATH=src/python python3 -m tmnf.guard.managed_paths {} {}".format(
+            ". ./src/shell/lib/common.sh; PYTHONPATH=src/python python3 -m trackmania_mac.guard.managed_paths {} {}".format(
                 command, paths
             ),
             **overrides,
         )
 
     def test_prefix_layout_matches_the_two_separate_checks(self):
-        everything = '"$TMNF_PREFIX" "$TMNF_RUNTIME" "$TMNF_LAUNCHER" "$TMNF_USERDATA"'
-        inside = {"TMNF_USERDATA": str(self.prefix / "UserData")}
+        everything = '"$TRACKMANIA_MAC_PREFIX" "$TRACKMANIA_MAC_RUNTIME" "$TRACKMANIA_MAC_LAUNCHER" "$TRACKMANIA_MAC_USERDATA"'
+        inside = {"TRACKMANIA_MAC_USERDATA": str(self.prefix / "UserData")}
         for name, create, overrides in (
             ("missing prefix", False, {}),
             ("overlapping layout", True, inside),
@@ -189,7 +195,7 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
                 if create and not self.prefix.exists():
                     self.owned_prefix()
                 combined = self.guard("prefix-layout", everything, **overrides)
-                prefix = self.guard("prefix", '"$TMNF_PREFIX"', **overrides)
+                prefix = self.guard("prefix", '"$TRACKMANIA_MAC_PREFIX"', **overrides)
                 layout = self.guard("layout", everything, **overrides)
                 if prefix.returncode != 0:
                     expected = (prefix.returncode, prefix.stderr)
@@ -204,8 +210,8 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         # No prefix, and userdata inside it: the prefix message alone, status 1.
         result = self.guard(
             "prefix-layout",
-            '"$TMNF_PREFIX" "$TMNF_RUNTIME" "$TMNF_LAUNCHER" "$TMNF_USERDATA"',
-            TMNF_USERDATA=str(self.prefix / "UserData"),
+            '"$TRACKMANIA_MAC_PREFIX" "$TRACKMANIA_MAC_RUNTIME" "$TRACKMANIA_MAC_LAUNCHER" "$TRACKMANIA_MAC_USERDATA"',
+            TRACKMANIA_MAC_USERDATA=str(self.prefix / "UserData"),
         )
         self.assertEqual(result.returncode, 1)
         self.assertIn("Wine prefix is missing", result.stderr)
@@ -221,7 +227,7 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         self.owned_prefix()
         result = self.shell(run)
         self.assertEqual((result.returncode, result.stdout), (0, "ok\n"), result.stderr)
-        result = self.shell(run, TMNF_USERDATA=str(self.prefix / "UserData"))
+        result = self.shell(run, TRACKMANIA_MAC_USERDATA=str(self.prefix / "UserData"))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Managed paths overlap", result.stderr)
         self.assertIn("error: Unsafe installation layout.", result.stderr)
@@ -231,7 +237,7 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
     def test_unowned_prefix_is_refused_before_a_lock_file_is_created(self):
         self.prefix.mkdir(parents=True)
         (self.prefix / "stranger").write_text("not ours")
-        result = self.shell("./src/shell/cli/tmnf play")
+        result = self.shell("./src/shell/cli/trackmania-mac play")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("error: A managed Wine prefix is required.", result.stderr)
         self.assertEqual([path.name for path in self.prefix.iterdir()], ["stranger"])
@@ -246,15 +252,17 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
             '#!/bin/bash\nprintf "%s\\n" "$*" >>{}\nexec {} "$@"\n'.format(starts, sys.executable)
         )
         shim.chmod(0o755)
-        result = self.shell("./src/shell/cli/tmnf play", cwd=project, TMNF_PYTHON=str(shim))
+        result = self.shell(
+            "./src/shell/cli/trackmania-mac play", cwd=project, TRACKMANIA_MAC_PYTHON=str(shim)
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         modules = [line.split()[1] for line in starts.read_text().splitlines()]
         # The entry point and the process it re-enters under the lock each check
         # the prefix and layout once; the four pinned files share one hashing start.
         self.assertEqual(
-            modules.count("tmnf.guard.managed_paths"), 3
+            modules.count("trackmania_mac.guard.managed_paths"), 3
         )  # 2 prefix-layout + play_target's prefix
-        self.assertEqual(modules.count("tmnf.install.hashing"), 1)
+        self.assertEqual(modules.count("trackmania_mac.install.hashing"), 1)
         commands = [
             line.split()[2] for line in starts.read_text().splitlines() if "managed_paths" in line
         ]
@@ -313,9 +321,9 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         bundled = project / "python/bin/python3"
         bundled.parent.mkdir(parents=True)
         bundled.symlink_to(sys.executable)
-        result = self.shell("./src/shell/cli/tmnf app", cwd=project)
+        result = self.shell("./src/shell/cli/trackmania-mac app", cwd=project)
         self.assertEqual(result.returncode, 0, result.stderr)
-        entry = self.home / "apps/TrackMania Nations Forever.app/Contents/MacOS/TMNF"
+        entry = self.home / "apps/TrackMania Nations Forever.app/Contents/MacOS/TrackManiaMac"
         # Keep the generated launcher intact apart from the OS alert adapter.
         # A regression must fail the test, not open a modal dialog on this Mac.
         alert = self.home / "alert"
@@ -333,7 +341,7 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
             ["/bin/bash", str(entry)], env=env, text=True, capture_output=True, timeout=30
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        log = self.home / "Library/Logs/TMNF/play.log"
+        log = self.home / "Library/TrackManiaMacOS/logs/play.log"
         self.assertIn("target status 0x00000000", log.read_text())
         self.assertIn("exit status=0", log.read_text())
         self.assertFalse(project.exists())
@@ -345,12 +353,12 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         result = self.shell(". ./src/shell/cli/install.sh; initialize_prefix")
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertEqual(personal.read_text(), "keep")
-        self.assertFalse((self.prefix / ".tmnf-prefix").exists())
+        self.assertFalse((self.prefix / ".trackmania-mac-prefix").exists())
         self.assertFalse(self.log.exists())
 
     def test_marker_requires_known_identity_or_legacy_layout(self):
         self.prefix.mkdir(parents=True)
-        marker = self.prefix / ".tmnf-prefix"
+        marker = self.prefix / ".trackmania-mac-prefix"
         marker.write_text("")
         with self.assertRaises(ValueError):
             check_prefix(str(self.prefix))
@@ -375,15 +383,15 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
             check_prefix(str(self.prefix), creating=True)
 
     def test_doctor_does_not_initialize_missing_prefix(self):
-        result = self.shell("./src/shell/cli/tmnf doctor")
+        result = self.shell("./src/shell/cli/trackmania-mac doctor")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("WoW64 probe skipped", result.stderr)
         self.assertFalse(self.prefix.exists())
         self.assertEqual(json.loads(self.log.read_text())["args"], ["--version"])
 
     def test_doctor_rejects_missing_session_helper_without_running_wine(self):
-        (self.runtime / "libexec/tmnf-session.exe").unlink()
-        result = self.shell("./src/shell/cli/tmnf doctor")
+        (self.runtime / "libexec/trackmania-mac-session.exe").unlink()
+        result = self.shell("./src/shell/cli/trackmania-mac doctor")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Wine runtime is missing, incomplete", result.stderr)
         self.assertFalse(self.log.exists())
@@ -393,9 +401,9 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         good.write_text("#!/bin/bash\nexit 0\n")
         good.chmod(0o755)
         result = self.shell(
-            "./src/shell/cli/tmnf doctor",
-            TMNF_X87="on",
-            TMNF_SIDECAR=str(good),
+            "./src/shell/cli/trackmania-mac doctor",
+            TRACKMANIA_MAC_X87="on",
+            TRACKMANIA_MAC_SIDECAR=str(good),
             ROSETTA_X87_PATH=str(self.home / "missing"),
         )
         self.assertIn("x87sidecar is missing", result.stderr)
@@ -408,7 +416,9 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         results = {}
         for name, sidecar in (("unsupported", unsupported), ("missing", self.home / "missing")):
             results[name] = self.shell(
-                "./src/shell/cli/tmnf doctor", TMNF_X87="on", TMNF_SIDECAR=str(sidecar)
+                "./src/shell/cli/trackmania-mac doctor",
+                TRACKMANIA_MAC_X87="on",
+                TRACKMANIA_MAC_SIDECAR=str(sidecar),
             )
         self.assertIn("x87 acceleration needs macOS 15.4 or later", results["unsupported"].stderr)
         self.assertNotIn("x87sidecar is missing", results["unsupported"].stderr)
@@ -421,7 +431,7 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
 
     def test_invalid_launch_options_fail_before_wine(self):
         cases = [
-            ("TMNF_WINDOW_SIZE", value)
+            ("TRACKMANIA_MAC_WINDOW_SIZE", value)
             for value in (
                 "0x720",
                 "1280x0",
@@ -435,15 +445,15 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
             )
         ]
         cases += [
-            ("TMNF_AUDIO", "invalid"),
-            ("TMNF_X87", "invalid"),
-            ("TMNF_RENDERER", "invalid"),
-            ("TMNF_OPENAL", "invalid"),
-            ("TMNF_DIAG", "invalid"),
+            ("TRACKMANIA_MAC_AUDIO", "invalid"),
+            ("TRACKMANIA_MAC_X87", "invalid"),
+            ("TRACKMANIA_MAC_RENDERER", "invalid"),
+            ("TRACKMANIA_MAC_OPENAL", "invalid"),
+            ("TRACKMANIA_MAC_DIAG", "invalid"),
         ]
         for key, value in cases:
             with self.subTest(key=key, value=value):
-                result = self.shell("./src/shell/cli/tmnf configure", **{key: value})
+                result = self.shell("./src/shell/cli/trackmania-mac configure", **{key: value})
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(self.log.exists())
 
@@ -453,7 +463,7 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         project.mkdir()
         for name in ("src", "config"):
             shutil.copytree(ROOT / name, project / name)
-        shutil.copy2(ROOT / "VERSION", project / "VERSION")
+        shutil.copy2(ROOT / "pyproject.toml", project / "pyproject.toml")
         result = self.shell(
             '. ./src/shell/lib/common.sh; printf "%s\\n" "$GAME_OPENAL" "$OPENAL_SOFT_ARCHIVE" '
             '"$OPENAL_SOFT_VERSION"',
@@ -505,7 +515,7 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         result = self.shell(
             ". ./src/shell/cli/install.sh; install_openal; game_openal",
             cwd=project,
-            TMNF_OPENAL="creative",
+            TRACKMANIA_MAC_OPENAL="creative",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.splitlines()[-1], "creative")
@@ -523,7 +533,7 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         result = self.shell(
             ". ./src/shell/cli/install.sh; install_openal; game_openal",
             cwd=project,
-            TMNF_OPENAL="soft",
+            TRACKMANIA_MAC_OPENAL="soft",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.splitlines()[-1], "soft")
@@ -533,8 +543,8 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         # Other titles ship their own OpenAL32.dll, whose checksum is not pinned.
         result = self.shell(
             ". ./src/shell/lib/common.sh; openal_is_current; ! title_has openal",
-            TMNF_TITLE="tmu",
-            TMNF_OPENAL="creative",
+            TRACKMANIA_MAC_TITLE="tmu",
+            TRACKMANIA_MAC_OPENAL="creative",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -616,7 +626,7 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
                 result = self.shell(
                     ". ./src/shell/cli/install.sh; configure_competition_patch; "
                     'cat "$TMLOADER_DIR/database/TmForever/products/TmForever/settings.yaml"',
-                    TMNF_TITLE=title,
+                    TRACKMANIA_MAC_TITLE=title,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(
@@ -632,20 +642,26 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
     def test_seed_system_config_uses_the_titles_user_subdir_and_never_overwrites(self):
         userdata = self.home / "userdata"
         config = userdata / "TrackMania/Config/Default.SystemConfig.Gbx"
-        result = self.shell(self.seed_command(), TMNF_TITLE="tmu", TMNF_USERDATA=str(userdata))
+        result = self.shell(
+            self.seed_command(), TRACKMANIA_MAC_TITLE="tmu", TRACKMANIA_MAC_USERDATA=str(userdata)
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
             config.read_bytes(), (self.runtime / "config/Default.SystemConfig.Gbx").read_bytes()
         )
         self.assertFalse((userdata / "TmForever").exists())
         config.write_text("personal settings")
-        result = self.shell(self.seed_command(), TMNF_TITLE="tmu", TMNF_USERDATA=str(userdata))
+        result = self.shell(
+            self.seed_command(), TRACKMANIA_MAC_TITLE="tmu", TRACKMANIA_MAC_USERDATA=str(userdata)
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(config.read_text(), "personal settings")
         config.unlink()
         elsewhere = self.home / "elsewhere"
         config.symlink_to(elsewhere)
-        result = self.shell(self.seed_command(), TMNF_TITLE="tmu", TMNF_USERDATA=str(userdata))
+        result = self.shell(
+            self.seed_command(), TRACKMANIA_MAC_TITLE="tmu", TRACKMANIA_MAC_USERDATA=str(userdata)
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(config.is_symlink())
         self.assertFalse(elsewhere.exists())
@@ -656,19 +672,23 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
             with self.subTest(title=title):
                 userdata = self.home / ("userdata-" + title)
                 result = self.shell(
-                    self.seed_command(), TMNF_TITLE=title, TMNF_USERDATA=str(userdata)
+                    self.seed_command(),
+                    TRACKMANIA_MAC_TITLE=title,
+                    TRACKMANIA_MAC_USERDATA=str(userdata),
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertFalse(userdata.exists())
         userdata = self.home / "userdata-tmnf"
-        result = self.shell(self.seed_command(), TMNF_TITLE="tmnf", TMNF_USERDATA=str(userdata))
+        result = self.shell(
+            self.seed_command(), TRACKMANIA_MAC_TITLE="tmnf", TRACKMANIA_MAC_USERDATA=str(userdata)
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((userdata / "TmForever/Config/Default.SystemConfig.Gbx").is_file())
 
     def test_seed_system_config_refuses_an_empty_user_subdir(self):
         result = self.shell(
-            self.seed_command('TMNF_TITLE_USER_SUBDIR=""; seed_system_config'),
-            TMNF_USERDATA=str(self.home / "userdata"),
+            self.seed_command('TRACKMANIA_MAC_TITLE_USER_SUBDIR=""; seed_system_config'),
+            TRACKMANIA_MAC_USERDATA=str(self.home / "userdata"),
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("user_subdir", result.stderr)
@@ -678,15 +698,15 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         userdata = self.home / "userdata"
         userdata.mkdir()
         self.prefix.mkdir(parents=True)
-        (self.prefix / ".tmnf-prefix").write_text("tmu:1\n")
+        (self.prefix / ".trackmania-mac-prefix").write_text("tmu:1\n")
         (self.prefix / "system.reg").touch()
         profile = self.prefix / "drive_c/users/player"
         profile.mkdir(parents=True)
         (profile / "Documents").symlink_to(userdata, target_is_directory=True)
         result = self.shell(
             ". ./src/shell/cli/install.sh; run_wine() { return 0; }; initialize_prefix",
-            TMNF_TITLE="tmu",
-            TMNF_USERDATA=str(userdata),
+            TRACKMANIA_MAC_TITLE="tmu",
+            TRACKMANIA_MAC_USERDATA=str(userdata),
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((userdata / "TrackMania/Config/Default.SystemConfig.Gbx").is_file())
@@ -715,7 +735,7 @@ install_directx_runtime"""
 
     def test_fresh_directx_install_runs_silently_without_mono_then_restores_wine_dlls(self):
         self.directx_prefix_fixture()
-        marker = self.prefix / ".tmnf-directx-jun2010"
+        marker = self.prefix / ".trackmania-mac-directx-jun2010"
         result = self.shell(self.FRESH_DIRECTX)
         self.assertEqual(result.returncode, 0, result.stderr)
         calls = self.fresh_directx_calls()
@@ -753,7 +773,7 @@ install_directx_runtime"""
         result = self.shell(self.FRESH_DIRECTX, STUB_NO_DXSETUP="1")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("DirectX archive did not contain DXSETUP.exe", result.stderr)
-        self.assertFalse((self.prefix / ".tmnf-directx-jun2010").exists())
+        self.assertFalse((self.prefix / ".trackmania-mac-directx-jun2010").exists())
         self.assertEqual([call[0] for call in self.fresh_directx_calls()], ["download", "bsdtar"])
         self.assertEqual(list((self.home / "cache").glob("directx-extract.*")), [])
 
@@ -761,7 +781,7 @@ install_directx_runtime"""
         self.directx_prefix_fixture()
         result = self.shell(self.FRESH_DIRECTX, STUB_DXSETUP_FAIL="1")
         self.assertNotEqual(result.returncode, 0)
-        self.assertFalse((self.prefix / ".tmnf-directx-jun2010").exists())
+        self.assertFalse((self.prefix / ".trackmania-mac-directx-jun2010").exists())
         calls = self.fresh_directx_calls()
         self.assertEqual([call[0] for call in calls], ["download", "bsdtar", "run_wine"])
         self.assertTrue(calls[-1][2].endswith("/DXSETUP.exe /silent"))
@@ -787,30 +807,31 @@ install_directx_runtime"""
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertFalse(self.log.exists())
-                result = self.shell("./src/shell/cli/tmnf play", cwd=project)
+                result = self.shell("./src/shell/cli/trackmania-mac play", cwd=project)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(
                     "Competition Patch is missing, outdated, or unconfigured", result.stderr
                 )
                 self.assertFalse(self.log.exists())
-                result = self.shell("./src/shell/cli/tmnf update", cwd=project)
+                result = self.shell("./src/shell/cli/trackmania-mac update", cwd=project)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(yaml.read_text(), original)
                 self.assertNotIn("Downloading", result.stdout)
-                result = self.shell("./src/shell/cli/tmnf play", cwd=project)
+                result = self.shell("./src/shell/cli/trackmania-mac play", cwd=project)
                 self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_modded_play_watches_exact_compatibility_executable(self):
         project, game, loader, _, target, _ = self.modded_fixture()
         result = self.shell(
-            './src/shell/cli/tmnf play /test-argument "argument with spaces" ""', cwd=project
+            './src/shell/cli/trackmania-mac play /test-argument "argument with spaces" ""',
+            cwd=project,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         calls = [json.loads(line) for line in self.log.read_text().splitlines()]
         helpers = [
             call
             for call in calls
-            if call["args"][0] == str(self.runtime / "libexec/tmnf-session.exe")
+            if call["args"][0] == str(self.runtime / "libexec/trackmania-mac-session.exe")
         ]
         self.assertEqual(len(helpers), 1)
         args = helpers[0]["args"]
@@ -843,7 +864,7 @@ install_directx_runtime"""
             with self.subTest(payload=payload):
                 original = payload.read_bytes()
                 payload.write_bytes(original + b"corrupt")
-                result = self.shell("./src/shell/cli/tmnf play", cwd=project)
+                result = self.shell("./src/shell/cli/trackmania-mac play", cwd=project)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(
                     "Competition Patch is missing, outdated, or unconfigured", result.stderr
@@ -853,28 +874,30 @@ install_directx_runtime"""
 
     def test_missing_session_helper_fails_before_play_registry_work(self):
         project, *_ = self.modded_fixture()
-        (self.runtime / "libexec/tmnf-session.exe").unlink()
+        (self.runtime / "libexec/trackmania-mac-session.exe").unlink()
         for command in ("play", "play-vanilla"):
             with self.subTest(command=command):
-                result = self.shell("./src/shell/cli/tmnf " + command, cwd=project)
+                result = self.shell("./src/shell/cli/trackmania-mac " + command, cwd=project)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("runtime has no session supervisor", result.stderr)
                 self.assertFalse(self.log.exists())
 
     def test_uninstall_refuses_nested_userdata(self):
         self.prefix.mkdir(parents=True)
-        (self.prefix / ".tmnf-prefix").write_text("tmnf:1\n")
+        (self.prefix / ".trackmania-mac-prefix").write_text("tmnf:1\n")
         saves = self.prefix / "saved-data"
         saves.mkdir()
         (saves / "replay").write_text("keep")
-        result = self.shell("./src/shell/cli/tmnf uninstall --yes", TMNF_USERDATA=str(saves))
+        result = self.shell(
+            "./src/shell/cli/trackmania-mac uninstall --yes", TRACKMANIA_MAC_USERDATA=str(saves)
+        )
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual((saves / "replay").read_text(), "keep")
 
     def documents_fixture(self, user="player"):
         documents = self.prefix / "drive_c/users" / user / "Documents"
         documents.mkdir(parents=True)
-        (self.prefix / ".tmnf-prefix").write_text("tmnf:1\n")
+        (self.prefix / ".trackmania-mac-prefix").write_text("tmnf:1\n")
         return documents
 
     def test_uninstall_checks_all_profiles_and_is_read_only(self):
@@ -887,7 +910,7 @@ install_directx_runtime"""
             check_uninstall(self.prefix, self.home / "userdata")
         self.assertEqual(config.read_text(), "keep")
         result = self.shell(
-            'PYTHONPATH=src/python python3 -m tmnf.guard.managed_paths uninstall "$TMNF_PREFIX" "$HOME/userdata"'
+            'PYTHONPATH=src/python python3 -m trackmania_mac.guard.managed_paths uninstall "$TRACKMANIA_MAC_PREFIX" "$HOME/userdata"'
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(self.log.exists())
@@ -1097,7 +1120,7 @@ install_directx_runtime"""
         (self.prefix / "user.reg").rmdir()
         self.write_user_reg(shell='"C:\\\\Saves')
         result = self.shell(
-            'PYTHONPATH=src/python python3 -m tmnf.guard.managed_paths uninstall "$TMNF_PREFIX" "$HOME/userdata"'
+            'PYTHONPATH=src/python python3 -m trackmania_mac.guard.managed_paths uninstall "$TRACKMANIA_MAC_PREFIX" "$HOME/userdata"'
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("back up your saves manually", result.stderr)
@@ -1124,19 +1147,19 @@ install_directx_runtime"""
         boot.write_text('#!/bin/bash\ntouch "$WINEPREFIX/system.reg"\n')
         boot.chmod(0o755)
         command = (
-            '. ./src/shell/cli/install.sh; wine_binary() { printf "%s" "$TMNF_RUNTIME/bin/wine"; }; '
+            '. ./src/shell/cli/install.sh; wine_binary() { printf "%s" "$TRACKMANIA_MAC_RUNTIME/bin/wine"; }; '
             'wineboot_binary() { printf "%s" "$HOME/fake-wineboot"; }; initialize_prefix'
         )
-        result = self.shell(command, TMNF_USERDATA=str(userdata))
+        result = self.shell(command, TRACKMANIA_MAC_USERDATA=str(userdata))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(documents.resolve(), userdata)
         settings = userdata / "TmForever/Config/Default.SystemConfig.Gbx"
         settings.write_text("personal settings")
-        (self.prefix / ".tmnf-initializing").touch()
-        result = self.shell(command, TMNF_USERDATA=str(userdata))
+        (self.prefix / ".trackmania-mac-initializing").touch()
+        result = self.shell(command, TRACKMANIA_MAC_USERDATA=str(userdata))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(settings.read_text(), "personal settings")
-        self.assertFalse((self.prefix / ".tmnf-initializing").exists())
+        self.assertFalse((self.prefix / ".trackmania-mac-initializing").exists())
         self.assertFalse(self.log.exists())
 
     def fresh_wineboot_fixture(self):
@@ -1163,7 +1186,7 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
 """)
         boot.chmod(0o755)
         return (
-            '. ./src/shell/cli/install.sh; wine_binary() { printf "%s" "$TMNF_RUNTIME/bin/wine"; }; '
+            '. ./src/shell/cli/install.sh; wine_binary() { printf "%s" "$TRACKMANIA_MAC_RUNTIME/bin/wine"; }; '
             'wineboot_binary() { printf "%s" "$HOME/fake-wineboot"; }; initialize_prefix'
         )
 
@@ -1178,12 +1201,12 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
         for name in ("Documents", "Desktop", "Downloads", "Music", "Pictures", "Movies"):
             self.assertEqual((self.home / name / "personal").read_text(), "host " + name)
         self.assertFalse((self.home / "Documents/TmForever").exists())
-        self.assertFalse((self.prefix / ".tmnf-initializing").exists())
-        self.assertFalse((self.prefix / ".tmnf-profile-baseline").exists())
+        self.assertFalse((self.prefix / ".trackmania-mac-initializing").exists())
+        self.assertFalse((self.prefix / ".trackmania-mac-profile-baseline").exists())
 
     def test_fresh_wine_default_links_redirect_without_touching_host_data(self):
         command = self.fresh_wineboot_fixture()
-        result = self.shell(command, TMNF_USERDATA=str(self.home / "userdata"))
+        result = self.shell(command, TRACKMANIA_MAC_USERDATA=str(self.home / "userdata"))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assert_fresh_profile_is_private()
         self.assertEqual(
@@ -1206,12 +1229,12 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
             ' if test "$arg" = setup-documents; then return 1; fi; done;'
             'command python3 "$@"; }; initialize_prefix',
         )
-        result = self.shell(interrupted, TMNF_USERDATA=str(userdata))
+        result = self.shell(interrupted, TRACKMANIA_MAC_USERDATA=str(userdata))
         self.assertNotEqual(result.returncode, 0)
-        baseline = self.prefix / ".tmnf-profile-baseline"
+        baseline = self.prefix / ".trackmania-mac-profile-baseline"
         self.assertEqual(json.loads(baseline.read_text())["profiles"], [])
         self.assertTrue((self.prefix / "drive_c/users/player/Documents").is_symlink())
-        result = self.shell(command, TMNF_USERDATA=str(userdata))
+        result = self.shell(command, TRACKMANIA_MAC_USERDATA=str(userdata))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assert_fresh_profile_is_private()
         self.assertEqual(settings.read_text(), "my settings")
@@ -1224,7 +1247,7 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
         documents.symlink_to(self.home / "Documents")
         desktop = documents.parent / "Desktop"
         desktop.symlink_to(self.home / "Desktop")
-        result = self.shell(command, TMNF_USERDATA=str(self.home / "userdata"))
+        result = self.shell(command, TRACKMANIA_MAC_USERDATA=str(self.home / "userdata"))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Back up", result.stderr)
         self.assertEqual(documents.readlink(), self.home / "Documents")
@@ -1233,7 +1256,9 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
 
     def test_custom_links_added_during_interruption_are_preserved(self):
         command = self.fresh_wineboot_fixture()
-        result = self.shell(command, TMNF_USERDATA=str(self.home / "userdata"), BOOT_EXIT="1")
+        result = self.shell(
+            command, TRACKMANIA_MAC_USERDATA=str(self.home / "userdata"), BOOT_EXIT="1"
+        )
         self.assertNotEqual(result.returncode, 0)
         profile = self.prefix / "drive_c/users/player"
         custom = self.home / "custom"
@@ -1241,7 +1266,7 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
         (custom / "personal").write_text("keep")
         (profile / "Documents").unlink()
         (profile / "Documents").symlink_to(custom)
-        result = self.shell(command, TMNF_USERDATA=str(self.home / "userdata"))
+        result = self.shell(command, TRACKMANIA_MAC_USERDATA=str(self.home / "userdata"))
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual((profile / "Documents").readlink(), custom)
         self.assertEqual((custom / "personal").read_text(), "keep")
@@ -1249,7 +1274,9 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
 
     def test_fresh_setup_preserves_custom_and_internal_media_links(self):
         command = self.fresh_wineboot_fixture()
-        result = self.shell(command, TMNF_USERDATA=str(self.home / "userdata"), BOOT_EXIT="1")
+        result = self.shell(
+            command, TRACKMANIA_MAC_USERDATA=str(self.home / "userdata"), BOOT_EXIT="1"
+        )
         self.assertNotEqual(result.returncode, 0)
         profile = self.prefix / "drive_c/users/player"
         for name, target in (
@@ -1260,7 +1287,7 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
             (target / "personal").write_text("keep")
             (profile / name).unlink()
             (profile / name).symlink_to(target)
-        result = self.shell(command, TMNF_USERDATA=str(self.home / "userdata"))
+        result = self.shell(command, TRACKMANIA_MAC_USERDATA=str(self.home / "userdata"))
         self.assertEqual(result.returncode, 0, result.stderr)
         for name in ("Desktop", "Music"):
             self.assertTrue((profile / name).is_symlink())
@@ -1275,17 +1302,17 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
         documents.symlink_to(userdata)
         desktop = documents.parent / "Desktop"
         desktop.symlink_to(self.home / "Desktop")
-        result = self.shell(command, TMNF_USERDATA=str(userdata))
+        result = self.shell(command, TRACKMANIA_MAC_USERDATA=str(userdata))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(desktop.readlink(), self.home / "Desktop")
         self.assertEqual((desktop / "personal").read_text(), "host Desktop")
 
     def test_fresh_account_home_defaults_can_be_broken_without_opening_targets(self):
         self.prefix.mkdir(parents=True)
-        (self.prefix / ".tmnf-prefix").write_text("tmnf:1\n")
+        (self.prefix / ".trackmania-mac-prefix").write_text("tmnf:1\n")
         account_home = self.home / "account-home-not-created"
         with mock.patch(
-            "tmnf.guard.managed_paths.pwd.getpwuid",
+            "trackmania_mac.guard.managed_paths.pwd.getpwuid",
             return_value=mock.Mock(pw_dir=str(account_home)),
         ):
             record_profile_baseline(self.prefix)
@@ -1315,11 +1342,13 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
 
     def test_invalid_provenance_cannot_authorize_default_link_replacement(self):
         command = self.fresh_wineboot_fixture()
-        result = self.shell(command, TMNF_USERDATA=str(self.home / "userdata"), BOOT_EXIT="1")
+        result = self.shell(
+            command, TRACKMANIA_MAC_USERDATA=str(self.home / "userdata"), BOOT_EXIT="1"
+        )
         self.assertNotEqual(result.returncode, 0)
-        baseline = self.prefix / ".tmnf-profile-baseline"
+        baseline = self.prefix / ".trackmania-mac-profile-baseline"
         baseline.write_text("{broken")
-        result = self.shell(command, TMNF_USERDATA=str(self.home / "userdata"))
+        result = self.shell(command, TRACKMANIA_MAC_USERDATA=str(self.home / "userdata"))
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(
             (self.prefix / "drive_c/users/player/Documents").readlink(), self.home / "Documents"
@@ -1327,7 +1356,7 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
         self.assertFalse((self.home / "userdata").exists())
         baseline.unlink()
         baseline.symlink_to(self.home / "Documents/personal")
-        result = self.shell(command, TMNF_USERDATA=str(self.home / "userdata"))
+        result = self.shell(command, TRACKMANIA_MAC_USERDATA=str(self.home / "userdata"))
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual((self.home / "Documents/personal").read_text(), "host Documents")
 
@@ -1337,11 +1366,11 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
         result = self.shell(
             ". ./src/shell/cli/install.sh; wine_binary() { printf /fake; }; "
             "wineboot_binary() { printf /usr/bin/true; }; initialize_prefix",
-            TMNF_USERDATA=str(self.home / "userdata"),
+            TRACKMANIA_MAC_USERDATA=str(self.home / "userdata"),
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Back up", result.stderr)
-        self.assertTrue((self.prefix / ".tmnf-initializing").exists())
+        self.assertTrue((self.prefix / ".trackmania-mac-initializing").exists())
         self.assertFalse((self.home / "userdata").exists())
         self.assertEqual((documents / "replay").read_text(), "keep")
 
@@ -1349,11 +1378,11 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
         self.prefix.mkdir(parents=True)
         with self.assertRaises(ValueError):
             check_uninstall(self.prefix, self.home / "userdata")
-        (self.prefix / ".tmnf-prefix").write_text("tmnf:1\n")
+        (self.prefix / ".trackmania-mac-prefix").write_text("tmnf:1\n")
         with self.assertRaises(ValueError):
             check_uninstall(self.prefix, self.prefix / "userdata")
         result = self.shell(
-            'PYTHONPATH=src/python python3 -m tmnf.guard.managed_paths uninstall "$TMNF_PREFIX" "$HOME/userdata"'
+            'PYTHONPATH=src/python python3 -m trackmania_mac.guard.managed_paths uninstall "$TRACKMANIA_MAC_PREFIX" "$HOME/userdata"'
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), str(self.prefix))
@@ -1394,7 +1423,7 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
             "wineboot_binary() { printf /fake; }; touch() { return 1; }; initialize_prefix"
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertFalse((self.prefix / ".tmnf-prefix").exists())
+        self.assertFalse((self.prefix / ".trackmania-mac-prefix").exists())
         self.assertFalse(self.log.exists())
 
     def test_ownership_marker_write_failure_rolls_back_initializing_marker(self):
@@ -1404,8 +1433,8 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
             "printf() { return 1; }; initialize_prefix"
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertFalse((self.prefix / ".tmnf-prefix").exists())
-        self.assertFalse((self.prefix / ".tmnf-initializing").exists())
+        self.assertFalse((self.prefix / ".trackmania-mac-prefix").exists())
+        self.assertFalse((self.prefix / ".trackmania-mac-initializing").exists())
         self.assertFalse(self.log.exists())
 
     def test_uninstall_rejects_broken_save_link_in_outside_documents(self):
@@ -1426,24 +1455,30 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
         boot.write_text(
             boot.read_text().replace(
                 "(prefix / 'system.reg').touch()",
-                "(prefix / 'marker-at-boot').write_text((prefix / '.tmnf-prefix').read_text())\n"
+                "(prefix / 'marker-at-boot').write_text((prefix / '.trackmania-mac-prefix').read_text())\n"
                 "(prefix / 'system.reg').touch()",
             )
         )
-        result = self.shell(command, TMNF_USERDATA=str(self.home / "userdata"), TMNF_TITLE="tmnf")
+        result = self.shell(
+            command,
+            TRACKMANIA_MAC_USERDATA=str(self.home / "userdata"),
+            TRACKMANIA_MAC_TITLE="tmnf",
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.prefix / ".tmnf-prefix").read_text(), "tmnf:1\n")
+        self.assertEqual((self.prefix / ".trackmania-mac-prefix").read_text(), "tmnf:1\n")
         self.assertEqual((self.prefix / "marker-at-boot").read_text(), "tmnf:1\n")
         check_prefix(str(self.prefix))
-        self.assertFalse((self.prefix / ".tmnf-initializing").exists())
+        self.assertFalse((self.prefix / ".trackmania-mac-initializing").exists())
 
     def test_nonempty_unmanaged_directory_is_refused_before_wineboot_runs(self):
         command = self.fresh_wineboot_fixture()
         self.prefix.mkdir(parents=True)
         (self.prefix / "personal.txt").write_text("keep")
-        result = self.shell(command, TMNF_USERDATA=str(self.home / "userdata"))
+        result = self.shell(command, TRACKMANIA_MAC_USERDATA=str(self.home / "userdata"))
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Choose an empty prefix or a managed TMNF installation", result.stderr)
+        self.assertIn(
+            "Choose an empty prefix or a managed TrackMania Mac installation", result.stderr
+        )
         self.assertEqual(sorted(path.name for path in self.prefix.iterdir()), ["personal.txt"])
         self.assertFalse((self.home / "userdata").exists())
 
@@ -1451,10 +1486,10 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
         command = self.fresh_wineboot_fixture()
         self.prefix.mkdir(parents=True)
         (self.prefix / "system.reg").write_text("someone else's registry")
-        result = self.shell(command, TMNF_USERDATA=str(self.home / "userdata"))
+        result = self.shell(command, TRACKMANIA_MAC_USERDATA=str(self.home / "userdata"))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("error:", result.stderr)
-        self.assertFalse((self.prefix / ".tmnf-prefix").exists())
+        self.assertFalse((self.prefix / ".trackmania-mac-prefix").exists())
         self.assertEqual(sorted(path.name for path in self.prefix.iterdir()), ["system.reg"])
         self.assertEqual((self.prefix / "system.reg").read_text(), "someone else's registry")
         self.assertFalse(self.log.exists())
@@ -1463,10 +1498,10 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
         result = self.shell(
             ". ./src/shell/cli/install.sh; wine_binary() { printf /fake; }; "
             "wineboot_binary() { printf /usr/bin/false; }; initialize_prefix",
-            TMNF_USERDATA=str(self.home / "userdata"),
+            TRACKMANIA_MAC_USERDATA=str(self.home / "userdata"),
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertTrue((self.prefix / ".tmnf-initializing").is_file())
+        self.assertTrue((self.prefix / ".trackmania-mac-initializing").is_file())
         self.assertFalse((self.home / "userdata").exists())
 
     def test_initialized_prefix_keeps_legacy_documents_arrangement(self):
@@ -1475,7 +1510,7 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
         (self.prefix / "system.reg").touch()
         result = self.shell(
             ". ./src/shell/cli/install.sh; run_wine() { return 0; }; initialize_prefix",
-            TMNF_USERDATA=str(self.home / "userdata"),
+            TRACKMANIA_MAC_USERDATA=str(self.home / "userdata"),
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(documents.is_symlink())
@@ -1490,11 +1525,19 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
 
     def test_installer_runtime_flag_is_validated_before_mutation(self):
         for label, arguments, message in (
-            ("bad value", "--runtime=bogus", "Invalid TMNF_RUNTIME_SOURCE"),
-            ("bad spaced value", "--runtime bogus directx", "Invalid TMNF_RUNTIME_SOURCE"),
+            ("bad value", "--runtime=bogus", "Invalid TRACKMANIA_MAC_RUNTIME_SOURCE"),
+            (
+                "bad spaced value",
+                "--runtime bogus directx",
+                "Invalid TRACKMANIA_MAC_RUNTIME_SOURCE",
+            ),
             ("missing value", "--runtime", "--runtime needs"),
-            ("empty value", "--runtime=", "Invalid TMNF_RUNTIME_SOURCE"),
-            ("invalid with help", "--runtime=bogus --help", "Invalid TMNF_RUNTIME_SOURCE"),
+            ("empty value", "--runtime=", "Invalid TRACKMANIA_MAC_RUNTIME_SOURCE"),
+            (
+                "invalid with help",
+                "--runtime=bogus --help",
+                "Invalid TRACKMANIA_MAC_RUNTIME_SOURCE",
+            ),
             ("twice", "--runtime=build --runtime=auto", "only once"),
             ("flag after command", "setup --runtime=build", "Too many arguments"),
             ("unknown command", "--runtime=download unsupported", "Unknown installation command"),
@@ -1512,15 +1555,20 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
             with self.subTest(arguments):
                 result = self.shell(
                     "./src/shell/cli/install.sh " + arguments,
-                    TMNF_RUNTIME_SOURCE="download",
-                    TMNF_RUNTIME_ARCHIVE="/nonexistent",
+                    TRACKMANIA_MAC_RUNTIME_SOURCE="download",
+                    TRACKMANIA_MAC_RUNTIME_ARCHIVE="/nonexistent",
                 )
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("cannot be combined with TMNF_RUNTIME_SOURCE=build", result.stderr)
-        result = self.shell("./src/shell/cli/install.sh unsupported", TMNF_RUNTIME_SOURCE="")
-        self.assertIn("Invalid TMNF_RUNTIME_SOURCE", result.stderr)
+                self.assertIn(
+                    "cannot be combined with TRACKMANIA_MAC_RUNTIME_SOURCE=build", result.stderr
+                )
         result = self.shell(
-            "./src/shell/cli/install.sh --runtime=auto unsupported", TMNF_RUNTIME_SOURCE="bogus"
+            "./src/shell/cli/install.sh unsupported", TRACKMANIA_MAC_RUNTIME_SOURCE=""
+        )
+        self.assertIn("Invalid TRACKMANIA_MAC_RUNTIME_SOURCE", result.stderr)
+        result = self.shell(
+            "./src/shell/cli/install.sh --runtime=auto unsupported",
+            TRACKMANIA_MAC_RUNTIME_SOURCE="bogus",
         )
         self.assertIn("Unknown installation command", result.stderr)
 
@@ -1539,11 +1587,11 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
                 check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("TMNF_RUNTIME_SOURCE='build' ./src/shell/", result.stdout)
+            self.assertIn("TRACKMANIA_MAC_RUNTIME_SOURCE='build' ./src/shell/", result.stdout)
         result = subprocess.run(
             ["make", "-n", "install"], cwd=ROOT, text=True, capture_output=True, check=False
         )
-        self.assertNotIn("TMNF_RUNTIME_SOURCE", result.stdout)
+        self.assertNotIn("TRACKMANIA_MAC_RUNTIME_SOURCE", result.stdout)
         for value in ("bogus", "auto build", "$(shell id)"):
             result = subprocess.run(
                 ["make", "-n", "install", "RUNTIME=" + value],
@@ -1567,9 +1615,9 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
         plist.write_text(original)
         support = self.home / "support/launcher"
         support.mkdir(parents=True)
-        (support / ".tmnf-launcher").touch()
+        (support / ".trackmania-mac-launcher").touch()
         (support / "keep").write_text("installed launcher")
-        result = self.shell("./src/shell/cli/tmnf app")
+        result = self.shell("./src/shell/cli/trackmania-mac app")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(plist.read_text(), original)
         self.assertEqual((support / "keep").read_text(), "installed launcher")
@@ -1583,7 +1631,9 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
         for settings in (str(app) + "/", str(alias / "Game.app"), str(app / "Settings.app")):
             with self.subTest(settings=settings):
                 result = self.shell(
-                    "./src/shell/cli/tmnf app", TMNF_APP=str(app), TMNF_SETTINGS_APP=settings
+                    "./src/shell/cli/trackmania-mac app",
+                    TRACKMANIA_MAC_APP=str(app),
+                    TRACKMANIA_MAC_SETTINGS_APP=settings,
                 )
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(app.exists())
@@ -1592,16 +1642,16 @@ raise SystemExit(int(os.environ.get('BOOT_EXIT', '0')))
     def test_cli_suite_ignores_hostile_inherited_installation_paths(self):
         unrelated = self.home / "unrelated-launcher"
         unrelated.mkdir()
-        (unrelated / ".tmnf-launcher").touch()
+        (unrelated / ".trackmania-mac-launcher").touch()
         (unrelated / "keep").write_text("keep")
         # About 20 launcher runs at ~2 s each: 30-40 s alone, so 45 s left no headroom for a busy machine.
         result = self.shell(
             "./tests/test-cli.sh",
             timeout=180,
-            TMNF_LAUNCHER=str(unrelated),
-            TMNF_SETTINGS_APP=str(self.home / "unrelated-settings.app"),
-            TMNF_AUDIO="invalid",
-            TMNF_WINDOW_SIZE="invalid",
+            TRACKMANIA_MAC_LAUNCHER=str(unrelated),
+            TRACKMANIA_MAC_SETTINGS_APP=str(self.home / "unrelated-settings.app"),
+            TRACKMANIA_MAC_AUDIO="invalid",
+            TRACKMANIA_MAC_WINDOW_SIZE="invalid",
             ROSETTA_X87_PATH="/not-a-translator",
         )
         self.assertEqual(result.returncode, 0, result.stderr)

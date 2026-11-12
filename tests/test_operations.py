@@ -14,15 +14,17 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tmnf.guard import operation_guard as guard
+from trackmania_mac.guard import operation_guard as guard
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "src/python/tmnf/guard/operation_guard.py"
+SCRIPT = ROOT / "src/python/trackmania_mac/guard/operation_guard.py"
 
 
 class Operations(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="tmnf-operation-test-", dir="/private/tmp")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="trackmania-mac-operation-test-", dir="/private/tmp"
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.prefix = self.root / "prefix with spaces and 'quotes"
@@ -269,7 +271,7 @@ class Operations(unittest.TestCase):
                 sys.executable,
                 "-c",
                 (
-                    'import os, pathlib, sys; os.close(int(os.environ.pop("TMNF_OPERATION_FD"))); '
+                    'import os, pathlib, sys; os.close(int(os.environ.pop("TRACKMANIA_MAC_OPERATION_FD"))); '
                     "pathlib.Path(sys.argv[1]).touch(); sys.stdin.read()"
                 ),
                 str(ready),
@@ -289,6 +291,63 @@ class Operations(unittest.TestCase):
         self.assertEqual(first.returncode, 0)
         self.assertEqual(self.cli("run", self.prefix, sys.executable, "-c", "pass").returncode, 0)
 
+    def test_an_earlier_releases_lock_holder_blocks_new_operations(self):
+        # A relinked launcher of an earlier release locks only the old name.
+        self.prefix.parent.mkdir(parents=True, exist_ok=True)
+        path = guard.legacy_operation_lock_path(self.prefix)
+        self.assertTrue(path.name.endswith(".tmnf-operation.lock"))
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, fd)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        result = self.cli("run", self.prefix, sys.executable, "-c", 'print("must not run")')
+        self.assertEqual(result.returncode, guard.EXIT_BUSY, result.stderr)
+        self.assertIn("Another operation", result.stderr)
+        self.assertEqual(result.stdout, "")
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        self.assertEqual(self.cli("run", self.prefix, sys.executable, "-c", "pass").returncode, 0)
+
+    def test_a_new_operation_blocks_an_earlier_releases_lock_and_keeps_it_from_the_child(self):
+        ready = self.root / "operation-ready"
+        # Like a detached wineserver: a grandchild that outlives the operation with
+        # every descriptor the child had, apart from the closed operation token.
+        script = (
+            "import os, pathlib, subprocess, sys; "
+            "os.close(int(os.environ.pop('TRACKMANIA_MAC_OPERATION_FD'))); "
+            "fds = [int(n) for n in os.listdir('/dev/fd') if int(n) > 2]; "
+            "fds = [fd for fd in fds if os.path.exists('/dev/fd/%d' % fd)]; "
+            "subprocess.Popen(['/bin/sleep', '5'], pass_fds=fds, start_new_session=True, "
+            "stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
+            "pathlib.Path(sys.argv[1]).touch(); sys.stdin.read()"
+        )
+        first = self.spawn(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "run",
+                str(self.prefix),
+                sys.executable,
+                "-c",
+                script,
+                str(ready),
+            ],
+            stdin=subprocess.PIPE,
+        )
+        self.wait_file(ready, first)
+        fd = os.open(guard.legacy_operation_lock_path(self.prefix), os.O_RDWR)
+        try:
+            with self.assertRaises(BlockingIOError):
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(fd)
+        first.communicate("", timeout=5)
+        self.assertEqual(first.returncode, 0)
+        # Released with the operation, not held by anything it started.
+        fd = os.open(guard.legacy_operation_lock_path(self.prefix), os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(fd)
+
     def hold_prefix(self):
         ready = self.root / "holder-ready"
         holder = self.spawn(
@@ -300,7 +359,7 @@ class Operations(unittest.TestCase):
                 sys.executable,
                 "-c",
                 (
-                    'import os, pathlib, sys; os.close(int(os.environ.pop("TMNF_OPERATION_FD"))); '
+                    'import os, pathlib, sys; os.close(int(os.environ.pop("TRACKMANIA_MAC_OPERATION_FD"))); '
                     "pathlib.Path(sys.argv[1]).touch(); sys.stdin.read()"
                 ),
                 str(ready),
@@ -311,11 +370,11 @@ class Operations(unittest.TestCase):
         return holder
 
     def wait_env(self, seconds):
-        return dict(self.env, TMNF_LOCK_WAIT=str(seconds))
+        return dict(self.env, TRACKMANIA_MAC_LOCK_WAIT=str(seconds))
 
     def test_opt_in_wait_succeeds_when_holder_releases_in_window(self):
         holder = self.hold_prefix()
-        self.env["TMNF_LOCK_WAIT"] = "10"
+        self.env["TRACKMANIA_MAC_LOCK_WAIT"] = "10"
         waiter = self.spawn(
             [sys.executable, str(SCRIPT), "run", str(self.prefix), sys.executable, "-c", "pass"],
             stdin=subprocess.DEVNULL,
@@ -351,7 +410,7 @@ class Operations(unittest.TestCase):
     def test_wait_also_covers_active_wine_and_shares_one_budget(self):
         self.hold_record_lock(self.server_lock())
         started = time.monotonic()
-        with mock.patch.dict(os.environ, {"TMNF_LOCK_WAIT": "1"}):
+        with mock.patch.dict(os.environ, {"TRACKMANIA_MAC_LOCK_WAIT": "1"}):
             with self.assertRaises(guard.Busy):
                 guard.run(self.prefix, ["/usr/bin/true"], guard.lock_wait_seconds())
         self.assertGreaterEqual(time.monotonic() - started, 0.9)
@@ -360,8 +419,10 @@ class Operations(unittest.TestCase):
         for value in ("-1", "301", "1.5", "abc", " 5", "1000", "\u0663"):
             result = self.cli("run", self.prefix, "/usr/bin/true", env=self.wait_env(value))
             self.assertEqual(result.returncode, 1, value)
-            self.assertIn("TMNF_LOCK_WAIT must be an integer from 0 to 300", result.stderr)
-        self.assertEqual(guard.lock_wait_seconds({"TMNF_LOCK_WAIT": "300"}), 300)
+            self.assertIn(
+                "TRACKMANIA_MAC_LOCK_WAIT must be an integer from 0 to 300", result.stderr
+            )
+        self.assertEqual(guard.lock_wait_seconds({"TRACKMANIA_MAC_LOCK_WAIT": "300"}), 300)
         self.assertEqual(guard.lock_wait_seconds({}), 0)
 
     def test_nested_shell_held_checks_keep_parent_lock(self):
@@ -438,7 +499,7 @@ class Operations(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         first.communicate("", timeout=5)
         self.assertEqual(first.returncode, 0)
-        path = self.home / "Library/Caches/TMNF/.app-install.lock"
+        path = self.home / "Library/TrackManiaMacOS/.app-install.lock"
         path.write_bytes(b"keep lock contents")
         inode = path.stat().st_ino
         self.assertEqual(self.cli(*command).returncode, 0)
@@ -453,7 +514,7 @@ class Operations(unittest.TestCase):
         self.assertNotEqual(self.cli(*command).returncode, 0)
         self.assertFalse((self.home / "Library").exists())
         self.assertEqual(self.cli(*command, env=env, pass_fds=(fd,)).returncode, 0)
-        path = self.home / "Library/Caches/TMNF/.app-install.lock"
+        path = self.home / "Library/TrackManiaMacOS/.app-install.lock"
         unlocked = os.open(path, os.O_RDWR)
         try:
             result = self.cli(
@@ -862,24 +923,24 @@ class Operations(unittest.TestCase):
             "LC_ALL": "C",
             "TMPDIR": str(self.root),
             "PYTHONDONTWRITEBYTECODE": "1",
-            "TMNF_ROOT": str(home / "game"),
-            "TMNF_PREFIX": str(self.prefix),
-            "TMNF_CACHE": str(home / "cache"),
-            "TMNF_SUPPORT": str(home / "support"),
-            "TMNF_RUNTIME": str(home / "runtime"),
-            "TMNF_LAUNCHER": str(home / "launcher"),
-            "TMNF_USERDATA": str(home / "userdata"),
-            "TMNF_APPS_DIR": str(home / "Applications"),
-            "TMNF_APP": str(home / "Applications/TrackMania Nations Forever.app"),
-            "TMNF_SETTINGS_APP": str(home / "Applications/TrackMania Settings.app"),
-            "TMNF_D9VK_DLL": str(home / "runtime/lib/d9vk/d3d9.dll"),
-            "TMNF_SIDECAR": str(home / "runtime/bin/x87sidecar"),
+            "TRACKMANIA_MAC_ROOT": str(home / "game"),
+            "TRACKMANIA_MAC_PREFIX": str(self.prefix),
+            "TRACKMANIA_MAC_CACHE": str(home / "cache"),
+            "TRACKMANIA_MAC_SUPPORT": str(home / "support"),
+            "TRACKMANIA_MAC_RUNTIME": str(home / "runtime"),
+            "TRACKMANIA_MAC_LAUNCHER": str(home / "launcher"),
+            "TRACKMANIA_MAC_USERDATA": str(home / "userdata"),
+            "TRACKMANIA_MAC_APPS_DIR": str(home / "Applications"),
+            "TRACKMANIA_MAC_APP": str(home / "Applications/TrackMania Nations Forever.app"),
+            "TRACKMANIA_MAC_SETTINGS_APP": str(home / "Applications/TrackMania Settings.app"),
+            "TRACKMANIA_MAC_D9VK_DLL": str(home / "runtime/lib/d9vk/d3d9.dll"),
+            "TRACKMANIA_MAC_SIDECAR": str(home / "runtime/bin/x87sidecar"),
         }
         ready = self.root / "detached-ready"
         release = self.root / "detached-release"
         code = (
             "import os, pathlib, sys, time\n"
-            'assert "TMNF_OPERATION_FD" not in os.environ\n'
+            'assert "TRACKMANIA_MAC_OPERATION_FD" not in os.environ\n'
             "try: os.fstat(int(sys.argv[3]))\n"
             "except OSError: pass\n"
             'else: raise AssertionError("operation FD is still open")\n'
@@ -901,8 +962,8 @@ class Operations(unittest.TestCase):
             "/bin/bash",
             "-eu",
             "-c",
-            '. "$7"; "$1" "$2" held "$TMNF_PREFIX"; '
-            'without_operation_lock "$1" -c "$4" "$5" "$6" "$TMNF_OPERATION_FD" '
+            '. "$7"; "$1" "$2" held "$TRACKMANIA_MAC_PREFIX"; '
+            'without_operation_lock "$1" -c "$4" "$5" "$6" "$TRACKMANIA_MAC_OPERATION_FD" '
             "</dev/null >/dev/null 2>&1; "
             'while [ ! -f "$5" ]; do sleep 0.01; done',
             "fixture",
@@ -1018,11 +1079,11 @@ class Reap(unittest.TestCase):
     def test_cli_exits_zero(self):
         directory = self.server_dir()
         victim = self.holder(directory)
-        env = dict(self.env, TMNF_TEST_SERVER_ROOT=str(self.server_root))
+        env = dict(self.env, TRACKMANIA_MAC_TEST_SERVER_ROOT=str(self.server_root))
         code = (
             "import os,sys;from pathlib import Path;"
-            "from tmnf.guard import operation_guard as g;"
-            "g.WINE_SERVER_ROOT=Path(os.environ['TMNF_TEST_SERVER_ROOT']);"
+            "from trackmania_mac.guard import operation_guard as g;"
+            "g.WINE_SERVER_ROOT=Path(os.environ['TRACKMANIA_MAC_TEST_SERVER_ROOT']);"
             "g.INTERRUPT_GRACE=0.5;"
             "sys.exit(g.main(['reap',sys.argv[1]]))"
         )

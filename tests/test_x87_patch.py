@@ -236,7 +236,7 @@ class X87PatchTests(unittest.TestCase):
                 ["git", "-C", str(source), "archive", REVISION], check=True, capture_output=True
             ).stdout
             subprocess.run(["tar", "-x", "-C", str(work)], input=archive, check=True)
-            for patch in PATCHES:  # in order, as tmnf.build.runtime_builder applies them
+            for patch in PATCHES:  # in order, as trackmania_mac.build.runtime_builder applies them
                 subprocess.run(
                     ["git", "apply", "--check", "--whitespace=error-all", str(patch)],
                     cwd=work,
@@ -291,7 +291,11 @@ class X87PatchTests(unittest.TestCase):
                     check=True,
                 )
                 subprocess.run(["cmake", "--build", str(build), "-j", "8"], check=True)
-                env = dict(os.environ, TMNF_X87_SRC=str(build), TMNF_X87_SOURCE_ONLY="1")
+                env = dict(
+                    os.environ,
+                    TRACKMANIA_MAC_X87_SRC=str(build),
+                    TRACKMANIA_MAC_X87_SOURCE_ONLY="1",
+                )
                 subprocess.run(
                     ["bash", str(ROOT / "src/shell/tools/probes/smoke-x87sidecar.sh")],
                     env=env,

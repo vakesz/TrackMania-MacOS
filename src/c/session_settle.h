@@ -8,8 +8,8 @@
  * exited root, an unchanged cumulative count and no unrecognized process
  * together leave nothing that could still start a watched process from inside
  * the job. Anything weaker than all of these keeps the full window. */
-#ifndef TMNF_SESSION_SETTLE_H
-#define TMNF_SESSION_SETTLE_H
+#ifndef TRACKMANIA_MAC_SESSION_SETTLE_H
+#define TRACKMANIA_MAC_SESSION_SETTLE_H
 
 typedef struct settle_facts
 {

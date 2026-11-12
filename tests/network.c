@@ -130,7 +130,7 @@ static int check_url(const WCHAR *url, DWORD expected, int local, int async, DWO
     active_context = &state;
     state.mask = (subscribe_secure ? WINHTTP_CALLBACK_FLAG_SECURE_FAILURE : 0) | WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING |
             (async ? ASYNC_CALLBACKS | (drain_response ? WINHTTP_CALLBACK_FLAG_READ_COMPLETE : 0) : 0);
-    session = WinHttpOpen(L"MacTMNF runtime test", local ? WINHTTP_ACCESS_TYPE_NO_PROXY :
+    session = WinHttpOpen(L"TrackMania Mac runtime test", local ? WINHTTP_ACCESS_TYPE_NO_PROXY :
             WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
             WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, async ? WINHTTP_FLAG_ASYNC : 0);
     if (!session) goto api_failed;

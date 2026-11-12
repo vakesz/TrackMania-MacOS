@@ -24,21 +24,22 @@ record_build_revision() {
 stage_launcher_payload() {
   local project="$1" destination="$2" module art
 
-  mkdir -p "${destination}/src/shell" "${destination}/src/python/tmnf" "${destination}/config"
+  mkdir -p "${destination}/src/shell" "${destination}/src/python/trackmania_mac" "${destination}/config"
   cp -R "${project}/src/shell/cli" "${project}/src/shell/lib" "${destination}/src/shell/"
-  cp "${project}/src/python/tmnf/__init__.py" "${destination}/src/python/tmnf/"
+  cp "${project}/src/python/trackmania_mac/"*.py "${destination}/src/python/trackmania_mac/"
   for module in app guard hub install session; do
-    mkdir -p "${destination}/src/python/tmnf/${module}"
-    cp "${project}/src/python/tmnf/${module}/__init__.py" \
-      "${project}/src/python/tmnf/${module}/"*.py \
-      "${destination}/src/python/tmnf/${module}/"
+    mkdir -p "${destination}/src/python/trackmania_mac/${module}"
+    cp "${project}/src/python/trackmania_mac/${module}/__init__.py" \
+      "${project}/src/python/trackmania_mac/${module}/"*.py \
+      "${destination}/src/python/trackmania_mac/${module}/"
   done
   # Bytecode never ships: the launcher must run installed sources as-is.
   find "${destination}/src" \( -name '__pycache__' -o -name '*.pyc' \) -prune -exec rm -rf {} +
   cp "${project}/config/dxvk.conf" "${project}/config/pins.json" "${destination}/config/"
   mkdir -p "${destination}/config/titles"
   cp "${project}/config/titles/"*.json "${destination}/config/titles/"
-  cp "${project}/VERSION" "${destination}/"
+  # The release version is read from pyproject.toml (src/shell/lib/version.sh).
+  cp "${project}/pyproject.toml" "${destination}/"
   record_build_revision "$project" "${destination}/config/build-revision"
   # The runtime checksum pin (written by package-app.sh) travels with every
   # staging of the payload, including the app wrappers' installed copies.

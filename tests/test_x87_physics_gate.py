@@ -1,12 +1,12 @@
-"""Offline checks for tmnf.probes.x87_physics_gate: TmForever.map parsing and call tables.
+"""Offline checks for trackmania_mac.probes.x87_physics_gate: TmForever.map parsing and call tables.
 
 Needs no game, Wine or compiler; the names are taken from the game's linker map.
 """
 
 import unittest
 
-from tmnf.hub import registry
-from tmnf.probes import x87_physics_gate as gate
+from trackmania_mac.hub import registry
+from trackmania_mac.probes import x87_physics_gate as gate
 
 MAP = """
  0001:004dfca0       ?RotateX@GmMat3@@QAEXM@Z   008e0ca0 f   geom:GmMat3.obj

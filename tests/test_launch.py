@@ -9,19 +9,19 @@ import time
 import unittest
 from unittest import mock
 
-from tmnf.app import launch
+from trackmania_mac.app import launch
 
-SCRIPT = Path(__file__).resolve().parents[1] / "src/python/tmnf/app/launch.py"
+SCRIPT = Path(__file__).resolve().parents[1] / "src/python/trackmania_mac/app/launch.py"
 
 
 class AppLaunch(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="tmnf-app-launch-")
+        temporary = tempfile.TemporaryDirectory(prefix="trackmania-mac-app-launch-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         self.home = self.root / "home"
         self.home.mkdir()
-        self.log = self.home / "Library/Logs/TMNF/play.log"
+        self.log = self.home / "Library/TrackManiaMacOS/logs/play.log"
         self.launcher = self.root / "launcher with 'quotes;$(false)"
         self.marker = self.root / "launched"
         self.env = dict(
@@ -93,11 +93,11 @@ class AppLaunch(unittest.TestCase):
         return Path(str(self.log) + "." + str(number))
 
     def test_launch_opts_in_to_the_lock_wait_unless_already_set(self):
-        self.stub('os.write(1, os.environ.get("TMNF_LOCK_WAIT", "unset").encode())')
-        self.env.pop("TMNF_LOCK_WAIT", None)
+        self.stub('os.write(1, os.environ.get("TRACKMANIA_MAC_LOCK_WAIT", "unset").encode())')
+        self.env.pop("TRACKMANIA_MAC_LOCK_WAIT", None)
         self.assertEqual(self.cli().returncode, 0)
         self.assertIn(b"30", self.log.read_bytes())
-        self.env["TMNF_LOCK_WAIT"] = "7"
+        self.env["TRACKMANIA_MAC_LOCK_WAIT"] = "7"
         self.log.unlink()
         self.assertEqual(self.cli().returncode, 0)
         self.assertIn(b"7", self.log.read_bytes())
@@ -203,14 +203,16 @@ class AppLaunch(unittest.TestCase):
         self.assertEqual(self.log.read_bytes(), b"preserve")
 
     def test_unsafe_paths_and_parents_create_nothing(self):
-        outside = "/Users/tmnf-app-launch-forbidden/logs/play.log"
+        outside = "/Users/trackmania-mac-app-launch-forbidden/logs/play.log"
         for path in ("relative/play.log", str(self.root) + "/../escape/play.log", outside):
             with self.subTest(path=path):
                 self.assertEqual(self.cli(log=path).returncode, 1)
         self.assertFalse(Path(outside).parent.exists())
         alias = self.home / "alias"
         alias.symlink_to("/Users")
-        self.assertEqual(self.cli(log=alias / "tmnf-app-launch-forbidden/play.log").returncode, 1)
+        self.assertEqual(
+            self.cli(log=alias / "trackmania-mac-app-launch-forbidden/play.log").returncode, 1
+        )
         public = self.home / "public"
         public.mkdir()
         public.chmod(0o777)

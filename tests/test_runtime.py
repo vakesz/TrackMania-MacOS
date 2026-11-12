@@ -12,9 +12,11 @@ import tempfile
 import unittest
 from unittest import mock
 
+from trackmania_mac.install import version as project_version
+
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
-    "runtime_manifest", ROOT / "src/python/tmnf/install/runtime_manifest.py"
+    "runtime_manifest", ROOT / "src/python/trackmania_mac/install/runtime_manifest.py"
 )
 runtime_manifest = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(runtime_manifest)
@@ -22,7 +24,9 @@ SPEC.loader.exec_module(runtime_manifest)
 
 class RuntimeInstall(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="tmnf-release-test-", dir="/private/tmp")
+        self.temp = tempfile.TemporaryDirectory(
+            prefix="trackmania-mac-release-test-", dir="/private/tmp"
+        )
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
         self.home = self.root / "home"
@@ -43,10 +47,10 @@ class RuntimeInstall(unittest.TestCase):
             executable.write_text("#!/bin/bash\nexit 0\n")
             executable.chmod(0o755)
         (self.bundle / "bin/wineboot").symlink_to("wine")
-        self.version = (ROOT / "VERSION").read_text().strip()
-        (self.bundle / ".tmnf-runtime").write_text(self.version + "\n")
+        self.version = project_version.read(ROOT)
+        (self.bundle / ".trackmania-mac-runtime").write_text(self.version + "\n")
         for name in runtime_manifest.REQUIRED_FILES + ("licenses/fixture.txt",):
-            if name == ".tmnf-runtime":
+            if name == ".trackmania-mac-runtime":
                 continue
             path = self.bundle / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -67,35 +71,44 @@ class RuntimeInstall(unittest.TestCase):
             '#!/bin/bash\nprintf "Unexpected fixture network request\\n" >&2\nexit 97\n'
         )
         curl.chmod(0o755)
-        # Deliberately do not inherit HOME, TMNF_*, Wine, Python, or shell settings.
+        # Deliberately do not inherit HOME, TRACKMANIA_MAC_*, Wine, Python, or shell settings.
         self.env = {
             "HOME": str(self.home),
             "PATH": str(commands) + ":/usr/bin:/bin:/usr/sbin:/sbin",
             "LC_ALL": "C",
             "TMPDIR": str(self.root),
             "PYTHONDONTWRITEBYTECODE": "1",
-            "TMNF_RUNTIME": str(self.destination),
-            "TMNF_CACHE": str(self.home / "cache"),
-            "TMNF_APPS_DIR": str(self.home / "Applications"),
+            "TRACKMANIA_MAC_RUNTIME": str(self.destination),
+            "TRACKMANIA_MAC_CACHE": str(self.home / "cache"),
+            "TRACKMANIA_MAC_APPS_DIR": str(self.home / "Applications"),
         }
         self.project = self.root / "project"
         (self.project / "src/shell/lib/install").mkdir(parents=True)
-        (self.project / "src/python/tmnf/install").mkdir(parents=True)
-        (self.project / "src/python/tmnf/guard").mkdir(parents=True)
-        for package in ("src/python/tmnf", "src/python/tmnf/install", "src/python/tmnf/guard"):
+        (self.project / "src/python/trackmania_mac/install").mkdir(parents=True)
+        (self.project / "src/python/trackmania_mac/guard").mkdir(parents=True)
+        for package in (
+            "src/python/trackmania_mac",
+            "src/python/trackmania_mac/install",
+            "src/python/trackmania_mac/guard",
+        ):
             (self.project / package / "__init__.py").write_text("")
         shutil.copy2(
             ROOT / "src/shell/lib/install/runtime.sh",
             self.project / "src/shell/lib/install/runtime.sh",
         )
         shutil.copy2(
-            ROOT / "src/python/tmnf/install/runtime_manifest.py",
-            self.project / "src/python/tmnf/install/runtime_manifest.py",
+            ROOT / "src/python/trackmania_mac/install/runtime_manifest.py",
+            self.project / "src/python/trackmania_mac/install/runtime_manifest.py",
         )
         shutil.copy2(
-            ROOT / "src/python/tmnf/guard/managed_paths.py",
-            self.project / "src/python/tmnf/guard/managed_paths.py",
+            ROOT / "src/python/trackmania_mac/guard/managed_paths.py",
+            self.project / "src/python/trackmania_mac/guard/managed_paths.py",
         )
+        for module in ("legacy.py", "markers.py"):
+            shutil.copy2(
+                ROOT / "src/python/trackmania_mac" / module,
+                self.project / "src/python/trackmania_mac" / module,
+            )
 
     def write_manifest(self, root=None):
         root = root or self.bundle
@@ -125,8 +138,8 @@ class RuntimeInstall(unittest.TestCase):
         env.update(extra_env or {})
         if explicit:
             env.update(
-                TMNF_RUNTIME_ARCHIVE=str(self.archive),
-                TMNF_RUNTIME_SHA256=checksum
+                TRACKMANIA_MAC_RUNTIME_ARCHIVE=str(self.archive),
+                TRACKMANIA_MAC_RUNTIME_SHA256=checksum
                 if checksum is not None
                 else hashlib.sha256(self.archive.read_bytes()).hexdigest(),
             )
@@ -134,8 +147,8 @@ class RuntimeInstall(unittest.TestCase):
             [
                 "bash",
                 "-euc",
-                'umask "$2"; . src/shell/lib/common.sh; TMNF_PROJECT_DIR="$1"; '
-                '. "$TMNF_PROJECT_DIR/src/shell/lib/install/runtime.sh"; '
+                'umask "$2"; . src/shell/lib/common.sh; TRACKMANIA_MAC_PROJECT_DIR="$1"; '
+                '. "$TRACKMANIA_MAC_PROJECT_DIR/src/shell/lib/install/runtime.sh"; '
                 + after_source
                 + (
                     "if install_wine_runtime; then exit 0; else exit 1; fi"
@@ -250,13 +263,13 @@ class RuntimeInstall(unittest.TestCase):
         self.assert_rejected(self.install())
 
     def test_session_pe_helper_does_not_need_unix_execute_permissions(self):
-        helper = self.bundle / "libexec/tmnf-session.exe"
+        helper = self.bundle / "libexec/trackmania-mac-session.exe"
         helper.chmod(0o644)
         self.assertFalse(os.access(helper, os.X_OK))
         self.package()
         result = self.install()
         self.assertEqual(result.returncode, 0, result.stderr)
-        installed = self.destination / "libexec/tmnf-session.exe"
+        installed = self.destination / "libexec/trackmania-mac-session.exe"
         self.assertEqual(installed.read_bytes(), b"fixture")
         self.assertFalse(os.access(installed, os.X_OK))
 
@@ -490,7 +503,7 @@ class RuntimeInstall(unittest.TestCase):
         curl = self.root / "commands/curl"
         curl.write_text('#!/bin/bash\nprintf "%s\\n" "$@" >"$HOME/curl-arguments"\nexit 97\n')
         self.assert_rejected(
-            self.install(explicit=False, extra_env={"TMNF_RUNTIME_ALLOW_UNPINNED": "1"})
+            self.install(explicit=False, extra_env={"TRACKMANIA_MAC_RUNTIME_ALLOW_UNPINNED": "1"})
         )
         arguments = (self.home / "curl-arguments").read_text().splitlines()
         for option, value in (
@@ -527,7 +540,9 @@ class RuntimeInstall(unittest.TestCase):
         )
         self.write_manifest()
         self.package()
-        result = self.install(extra_env={"STUB_LOG": str(self.stub_log), "TMNF_X87": "off"})
+        result = self.install(
+            extra_env={"STUB_LOG": str(self.stub_log), "TRACKMANIA_MAC_X87": "off"}
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("x87sidecar", result.stderr)
         self.assertFalse(self.stub_log.exists())
@@ -567,7 +582,7 @@ class RuntimeInstall(unittest.TestCase):
         )
         curl.chmod(0o755)
         env = dict(
-            TMNF_RUNTIME_SOURCE=mode,
+            TRACKMANIA_MAC_RUNTIME_SOURCE=mode,
             STUB_LOG=str(self.stub_log),
             SERVE_DIR=str(self.serve),
             FIXTURE_BUNDLE=str(self.bundle),
@@ -593,7 +608,7 @@ class RuntimeInstall(unittest.TestCase):
         self.package()
         result = self.install(extra_env=env, explicit=False)
         self.assert_rejected(result)
-        self.assertIn("Invalid TMNF_RUNTIME_SOURCE", result.stderr)
+        self.assertIn("Invalid TRACKMANIA_MAC_RUNTIME_SOURCE", result.stderr)
         self.assertFalse((self.home / "cache").exists())
         self.assertEqual(self.stub_lines(), [])
 
@@ -601,7 +616,7 @@ class RuntimeInstall(unittest.TestCase):
         built = self.project / ".build/release/runtime"
         shutil.copytree(self.bundle, built, symlinks=True)
         (built / "lib/d9vk/d3d9.dll").write_bytes(b"damaged")
-        env = self.source_env("download", TMNF_RUNTIME_ALLOW_UNPINNED="1")
+        env = self.source_env("download", TRACKMANIA_MAC_RUNTIME_ALLOW_UNPINNED="1")
         self.serve_runtime()
         result = self.install(extra_env=env, explicit=False)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -648,7 +663,8 @@ class RuntimeInstall(unittest.TestCase):
         self.serve_runtime()
         (self.serve / "trackmania-mac-{}-runtime.tar.xz.sha256".format(self.version)).unlink()
         result = self.install(
-            extra_env=self.source_env("download", TMNF_RUNTIME_ALLOW_UNPINNED="1"), explicit=False
+            extra_env=self.source_env("download", TRACKMANIA_MAC_RUNTIME_ALLOW_UNPINNED="1"),
+            explicit=False,
         )
         self.assert_rejected(result)
         self.assertIn("Cannot download runtime release", result.stderr)
@@ -697,13 +713,14 @@ class RuntimeInstall(unittest.TestCase):
         self.serve_runtime()
         result = self.install(extra_env=self.source_env("download"), explicit=False)
         self.assert_rejected(result)
-        self.assertIn("TMNF_RUNTIME_ALLOW_UNPINNED=1", result.stderr)
+        self.assertIn("TRACKMANIA_MAC_RUNTIME_ALLOW_UNPINNED=1", result.stderr)
         self.assertEqual(self.stub_lines(), [])
 
     def test_opt_in_without_a_pin_warns_and_continues(self):
         self.serve_runtime()
         result = self.install(
-            extra_env=self.source_env("download", TMNF_RUNTIME_ALLOW_UNPINNED="1"), explicit=False
+            extra_env=self.source_env("download", TRACKMANIA_MAC_RUNTIME_ALLOW_UNPINNED="1"),
+            explicit=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(
@@ -714,7 +731,8 @@ class RuntimeInstall(unittest.TestCase):
         self.serve_runtime()
         self.write_pin(version="0.0.0-other", digest="0" * 64)
         result = self.install(
-            extra_env=self.source_env("download", TMNF_RUNTIME_ALLOW_UNPINNED="1"), explicit=False
+            extra_env=self.source_env("download", TRACKMANIA_MAC_RUNTIME_ALLOW_UNPINNED="1"),
+            explicit=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Ignoring runtime pin for version 0.0.0-other", result.stderr)
@@ -724,7 +742,8 @@ class RuntimeInstall(unittest.TestCase):
         self.serve_runtime()
         self.write_pin(text="{} not-a-digest\n".format(self.version))
         result = self.install(
-            extra_env=self.source_env("download", TMNF_RUNTIME_ALLOW_UNPINNED="1"), explicit=False
+            extra_env=self.source_env("download", TRACKMANIA_MAC_RUNTIME_ALLOW_UNPINNED="1"),
+            explicit=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Ignoring malformed runtime pin", result.stderr)
@@ -949,7 +968,7 @@ esac
         result = self.clone_install(self.REVISION + "\nclean\n", after_source="find_git() { :; }; ")
         self.assert_rejected(result)
         self.assertIn("git is required", result.stderr)
-        result = self.clone_install(TMNF_CACHE=str(self.home / "cache dir"))
+        result = self.clone_install(TRACKMANIA_MAC_CACHE=str(self.home / "cache dir"))
         self.assert_rejected(result)
         self.assertIn("without spaces", result.stderr)
         self.assertEqual(self.stub_lines(), [])
@@ -974,7 +993,7 @@ esac
     def test_empty_runtime_source_is_invalid_not_auto(self):
         result = self.install(extra_env=self.source_env(""), explicit=False)
         self.assert_rejected(result)
-        self.assertIn("Invalid TMNF_RUNTIME_SOURCE", result.stderr)
+        self.assertIn("Invalid TRACKMANIA_MAC_RUNTIME_SOURCE", result.stderr)
 
     def test_concurrent_identical_installs_do_not_nest_or_replace(self):
         self.package()

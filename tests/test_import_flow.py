@@ -22,9 +22,9 @@ class ImportFlowTests(unittest.TestCase):
         env.update(
             {
                 "HOME": str(home),
-                "TMNF_TITLE": title,
-                "TMNF_ROOT": str(home / "Games With Spaces" / title),
-                "TMNF_CACHE": str(home / "Cache"),
+                "TRACKMANIA_MAC_TITLE": title,
+                "TRACKMANIA_MAC_ROOT": str(home / "Games With Spaces" / title),
+                "TRACKMANIA_MAC_CACHE": str(home / "Cache"),
                 "PATH": "/usr/bin:/bin",
             }
         )

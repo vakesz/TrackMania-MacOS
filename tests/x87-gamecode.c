@@ -2,12 +2,12 @@
  *
  * Usage: x87-gamecode.exe PATH\TmForever.exe CALLS [START [discover|dump]]
  * Maps the game executable without running it, then calls every function of the
- * generated table (tmnf.probes.x87_physics_gate) from index START, CALLS times per x87
+ * generated table (trackmania_mac.probes.x87_physics_gate) from index START, CALLS times per x87
  * mode, and prints  HASH <function> <mode> <16 hex digits>. A crash prints
  * CRASH <index> and exits quietly. "discover" runs each function once and prints
  * BEGIN <index> first, so a hang names the function too. "dump" calls only
  * function START and prints its inputs and every changed output word instead of
- * hashes (tmnf.probes.x87_physics_gate --explain). Ends with DONE.
+ * hashes (trackmania_mac.probes.x87_physics_gate --explain). Ends with DONE.
  */
 #include <stdio.h>
 #include <math.h>

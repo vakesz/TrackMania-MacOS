@@ -1,4 +1,19 @@
-# Compiler runtime notices
+# Licenses
+
+## What the project licence covers
+
+The project's scripts, tests and build tooling use the MIT license in the
+[LICENSE](../LICENSE) file. The patches to Wine, D9VK and x87sidecar keep the
+licenses of the upstream projects they modify. Runtime archives include
+third-party notices and are published alongside the corresponding source
+archive. In a runtime archive, `licenses/trackmania-mac.txt` is the project license, the
+files in this directory are under `licenses/toolchain/`, and the notices
+collected from each pinned upstream source tree are under `licenses/<component>/`.
+
+The license does not cover the TrackMania games, the Competition Patch bundle,
+DirectX or Apple software.
+
+## Compiler runtime notices
 
 D9VK statically links MinGW's C/C++ runtime support. These notices accompany
 that code in the runtime archive. The compiler version used for each build is

@@ -24,13 +24,13 @@ for architecture in i686 x86_64; do
   have "$compiler" || die "Missing $compiler. Install mingw-w64 to build smoke probes."
 done
 wine_bin="$(wine_binary)" || die 'Run make install first.'
-test -f "${TMNF_PREFIX}/system.reg" || die 'Wine prefix is missing.'
+test -f "${TRACKMANIA_MAC_PREFIX}/system.reg" || die 'Wine prefix is missing.'
 configure_translation
-probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/mactmnf-network.XXXXXX")"
+probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/trackmania-mac-network.XXXXXX")"
 trap 'rm -rf "$probe_dir"' EXIT
 for architecture in i686 x86_64; do
   "${architecture}-w64-mingw32-gcc" -O2 -Wall -Wextra -Werror \
     "${PROJECT_DIR}/tests/network.c" -o "${probe_dir}/${architecture}.exe" -lwinhttp
-  tmnf_python -m tmnf.probes.probe_runner 90 \
-    env WINEPREFIX="$TMNF_PREFIX" WINEDEBUG=-all "$wine_bin" "${probe_dir}/${architecture}.exe" ${arguments[@]+"${arguments[@]}"}
+  trackmania_mac_python -m trackmania_mac.probes.probe_runner 90 \
+    env WINEPREFIX="$TRACKMANIA_MAC_PREFIX" WINEDEBUG=-all "$wine_bin" "${probe_dir}/${architecture}.exe" ${arguments[@]+"${arguments[@]}"}
 done

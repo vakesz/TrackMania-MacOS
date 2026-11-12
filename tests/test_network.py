@@ -22,7 +22,7 @@ from urllib.parse import urlsplit
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SERVER = ROOT / "src/python/tmnf/probes/tls_test_server.py"
+SERVER = ROOT / "src/python/trackmania_mac/probes/tls_test_server.py"
 TLS = runpy.run_path(str(SERVER))
 FIXTURES = TLS["FIXTURES"]
 
@@ -330,7 +330,7 @@ class NetworkProbe(unittest.TestCase):
             {
                 "WINEPREFIX": "/real-prefix",
                 "HOME": "/real-home",
-                "MACTMNF_PREFIX": "/game",
+                "TRACKMANIA_MAC_PREFIX": "/game",
                 "ROSETTA_X87_PATH": "/hook",
                 "DYLD_LIBRARY_PATH": "/libraries",
                 "https_proxy": "https://external",
@@ -343,7 +343,12 @@ class NetworkProbe(unittest.TestCase):
         self.assertEqual(env["HOME"], "/scratch/home")
         self.assertEqual(env["WINESERVER"], "/runtime/bin/wineserver")
         self.assertEqual(env["WINEDLLOVERRIDES"], "mscoree,mshtml=")
-        for name in ("MACTMNF_PREFIX", "ROSETTA_X87_PATH", "DYLD_LIBRARY_PATH", "https_proxy"):
+        for name in (
+            "TRACKMANIA_MAC_PREFIX",
+            "ROSETTA_X87_PATH",
+            "DYLD_LIBRARY_PATH",
+            "https_proxy",
+        ):
             self.assertNotIn(name, env)
         overlay_env = runtime["fixture_environment"](
             Path("/runtime"),
@@ -412,8 +417,8 @@ class NetworkProbe(unittest.TestCase):
 
     def test_overlay_module_proof_rejects_missing_builtin_and_wrong_appdir(self):
         check = runpy.run_path(str(ROOT / "tests/test_network_runtime.py"))["assert_overlay_module"]
-        appdir = Path("/private/tmp/mactmnf-tls-runtime-owned/bin-i686")
-        good = "INFO: winhttp module=Z:\\private\\tmp\\mactmnf-tls-runtime-owned\\bin-i686\\winhttp.dll\n"
+        appdir = Path("/private/tmp/trackmania-mac-tls-runtime-owned/bin-i686")
+        good = "INFO: winhttp module=Z:\\private\\tmp\\trackmania-mac-tls-runtime-owned\\bin-i686\\winhttp.dll\n"
         check(good, appdir)
         check(good.replace("winhttp.dll", "WINHTTP.DLL"), appdir)
         for output in (
@@ -494,7 +499,7 @@ class NetworkProbe(unittest.TestCase):
             for name in (
                 "src/shell/tools/probes",
                 "src/shell/lib",
-                "src/python/tmnf/probes",
+                "src/python/trackmania_mac/probes",
                 "bin",
                 "prefix",
             ):
@@ -509,7 +514,9 @@ class NetworkProbe(unittest.TestCase):
                 'die() { printf "%s\\n" "$*" >&2; exit 1; }\n'
                 'wine_binary() { printf "%s\\n" "$FAKE_WINE"; }\n'
                 "configure_translation() { :; }\n"
-                'tmnf_python() { PYTHONPATH="' + str(root / "src/python") + '" python3 "$@"; }\n',
+                'trackmania_mac_python() { PYTHONPATH="'
+                + str(root / "src/python")
+                + '" python3 "$@"; }\n',
                 encoding="ascii",
             )
             stub = root / "bin/stub"
@@ -525,12 +532,12 @@ class NetworkProbe(unittest.TestCase):
             for name in ("wine", "i686-w64-mingw32-gcc", "x86_64-w64-mingw32-gcc"):
                 (root / "bin" / name).symlink_to(stub)
             # Stub the process runner, not Wine itself in a real prefix.
-            (root / "src/python/tmnf/probes/probe_runner.py").write_text(
+            (root / "src/python/trackmania_mac/probes/probe_runner.py").write_text(
                 "import subprocess, sys\nraise SystemExit(subprocess.call(sys.argv[2:]))\n",
                 encoding="ascii",
             )
-            (root / "src/python/tmnf/__init__.py").write_text("", encoding="ascii")
-            (root / "src/python/tmnf/probes/__init__.py").write_text("", encoding="ascii")
+            (root / "src/python/trackmania_mac/__init__.py").write_text("", encoding="ascii")
+            (root / "src/python/trackmania_mac/probes/__init__.py").write_text("", encoding="ascii")
             (root / "bin/python3").symlink_to(sys.executable)
             log = root / "calls.jsonl"
             env = {
@@ -539,7 +546,7 @@ class NetworkProbe(unittest.TestCase):
                 "TMPDIR": directory,
                 "CALLS": str(log),
                 "FAKE_WINE": str(root / "bin/wine"),
-                "TMNF_PREFIX": str(root / "prefix"),
+                "TRACKMANIA_MAC_PREFIX": str(root / "prefix"),
                 "WINEPREFIX": "/must-not-use",
             }
             local = ["--local", "https://127.0.0.1:12345/", "https://127.0.0.1:12346/", "expired"]
@@ -565,7 +572,7 @@ class NetworkProbe(unittest.TestCase):
                     self.assertEqual(
                         list((root / "prefix").iterdir()), [root / "prefix/system.reg"]
                     )
-                    self.assertEqual(list(root.glob("mactmnf-network.*")), [])
+                    self.assertEqual(list(root.glob("trackmania-mac-network.*")), [])
 
     def test_invalid_arguments_fail_before_any_runtime_dependency(self):
         good = "https://127.0.0.1:12345/"

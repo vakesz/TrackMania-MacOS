@@ -627,7 +627,7 @@ int wmain(int argc, WCHAR **argv)
         explorer = path_name(windows, 1, NULL);
         if (!explorer) { s.reason = "explorer_path_invalid"; goto done; }
         swprintf(desktop_arg, sizeof(desktop_arg) / sizeof(*desktop_arg),
-                L"/desktop=MacTMNF-%lu-%llu,%lux%lu", GetCurrentProcessId(),
+                L"/desktop=TrackManiaMac-%lu-%llu,%lux%lu", GetCurrentProcessId(),
                 (unsigned long long)GetTickCount64(), width, height);
         if (!quote(command, &used, explorer) || !quote(command, &used, desktop_arg)) goto long_command;
     }

@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tmnf.app import icon
+from trackmania_mac.app import icon
 
 ROOT = Path(__file__).resolve().parents[1]
 RAW, RVA = 0x200, 0x1000
@@ -153,7 +153,7 @@ class IconResources(unittest.TestCase):
                     result = subprocess.run(
                         [
                             sys.executable,
-                            str(ROOT / "src/python/tmnf/app/icon.py"),
+                            str(ROOT / "src/python/trackmania_mac/app/icon.py"),
                             str(exe),
                             str(output),
                         ],
@@ -175,7 +175,9 @@ class IconResources(unittest.TestCase):
                 patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, "sips")),
                 self.assertRaisesRegex(SystemExit, "could not build icon"),
             ):
-                runpy.run_path(str(ROOT / "src/python/tmnf/app/icon.py"), run_name="__main__")
+                runpy.run_path(
+                    str(ROOT / "src/python/trackmania_mac/app/icon.py"), run_name="__main__"
+                )
             self.assertFalse(output.exists())
 
     def test_converts_once_and_resizes_once_per_missing_size(self):

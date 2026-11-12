@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-SHELL_SOURCES := $(shell find src/shell -type f \( -name '*.sh' -o -path 'src/shell/cli/tmnf' \) -print)
+SHELL_SOURCES := $(shell find src/shell -type f \( -name '*.sh' -o -path 'src/shell/cli/trackmania-mac' \) -print)
 EXTRA_SHELL_SOURCES := tests/test-cli.sh .github/scripts/ci-areas.sh
 
 ifneq ($(RUNTIME),)
@@ -44,21 +44,21 @@ zip:
 	./src/shell/tools/package-app.sh zip
 
 install:
-	$(if $(RUNTIME),TMNF_RUNTIME_SOURCE='$(RUNTIME)' )./src/shell/cli/install.sh
+	$(if $(RUNTIME),TRACKMANIA_MAC_RUNTIME_SOURCE='$(RUNTIME)' )./src/shell/cli/install.sh
 
 setup:
-	$(if $(RUNTIME),TMNF_RUNTIME_SOURCE='$(RUNTIME)' )./src/shell/cli/tmnf $@
+	$(if $(RUNTIME),TRACKMANIA_MAC_RUNTIME_SOURCE='$(RUNTIME)' )./src/shell/cli/trackmania-mac $@
 
 play configure doctor stop app:
-	./src/shell/cli/tmnf $@
+	./src/shell/cli/trackmania-mac $@
 
 # The session log is the apps' play log, written directly to the file.
 diag:
-	@TMNF_DIAG=on PYTHONPATH=src/python python3 -m tmnf.app.launch "$(CURDIR)/src/shell/cli/tmnf" play "$(HOME)/Library/Logs/TMNF/play.log"; \
-	status=$$?; PYTHONPATH=src/python python3 -m tmnf.session.report; exit $$status
+	@TRACKMANIA_MAC_DIAG=on PYTHONPATH=src/python python3 -m trackmania_mac.app.launch "$(CURDIR)/src/shell/cli/trackmania-mac" play "$(HOME)/Library/TrackManiaMacOS/logs/play.log"; \
+	status=$$?; PYTHONPATH=src/python python3 -m trackmania_mac.session.report; exit $$status
 
 report:
-	@PYTHONPATH=src/python python3 -m tmnf.session.report
+	@PYTHONPATH=src/python python3 -m trackmania_mac.session.report
 
 check: check-scripts check-swift
 

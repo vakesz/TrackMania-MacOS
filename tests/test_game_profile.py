@@ -3,7 +3,7 @@ import struct
 import unittest
 from pathlib import Path
 
-from tmnf.build.game_profile import generate
+from trackmania_mac.build.game_profile import generate
 
 ROOT = Path(__file__).resolve().parents[1]
 # Captured from the generator before field annotations and validation were added.

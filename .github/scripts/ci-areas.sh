@@ -22,7 +22,7 @@ while IFS= read -r path; do
       swift=true ;;
     # The MinGW flags in check.yml mirror these two files, and the Python
     # tests read src/c too.
-    src/c/* | src/python/tmnf/build/runtime_builder.py | src/python/tmnf/session/monitor.py)
+    src/c/* | src/python/trackmania_mac/build/runtime_builder.py | src/python/trackmania_mac/session/monitor.py)
       scripts=true c_helpers=true ;;
     # What the native x87sidecar test reads or runs under.
     tests/test_x87_patch.py | patches/x87sidecar/* | config/sources.json | pyproject.toml | uv.lock)

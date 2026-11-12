@@ -2,27 +2,27 @@
 # Complete runtime installation. Sourced by install.sh after common.sh.
 
 runtime_is_complete() {
-  tmnf_python -m tmnf.install.runtime_manifest verify "$1" "$RUNTIME_VERSION"
+  trackmania_mac_python -m trackmania_mac.install.runtime_manifest verify "$1" "$RUNTIME_VERSION"
 }
 
 # auto installs a finished local build when present, else downloads; download
 # always fetches the release runtime; build compiles it and installs the result.
 validate_runtime_source() {
   # Unset means auto; an empty value is a mistake, not a default.
-  case "${TMNF_RUNTIME_SOURCE-auto}" in
+  case "${TRACKMANIA_MAC_RUNTIME_SOURCE-auto}" in
     auto|download|build) ;;
-    *) die "Invalid TMNF_RUNTIME_SOURCE: use auto, download or build." ;;
+    *) die "Invalid TRACKMANIA_MAC_RUNTIME_SOURCE: use auto, download or build." ;;
   esac
-  if test "${TMNF_RUNTIME_SOURCE-auto}" = build && test -n "${TMNF_RUNTIME_ARCHIVE:-}"; then
-    die "TMNF_RUNTIME_ARCHIVE installs a downloaded runtime; it cannot be combined with TMNF_RUNTIME_SOURCE=build."
+  if test "${TRACKMANIA_MAC_RUNTIME_SOURCE-auto}" = build && test -n "${TRACKMANIA_MAC_RUNTIME_ARCHIVE:-}"; then
+    die "TRACKMANIA_MAC_RUNTIME_ARCHIVE installs a downloaded runtime; it cannot be combined with TRACKMANIA_MAC_RUNTIME_SOURCE=build."
   fi
 }
 
 runtime_download_hint() {
-  if test "${TMNF_RUNTIME_SOURCE-auto}" = auto; then
-    printf 'Run make build, or supply TMNF_RUNTIME_ARCHIVE and TMNF_RUNTIME_SHA256.'
+  if test "${TRACKMANIA_MAC_RUNTIME_SOURCE-auto}" = auto; then
+    printf 'Run make build, or supply TRACKMANIA_MAC_RUNTIME_ARCHIVE and TRACKMANIA_MAC_RUNTIME_SHA256.'
   else
-    printf 'Check the connection, or supply TMNF_RUNTIME_ARCHIVE and TMNF_RUNTIME_SHA256.'
+    printf 'Check the connection, or supply TRACKMANIA_MAC_RUNTIME_ARCHIVE and TRACKMANIA_MAC_RUNTIME_SHA256.'
   fi
 }
 
@@ -30,7 +30,7 @@ runtime_download_hint() {
 # found like the payload's other config files. Prints nothing when there is no
 # usable pin; a pin for another version is ignored with a warning.
 _runtime_pin_file_checksum() {
-  local file="${TMNF_PROJECT_DIR}/config/runtime-pin" version hash extra
+  local file="${TRACKMANIA_MAC_PROJECT_DIR}/config/runtime-pin" version hash extra
   test -f "$file" && test ! -L "$file" || return 0
   read -r version hash extra <"$file" || true
   if [[ ! "$hash" =~ ^[0-9a-fA-F]{64}$ ]] || test -n "$extra"; then
@@ -48,7 +48,7 @@ _runtime_pin_file_checksum() {
 # one line whose second field is exactly RUNTIME_ARCHIVE_NAME), under the same rules
 # as the runtime pin file. Prints nothing when there is no usable entry.
 _runtime_release_assets_checksum() {
-  local file="${TMNF_PROJECT_DIR}/config/release-assets.sha256" lines hash _name extra
+  local file="${TRACKMANIA_MAC_PROJECT_DIR}/config/release-assets.sha256" lines hash _name extra
   test -f "$file" && test ! -L "$file" || return 0
   lines="$(awk -v name="$RUNTIME_ARCHIVE_NAME" '$2 == name' "$file")" || return 0
   test -n "$lines" || return 0
@@ -99,7 +99,7 @@ git_isolated() {
 # caller's tree (deliberately not local) and workspace. The workspace stays after a failure so a rerun
 # resumes, and install_wine_runtime removes it after a successful install.
 clone_source_revision() {
-  local file="${TMNF_PROJECT_DIR}/config/build-revision"
+  local file="${TRACKMANIA_MAC_PROJECT_DIR}/config/build-revision"
   local revision state extra head clone git_bin
 
   test -f "$file" && test ! -L "$file" \
@@ -117,9 +117,9 @@ clone_source_revision() {
     || die "This hub's build revision is malformed; build the runtime from a checkout with make install RUNTIME=build"
   test "$state" = clean \
     || die "This hub was built from uncommitted changes; build the runtime from a checkout with make install RUNTIME=build"
-  tree="${TMNF_CACHE}/build/${revision}"
+  tree="${TRACKMANIA_MAC_CACHE}/build/${revision}"
   case "$tree" in
-    *[[:space:]]*) die "Build from a cache folder without spaces; Wine makefiles require this. Set TMNF_CACHE to another path (now: $TMNF_CACHE)." ;;
+    *[[:space:]]*) die "Build from a cache folder without spaces; Wine makefiles require this. Set TRACKMANIA_MAC_CACHE to another path (now: $TRACKMANIA_MAC_CACHE)." ;;
   esac
   git_bin="$(find_git)"
   test -n "$git_bin" || die "git is required to build the runtime; install full Xcode."
@@ -137,12 +137,12 @@ clone_source_revision() {
       || die "The build workspace was modified. Remove it to rebuild: $tree"
     say "Resuming the build in $tree"
   else
-    mkdir -p "${TMNF_CACHE}/build" || die "Cannot create the build cache."
+    mkdir -p "${TRACKMANIA_MAC_CACHE}/build" || die "Cannot create the build cache."
     # Leftovers of an interrupted clone; a symlink is not ours to remove.
-    for clone in "${TMNF_CACHE}/build/".clone.*; do
+    for clone in "${TRACKMANIA_MAC_CACHE}/build/".clone.*; do
       if test -d "$clone" && test ! -L "$clone"; then rm -rf -- "$clone"; fi
     done
-    clone="$(mktemp -d "${TMNF_CACHE}/build/.clone.XXXXXX")" || die "Cannot create build staging directory."
+    clone="$(mktemp -d "${TRACKMANIA_MAC_CACHE}/build/.clone.XXXXXX")" || die "Cannot create build staging directory."
     printf -v cleanup '%s; rm -rf -- %q' "$cleanup" "$clone"
     # shellcheck disable=SC2064
     trap "$cleanup" EXIT
@@ -169,8 +169,8 @@ homebrew_bin_dirs() {
 # Compile the runtime, in this checkout or in a clone of the hub's own commit,
 # and set the caller's built to the result. Also runs inside the install subshell.
 build_runtime_locally() {
-  local script="${TMNF_PROJECT_DIR}/src/shell/tools/build-runtime.sh"
-  local tree="$TMNF_PROJECT_DIR" dir build_path="$PATH"
+  local script="${TRACKMANIA_MAC_PROJECT_DIR}/src/shell/tools/build-runtime.sh"
+  local tree="$TRACKMANIA_MAC_PROJECT_DIR" dir build_path="$PATH"
 
   if test ! -f "$script"; then
     clone_source_revision
@@ -191,28 +191,28 @@ build_runtime_locally() {
 }
 
 install_wine_runtime() {
-  local built="${TMNF_PROJECT_DIR}/.build/release/runtime"
-  local archive="${TMNF_RUNTIME_ARCHIVE:-}"
-  local expected="${TMNF_RUNTIME_SHA256:-}"
-  local mode="${TMNF_RUNTIME_SOURCE-auto}"
+  local built="${TRACKMANIA_MAC_PROJECT_DIR}/.build/release/runtime"
+  local archive="${TRACKMANIA_MAC_RUNTIME_ARCHIVE:-}"
+  local expected="${TRACKMANIA_MAC_RUNTIME_SHA256:-}"
+  local mode="${TRACKMANIA_MAC_RUNTIME_SOURCE-auto}"
   local workspace=""
   local staging source cleanup status pinned
 
   validate_runtime_source
-  is_safe_managed_path "$TMNF_RUNTIME" || die "Unsafe runtime path: $TMNF_RUNTIME"
-  if test -e "$TMNF_RUNTIME" || test -L "$TMNF_RUNTIME"; then
-    runtime_is_complete "$TMNF_RUNTIME" \
-      || die "Existing runtime is damaged or not owned. Move it aside while the game is closed: $TMNF_RUNTIME"
+  is_safe_managed_path "$TRACKMANIA_MAC_RUNTIME" || die "Unsafe runtime path: $TRACKMANIA_MAC_RUNTIME"
+  if test -e "$TRACKMANIA_MAC_RUNTIME" || test -L "$TRACKMANIA_MAC_RUNTIME"; then
+    runtime_is_complete "$TRACKMANIA_MAC_RUNTIME" \
+      || die "Existing runtime is damaged or not owned. Move it aside while the game is closed: $TRACKMANIA_MAC_RUNTIME"
     if test -z "$archive"; then
       if test "$mode" = auto; then
-        say "Runtime $RUNTIME_VERSION is installed at $TMNF_RUNTIME"
+        say "Runtime $RUNTIME_VERSION is installed at $TRACKMANIA_MAC_RUNTIME"
       else
-        say "Runtime $RUNTIME_VERSION is already installed at $TMNF_RUNTIME; remove it while the game is closed to reinstall."
+        say "Runtime $RUNTIME_VERSION is already installed at $TRACKMANIA_MAC_RUNTIME; remove it while the game is closed to reinstall."
       fi
       return
     fi
   fi
-  mkdir -p "$(dirname "$TMNF_RUNTIME")" "$TMNF_CACHE" || die "Cannot create runtime directories."
+  mkdir -p "$(dirname "$TRACKMANIA_MAC_RUNTIME")" "$TRACKMANIA_MAC_CACHE" || die "Cannot create runtime directories."
   # Keep cleanup local to this operation, including a failed checksum or extraction.
   (
     set -e
@@ -226,8 +226,8 @@ install_wine_runtime() {
     if test -z "$archive" && test "$mode" = build; then
       build_runtime_locally
     fi
-    sweep_stale "$(dirname "$TMNF_RUNTIME")" '.runtime-install.*'
-    staging="$(mktemp -d "$(dirname "$TMNF_RUNTIME")/.runtime-install.XXXXXX")" \
+    sweep_stale "$(dirname "$TRACKMANIA_MAC_RUNTIME")" '.runtime-install.*'
+    staging="$(mktemp -d "$(dirname "$TRACKMANIA_MAC_RUNTIME")/.runtime-install.XXXXXX")" \
       || die "Cannot create runtime staging directory."
     # Bash 3.2 unwinds function locals before EXIT on errexit. Capture the path.
     printf -v cleanup '%s; rm -rf -- %q' "$cleanup" "$staging"
@@ -238,10 +238,10 @@ install_wine_runtime() {
       cp -pRP "$built" "${staging}/runtime" || die "Cannot copy the local runtime."
     else
       if test -z "$archive"; then
-        archive="${TMNF_CACHE}/${RUNTIME_ARCHIVE_NAME}"
+        archive="${TRACKMANIA_MAC_CACHE}/${RUNTIME_ARCHIVE_NAME}"
         pinned="$(runtime_pinned_checksum)"
-        if test -z "$pinned" && test "${TMNF_RUNTIME_ALLOW_UNPINNED:-0}" != 1; then
-          die "No pinned checksum for runtime $RUNTIME_VERSION (config/runtime-pin or config/release-assets.sha256). Refusing to trust a checksum fetched from the release itself; set TMNF_RUNTIME_ALLOW_UNPINNED=1 to accept it anyway."
+        if test -z "$pinned" && test "${TRACKMANIA_MAC_RUNTIME_ALLOW_UNPINNED:-0}" != 1; then
+          die "No pinned checksum for runtime $RUNTIME_VERSION (config/runtime-pin or config/release-assets.sha256). Refusing to trust a checksum fetched from the release itself; set TRACKMANIA_MAC_RUNTIME_ALLOW_UNPINNED=1 to accept it anyway."
         fi
         if curl -q --fail --location --retry 3 --retry-all-errors --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
           --output "${staging}/release.sha256" \
@@ -266,11 +266,11 @@ install_wine_runtime() {
         download_verified "${RUNTIME_RELEASE_URL}/${RUNTIME_ARCHIVE_NAME}" "$archive" "$expected" \
           || die "Cannot download the runtime archive."
       else
-        [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || die "Set TMNF_RUNTIME_SHA256 to the downloaded archive's published checksum."
+        [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || die "Set TRACKMANIA_MAC_RUNTIME_SHA256 to the downloaded archive's published checksum."
         expected="$(printf '%s' "$expected" | tr 'A-F' 'a-f')"
         verify_file "$archive" "$expected" || die "Runtime archive SHA-256 mismatch."
       fi
-      tmnf_python -m tmnf.install.runtime_manifest extract "$archive" "$staging" "$expected" \
+      trackmania_mac_python -m trackmania_mac.install.runtime_manifest extract "$archive" "$staging" "$expected" \
         || die "Cannot extract the runtime archive safely."
     fi
     source="${staging}/runtime"
@@ -278,15 +278,15 @@ install_wine_runtime() {
     # destination already exists no probe runs, and publish verifies the source
     # itself, so a second pass here would hash the same unchanged tree twice.
     # (The copy of a local build is verified here, not the original beforehand.)
-    if test ! -e "$TMNF_RUNTIME" && test ! -L "$TMNF_RUNTIME"; then
+    if test ! -e "$TRACKMANIA_MAC_RUNTIME" && test ! -L "$TRACKMANIA_MAC_RUNTIME"; then
       runtime_is_complete "$source" || die "The runtime is incomplete or has the wrong version."
       without_operation_lock "${source}/bin/wine" --version || die "Wine runtime probe failed."
       # An unsupported Rosetta only costs speed, so it must not block the install.
-      if test "$TMNF_X87" = on && ! without_operation_lock "${source}/bin/x87sidecar" --probe; then
-        warn "$TMNF_X87_UNSUPPORTED_HINT"
+      if test "$TRACKMANIA_MAC_X87" = on && ! without_operation_lock "${source}/bin/x87sidecar" --probe; then
+        warn "$TRACKMANIA_MAC_X87_UNSUPPORTED_HINT"
       fi
     fi
-    tmnf_python -m tmnf.install.runtime_manifest publish "$source" "$TMNF_RUNTIME" "$RUNTIME_VERSION" \
+    trackmania_mac_python -m trackmania_mac.install.runtime_manifest publish "$source" "$TRACKMANIA_MAC_RUNTIME" "$RUNTIME_VERSION" \
       || die "Cannot publish runtime. Existing destinations are never replaced."
     # Only a workspace this installer cloned is removed; a checkout keeps its .build.
     if test -n "$workspace"; then rm -rf -- "$workspace"; fi

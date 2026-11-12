@@ -54,6 +54,10 @@ final class HubViewModel: ObservableObject {
     @Published private(set) var lastRun: RunRecord?
     @Published private(set) var cancelling = false
     @Published var selectedTitleID: String?
+    /// True while `trackmania-mac hub migrate` moves files of an earlier release.
+    @Published private(set) var migrating = false
+    /// Why the last move did not finish; cleared when a new one starts.
+    @Published private(set) var migrationFailure: String?
 
     /// Not published by the view model: only views that show output observe it.
     let activity = InstallerActivity()
@@ -67,6 +71,8 @@ final class HubViewModel: ObservableObject {
     private var reloadGeneration = 0
     private var pendingOutput = ""
     private var flushTask: Task<Void, Never>?
+    /// The move starts by itself once per launch; after that only "Try again" starts it.
+    private var migrationAttempted = false
 
     private let backend: HubBackend?
 
@@ -110,6 +116,9 @@ final class HubViewModel: ObservableObject {
 
     private func apply(_ snapshot: HubSnapshot) {
         self.snapshot = snapshot
+        if Self.shouldMigrate(snapshot, attempted: migrationAttempted, busy: migrating || runningAction != nil) {
+            migrate()
+        }
         if selectedTitleID == nil || !snapshot.titles.contains(where: { $0.id == selectedTitleID }) {
             selectedTitleID = snapshot.titles.sidebarOrder.first?.id
         }
@@ -140,7 +149,7 @@ final class HubViewModel: ObservableObject {
         message = nil
         resetLog()
         let flags = (runtime.map { " --runtime \($0.rawValue)" } ?? "") + (includeSaves ? " --include-saves" : "")
-        enqueue("$ tmnf hub run \(title.id) \(action.id)\(flags)\n")
+        enqueue("$ trackmania-mac hub run \(title.id) \(action.id)\(flags)\n")
         Task { [weak self] in
             guard let self else { return }
             var outcome = RunOutcome.succeeded
@@ -249,9 +258,9 @@ final class HubViewModel: ObservableObject {
     }
 
     func openLogsFolder() {
+        // The backend alone knows where logs live; the snapshot reports it.
         let reported = snapshot?.titles.lazy.compactMap { $0.locations?.logs }.first
-        let path = reported ?? (NSHomeDirectory() + "/Library/Logs/TMNF")
-        guard FileManager.default.fileExists(atPath: path) else {
+        guard let path = reported, FileManager.default.fileExists(atPath: path) else {
             message = String(localized: "There are no logs yet.")
             return
         }
@@ -300,5 +309,43 @@ final class HubViewModel: ObservableObject {
 
     func run(for title: HubTitle) -> RunRecord? {
         lastRun?.titleID == title.id ? lastRun : nil
+    }
+}
+
+// MARK: Moving files of an earlier release
+
+extension HubViewModel {
+    /// The move starts by itself when the backend reports one, once, with nothing else running.
+    static func shouldMigrate(_ snapshot: HubSnapshot, attempted: Bool, busy: Bool) -> Bool {
+        snapshot.migration?.state == .pending && !attempted && !busy
+    }
+
+    /// Moves files of an earlier release into the data folder, then reloads.
+    func migrate() {
+        guard let backend, !migrating, runningAction == nil else { return }
+        migrating = true
+        migrationAttempted = true
+        migrationFailure = nil
+        message = nil
+        resetLog()
+        enqueue("$ trackmania-mac hub migrate\n")
+        let handle = HubCommandHandle()
+        Task { [weak self] in
+            var failure: String?
+            do {
+                _ = try await backend.migrate(handle: handle) { [weak self] chunk in
+                    Task { @MainActor [weak self] in self?.enqueue(chunk) }
+                }
+            } catch HubBackendError.commandFailed(let result) {
+                failure = Self.failureReason(in: result.output)
+            } catch {
+                failure = error.localizedDescription
+            }
+            guard let self else { return }
+            flushOutput()
+            migrating = false
+            migrationFailure = failure
+            reload(clearMessage: false)
+        }
     }
 }

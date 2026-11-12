@@ -37,10 +37,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          version="$(tr -d '\r\n' < VERSION)"
+          . src/shell/lib/version.sh
+          version="$(trackmania_mac_project_version .)"
           tag="v${version}"
           test "$GITHUB_REF_NAME" = "$tag" \
-            || { echo "Tag $GITHUB_REF_NAME does not match VERSION $version" >&2; exit 1; }
+            || { echo "Tag $GITHUB_REF_NAME does not match pyproject.toml version $version" >&2; exit 1; }
           # The trust anchor is config/release-assets.sha256 as committed (and
           # reviewed) in the tagged commit, not any checksum stored next to the
           # assets: whoever can overwrite release assets can overwrite those too.
@@ -73,9 +74,9 @@ jobs:
             || { echo "Release $tag assets do not match $hashfile." >&2; exit 1; }
       - name: Build unsigned hub app
         env:
-          TMNF_RUNTIME_PIN_SHA256: ${{ steps.verify.outputs.runtime_sha256 }}
+          TRACKMANIA_MAC_RUNTIME_PIN_SHA256: ${{ steps.verify.outputs.runtime_sha256 }}
           # A tag build must carry the runtime pin; package-app.sh fails without it.
-          TMNF_REQUIRE_RUNTIME_PIN: ${{ env.IS_TAG_BUILD == 'true' && '1' || '0' }}
+          TRACKMANIA_MAC_REQUIRE_RUNTIME_PIN: ${{ env.IS_TAG_BUILD == 'true' && '1' || '0' }}
         run: ./src/shell/tools/package-app.sh build-unsigned
       - name: Pack unsigned app as a tar
         id: pack
@@ -133,11 +134,11 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
-          TMNF_SIGN_IDENTITY: ${{ secrets.TMNF_SIGN_IDENTITY }}
-          TMNF_NOTARIZE: ${{ secrets.TMNF_NOTARIZE }}
+          TRACKMANIA_MAC_SIGN_IDENTITY: ${{ secrets.TRACKMANIA_MAC_SIGN_IDENTITY }}
+          TRACKMANIA_MAC_NOTARIZE: ${{ secrets.TRACKMANIA_MAC_NOTARIZE }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
-          TMNF_TEAM_ID: ${{ secrets.TMNF_TEAM_ID }}
-          TMNF_APP_PASSWORD: ${{ secrets.TMNF_APP_PASSWORD }}
+          TRACKMANIA_MAC_TEAM_ID: ${{ secrets.TRACKMANIA_MAC_TEAM_ID }}
+          TRACKMANIA_MAC_APP_PASSWORD: ${{ secrets.TRACKMANIA_MAC_APP_PASSWORD }}
         run: |
           set -euo pipefail
           # Without any signing secret the hub is ad-hoc signed and not notarized:
@@ -145,15 +146,15 @@ jobs:
           # As soon as any signing secret is set, the full Developer ID and
           # notarization configuration is required, so a half-configured
           # repository fails instead of silently shipping an ad-hoc build.
-          signing_secrets="$APPLE_CERT_P12$TMNF_SIGN_IDENTITY$TMNF_NOTARIZE$APPLE_ID$TMNF_TEAM_ID$TMNF_APP_PASSWORD"
+          signing_secrets="$APPLE_CERT_P12$TRACKMANIA_MAC_SIGN_IDENTITY$TRACKMANIA_MAC_NOTARIZE$APPLE_ID$TRACKMANIA_MAC_TEAM_ID$TRACKMANIA_MAC_APP_PASSWORD"
           has_signing=false
           if test -z "$signing_secrets"; then
             echo "::warning title=Unsigned hub release::No signing secrets are set; $GITHUB_REF_NAME ships an ad-hoc signed, unnotarized hub that Gatekeeper will block until the user allows it."
           else
             test -n "$APPLE_CERT_P12" || { echo 'APPLE_CERT_P12 is required for a signed tag release.' >&2; exit 1; }
-            test -n "$TMNF_SIGN_IDENTITY" || { echo 'TMNF_SIGN_IDENTITY is required for a signed tag release.' >&2; exit 1; }
-            test "$TMNF_NOTARIZE" = 1 || { echo 'TMNF_NOTARIZE=1 is required for a signed tag release.' >&2; exit 1; }
-            test -n "$APPLE_ID" && test -n "$TMNF_TEAM_ID" && test -n "$TMNF_APP_PASSWORD" \
+            test -n "$TRACKMANIA_MAC_SIGN_IDENTITY" || { echo 'TRACKMANIA_MAC_SIGN_IDENTITY is required for a signed tag release.' >&2; exit 1; }
+            test "$TRACKMANIA_MAC_NOTARIZE" = 1 || { echo 'TRACKMANIA_MAC_NOTARIZE=1 is required for a signed tag release.' >&2; exit 1; }
+            test -n "$APPLE_ID" && test -n "$TRACKMANIA_MAC_TEAM_ID" && test -n "$TRACKMANIA_MAC_APP_PASSWORD" \
               || { echo 'Apple notarization credentials are required for a signed tag release.' >&2; exit 1; }
             has_signing=true
           fi
@@ -164,7 +165,7 @@ jobs:
           APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
           APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
         run: |
-          cert="$RUNNER_TEMP/tmnf-cert.p12"
+          cert="$RUNNER_TEMP/trackmania-mac-cert.p12"
           trap 'rm -f "$cert"' EXIT
           echo "$APPLE_CERT_P12" | base64 --decode > "$cert"
           security create-keychain -p actions actions.keychain
@@ -175,19 +176,19 @@ jobs:
       - name: Store notarytool credentials
         if: steps.signing.outputs.has_signing == 'true'
         env:
-          TMNF_NOTARY_PROFILE: tmnf-ci
+          TRACKMANIA_MAC_NOTARY_PROFILE: trackmania-mac-ci
           APPLE_ID: ${{ secrets.APPLE_ID }}
-          TMNF_TEAM_ID: ${{ secrets.TMNF_TEAM_ID }}
-          TMNF_APP_PASSWORD: ${{ secrets.TMNF_APP_PASSWORD }}
+          TRACKMANIA_MAC_TEAM_ID: ${{ secrets.TRACKMANIA_MAC_TEAM_ID }}
+          TRACKMANIA_MAC_APP_PASSWORD: ${{ secrets.TRACKMANIA_MAC_APP_PASSWORD }}
         run: |
-          xcrun notarytool store-credentials "$TMNF_NOTARY_PROFILE" \
-            --apple-id "$APPLE_ID" --team-id "$TMNF_TEAM_ID" --password "$TMNF_APP_PASSWORD"
+          xcrun notarytool store-credentials "$TRACKMANIA_MAC_NOTARY_PROFILE" \
+            --apple-id "$APPLE_ID" --team-id "$TRACKMANIA_MAC_TEAM_ID" --password "$TRACKMANIA_MAC_APP_PASSWORD"
       - name: Sign, notarize and zip hub app
         env:
           # Signing settings are exposed only for tag builds that verified them.
-          TMNF_SIGN_IDENTITY: ${{ steps.signing.outputs.has_signing == 'true' && secrets.TMNF_SIGN_IDENTITY || '' }}
-          TMNF_NOTARIZE: ${{ steps.signing.outputs.has_signing == 'true' && secrets.TMNF_NOTARIZE || '' }}
-          TMNF_NOTARY_PROFILE: tmnf-ci
+          TRACKMANIA_MAC_SIGN_IDENTITY: ${{ steps.signing.outputs.has_signing == 'true' && secrets.TRACKMANIA_MAC_SIGN_IDENTITY || '' }}
+          TRACKMANIA_MAC_NOTARIZE: ${{ steps.signing.outputs.has_signing == 'true' && secrets.TRACKMANIA_MAC_NOTARIZE || '' }}
+          TRACKMANIA_MAC_NOTARY_PROFILE: trackmania-mac-ci
         run: ./src/shell/tools/package-app.sh sign
       - name: Upload app archive artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, pinned

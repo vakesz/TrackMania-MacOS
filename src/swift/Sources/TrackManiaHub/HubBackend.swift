@@ -132,7 +132,9 @@ enum HubBackendError: LocalizedError {
 }
 
 final class HubBackend: Sendable {
-    static let supportedSchema = 2
+    static let supportedSchema = 3
+    /// Moves files of an earlier release into the data folder; not tied to a title.
+    static let migrateArguments = ["hub", "migrate"]
     /// How long to keep reading after the child exits before giving up on a pipe
     /// that a daemonized grandchild (e.g. wineserver) still holds open.
     static let postExitDrainGrace: TimeInterval = 0.5
@@ -147,7 +149,7 @@ final class HubBackend: Sendable {
         guard let resources = Bundle.main.resourceURL else {
             throw HubBackendError.launcherMissing(URL(fileURLWithPath: "launcher"))
         }
-        let launcher = resources.appendingPathComponent("launcher/src/shell/cli/tmnf")
+        let launcher = resources.appendingPathComponent("launcher/src/shell/cli/trackmania-mac")
         guard FileManager.default.isExecutableFile(atPath: launcher.path) else {
             throw HubBackendError.launcherMissing(launcher)
         }
@@ -198,6 +200,13 @@ final class HubBackend: Sendable {
             arguments: Self.runArguments(titleID: titleID, actionID: actionID, source: source,
                                          runtime: runtime, includeSaves: includeSaves),
             handle: handle, onOutput: onOutput)
+        guard result.status == 0 else { throw HubBackendError.commandFailed(result) }
+        return result
+    }
+
+    func migrate(handle: HubCommandHandle = HubCommandHandle(),
+                 onOutput: @escaping @Sendable (String) -> Void = { _ in }) async throws -> HubCommandResult {
+        let result = try await run(arguments: Self.migrateArguments, handle: handle, onOutput: onOutput)
         guard result.status == 0 else { throw HubBackendError.commandFailed(result) }
         return result
     }

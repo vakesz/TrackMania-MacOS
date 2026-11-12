@@ -9,9 +9,11 @@ import tempfile
 import unittest
 import zipfile
 
+from trackmania_mac.install import version as project_version
+
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = (ROOT / "VERSION").read_text().strip()
+VERSION = project_version.read(ROOT)
 APP = ROOT / ".build/app/TrackMania Mac.app"
 ZIP = ROOT / ".build/dist" / f"TrackMania-Mac-{VERSION}.app.zip"
 PACKAGER = ROOT / "src/shell/tools/package-app.sh"
@@ -36,7 +38,7 @@ class HubPackageTests(unittest.TestCase):
         # The release workflow builds unsigned in one job and signs a tar of
         # that app in another, so exercise the same two separate processes.
         ZIP.unlink(missing_ok=True)
-        env = {**os.environ, "TMNF_RUNTIME_PIN_SHA256": pin}
+        env = {**os.environ, "TRACKMANIA_MAC_RUNTIME_PIN_SHA256": pin}
         result = subprocess.run(
             ["/bin/bash", str(PACKAGER), "build-unsigned"],
             cwd=ROOT,
@@ -80,7 +82,7 @@ class HubPackageTests(unittest.TestCase):
         self.assertTrue((ROOT / "assets/branding/trackmania-mac-icon.svg").is_file())
         self.assertGreater(icon.stat().st_size, 1024)
         self.assertEqual(icon.read_bytes()[:4], b"icns")
-        self.assertTrue((launcher / "src/shell/cli/tmnf").is_file())
+        self.assertTrue((launcher / "src/shell/cli/trackmania-mac").is_file())
         self.assertTrue((launcher / "config/titles/tmnf.json").is_file())
         # The runtime pin sits inside the codesigned launcher payload.
         self.assertEqual(
@@ -117,7 +119,7 @@ class HubPackageTests(unittest.TestCase):
             ):
                 if "Mach-O" in subprocess.check_output(["file", "-b", str(path)], text=True):
                     subprocess.run(["codesign", "--verify", "--strict", str(path)], check=True)
-        self.assertFalse((launcher / "src/python/tmnf/config.py").exists())
+        self.assertFalse((launcher / "src/python/trackmania_mac/config.py").exists())
 
         file_type = subprocess.check_output(["file", str(executable)], text=True)
         self.assertIn("Mach-O", file_type)
@@ -179,7 +181,7 @@ class HubPackageTests(unittest.TestCase):
                 bundled_check.returncode, 0, bundled_check.stdout + bundled_check.stderr
             )
             result = subprocess.run(
-                [str(launcher / "src/shell/cli/tmnf"), "hub", "snapshot"],
+                [str(launcher / "src/shell/cli/trackmania-mac"), "hub", "snapshot"],
                 cwd=launcher,
                 text=True,
                 capture_output=True,
@@ -187,7 +189,7 @@ class HubPackageTests(unittest.TestCase):
                 env={"HOME": str(home), "PATH": str(tools)},
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(json.loads(result.stdout)["schema"], 2)
+            self.assertEqual(json.loads(result.stdout)["schema"], 3)
             subprocess.run(["codesign", "--verify", "--deep", "--strict", str(APP)], check=True)
             self.assertFalse(list((launcher / "src").rglob("__pycache__")))
 
@@ -213,7 +215,7 @@ class HubPackageTests(unittest.TestCase):
                 (launcher / "config/runtime-pin").read_text(),
             )
             installed = subprocess.run(
-                [str(installed_support / "src/shell/cli/tmnf"), "hub", "snapshot"],
+                [str(installed_support / "src/shell/cli/trackmania-mac"), "hub", "snapshot"],
                 cwd=installed_support,
                 text=True,
                 capture_output=True,
@@ -221,7 +223,7 @@ class HubPackageTests(unittest.TestCase):
                 env={"HOME": str(home), "PATH": str(tools)},
             )
             self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
-            self.assertEqual(json.loads(installed.stdout)["schema"], 2)
+            self.assertEqual(json.loads(installed.stdout)["schema"], 3)
 
         self.assertTrue(ZIP.is_file())
         with zipfile.ZipFile(ZIP) as archive:
@@ -399,14 +401,14 @@ class RuntimePinWriter(unittest.TestCase):
             return result, pin.read_text() if pin.exists() else None
 
     def test_valid_hash_is_lowercased_and_paired_with_version(self):
-        result, pin = self.write(TMNF_RUNTIME_PIN_SHA256="AB" * 32)
+        result, pin = self.write(TRACKMANIA_MAC_RUNTIME_PIN_SHA256="AB" * 32)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(pin, f"{VERSION} {'ab' * 32}\n")
 
     def test_invalid_hash_is_rejected(self):
         for value in ("abc", "g" * 64, "a" * 63, "a" * 65):
             with self.subTest(value=value):
-                result, pin = self.write(TMNF_RUNTIME_PIN_SHA256=value)
+                result, pin = self.write(TRACKMANIA_MAC_RUNTIME_PIN_SHA256=value)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIsNone(pin)
 
@@ -417,7 +419,7 @@ class RuntimePinWriter(unittest.TestCase):
         self.assertIn("no runtime checksum pin", result.stdout)
 
     def test_required_pin_fails_the_build_when_missing(self):
-        result, pin = self.write(TMNF_REQUIRE_RUNTIME_PIN="1")
+        result, pin = self.write(TRACKMANIA_MAC_REQUIRE_RUNTIME_PIN="1")
         self.assertNotEqual(result.returncode, 0)
         self.assertIsNone(pin)
 

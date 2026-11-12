@@ -12,9 +12,9 @@ for architecture in i686 x86_64; do
   have "$compiler" || die "Missing $compiler. Install mingw-w64 to build smoke probes."
 done
 wine_bin="$(wine_binary)" || die "Wine is not installed."
-test -f "${TMNF_PREFIX}/system.reg" || die "Wine prefix is missing. Run make install first."
+test -f "${TRACKMANIA_MAC_PREFIX}/system.reg" || die "Wine prefix is missing. Run make install first."
 configure_translation
-probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/mactmnf-shaders.XXXXXX")"
+probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/trackmania-mac-shaders.XXXXXX")"
 trap 'rm -rf "$probe_dir"' EXIT
 for architecture in i686 x86_64; do
   compiler="${architecture}-w64-mingw32-gcc"
@@ -24,12 +24,12 @@ for architecture in i686 x86_64; do
     mode=legacy
     test "$sdk" -le 36 || mode=modern
     say "Testing $architecture D3DX9 SDK $sdk ($mode compiler)"
-    tmnf_python -m tmnf.probes.probe_runner 60 env WINEPREFIX="$TMNF_PREFIX" WINEDEBUG=-all \
+    trackmania_mac_python -m trackmania_mac.probes.probe_runner 60 env WINEPREFIX="$TRACKMANIA_MAC_PREFIX" WINEDEBUG=-all \
       WINEDLLOVERRIDES="d3dx9_${sdk},d3dcompiler_43,wined3d=b" \
       "$wine_bin" "${probe_dir}/shader-profiles-${architecture}.exe" "d3dx9_${sdk}.dll" "$mode"
     if test "$sdk" -gt 36; then
       say "Testing $architecture D3DX9 SDK $sdk legacy compiler flag"
-      tmnf_python -m tmnf.probes.probe_runner 60 env WINEPREFIX="$TMNF_PREFIX" WINEDEBUG=-all \
+      trackmania_mac_python -m trackmania_mac.probes.probe_runner 60 env WINEPREFIX="$TRACKMANIA_MAC_PREFIX" WINEDEBUG=-all \
         WINEDLLOVERRIDES="d3dx9_${sdk},d3dcompiler_43,wined3d=b" \
         "$wine_bin" "${probe_dir}/shader-profiles-${architecture}.exe" "d3dx9_${sdk}.dll" legacy-flag
     fi

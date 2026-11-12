@@ -1,4 +1,4 @@
-"""Offline checks for tmnf.session.report and tmnf.session.monitor (no Wine, game or MinGW)."""
+"""Offline checks for trackmania_mac.session.report and trackmania_mac.session.monitor (no Wine, game or MinGW)."""
 
 import contextlib
 import hashlib
@@ -9,38 +9,45 @@ import tempfile
 import unittest
 from unittest import mock
 
-from tmnf.session import monitor, report
+from trackmania_mac.session import monitor, report
 
 # One session: unknown until the helper reports, then menu, race (focus lost for a
 # while), finish. Wine's +fps lines, helper lines and monitor lines share one clock.
 LOG = """
 2026-10-18T10:00:00Z start action=play
-tmnf-run: version=0.3.0 macos=27.0.1 model=Mac17,9 x87=on audio=on renderer=d9vk target=TmForever.exe
-tmnf-mon: tick=100.000 event=focus state=game
+trackmania-mac-run: version=0.3.0 macos=27.0.1 model=Mac17,9 x87=on audio=on renderer=d9vk target=TmForever.exe
+trackmania-mac-mon: tick=100.000 event=focus state=game
 100.500:0120:trace:fps:win32u_vkQueuePresentKHR 0x1 @ approx 30.00fps, total 30.00fps
-tmnf-state: 101.000 0x20
-tmnf-map: 101.050 none
+trackmania-mac-state: 101.000 0x20
+trackmania-mac-map: 101.050 none
 102.000:0120:trace:fps:win32u_vkQueuePresentKHR 0x1 @ approx 120.00fps, total 100.00fps
-tmnf-map: 102.900 A01-Race
-tmnf-state: 103.000 0x200
+trackmania-mac-map: 102.900 A01-Race
+trackmania-mac-state: 103.000 0x200
 104.000:0120:trace:fps:win32u_vkQueuePresentKHR 0x1 @ approx 110.00fps, total 105.00fps
-tmnf-mon: tick=104.500 event=sample cpu=95% threads=40 top=main:90%@36
+trackmania-mac-mon: tick=104.500 event=sample cpu=95% threads=40 top=main:90%@36
 105.000:0120:trace:fps:win32u_vkQueuePresentKHR 0x1 @ approx 100.00fps, total 104.00fps
-tmnf-mon: tick=105.500 event=focus state=other
+trackmania-mac-mon: tick=105.500 event=focus state=other
 106.000:0120:trace:fps:win32u_vkQueuePresentKHR 0x1 @ approx 20.00fps, total 90.00fps
-tmnf-mon: tick=106.500 event=focus state=game
+trackmania-mac-mon: tick=106.500 event=focus state=game
 107.000:0120:trace:fps:win32u_vkQueuePresentKHR 0x1 @ approx 90.00fps, total 90.00fps
-tmnf-state: 108.000 0x400
+trackmania-mac-state: 108.000 0x400
 109.000:0120:trace:fps:win32u_vkQueuePresentKHR 0x1 @ approx 115.00fps, total 95.00fps
-tmnf-state: 110.000 exited
+trackmania-mac-state: 110.000 exited
 
 2026-10-18T10:00:30Z exit status=0
 """
+# The same session as an earlier release logged it: its play.log and backups stay readable.
+OLD_LOG = (
+    LOG.replace("trackmania-mac-run:", "tmnf-run:")
+    .replace("trackmania-mac-mon:", "tmnf-mon:")
+    .replace("trackmania-mac-state:", "tmnf-state:")
+    .replace("trackmania-mac-map:", "tmnf-map:")
+)
 
 
 class SessionReportTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="tmnf-report-")
+        temporary = tempfile.TemporaryDirectory(prefix="trackmania-mac-report-")
         self.addCleanup(temporary.cleanup)
         self.log = Path(temporary.name) / "play.log"
         self.log.write_text(LOG)
@@ -76,6 +83,16 @@ class SessionReportTests(unittest.TestCase):
                 self.assertIn("race", out.getvalue())
                 self.assertIn("fps median  100.0", out.getvalue())
 
+    def test_an_earlier_releases_log_reports_the_same(self):
+        old = self.log.with_name("old-play.log")
+        old.write_text(OLD_LOG)
+        self.assertIn("tmnf-state:", OLD_LOG)
+        new_session, old_session = report.sessions([self.log])[-1], report.sessions([old])[-1]
+        self.assertEqual(new_session.phases(), old_session.phases())
+        self.assertEqual(report.by_state(new_session), report.by_state(old_session))
+        self.assertEqual(report.by_map(new_session), report.by_map(old_session))
+        self.assertEqual(new_session.started, old_session.started)
+
     def test_log_without_session_is_an_error(self):
         self.log.write_text("2026-10-18T10:00:00Z start action=play\nplain game output\n")
         with (
@@ -93,7 +110,8 @@ class MonitorTests(unittest.TestCase):
         ):
             self.assertIsNone(monitor.start_state_helper("/nonexistent", "/nonexistent", "wine"))
         self.assertRegex(
-            out.getvalue(), r"^tmnf-mon: tick=\d+\.\d{3} event=state_helper status=unavailable"
+            out.getvalue(),
+            r"^trackmania-mac-mon: tick=\d+\.\d{3} event=state_helper status=unavailable",
         )
 
 
@@ -119,7 +137,7 @@ class StateHelperBuildTests(unittest.TestCase):
     """start_state_helper against a fake MinGW compiler and fake Wine on PATH; nothing real runs."""
 
     def setUp(self):
-        directory = tempfile.TemporaryDirectory(prefix="tmnf-state-helper-")
+        directory = tempfile.TemporaryDirectory(prefix="trackmania-mac-state-helper-")
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name).resolve()
         bin_dir = self.root / "bin"

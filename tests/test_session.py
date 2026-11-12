@@ -12,8 +12,8 @@ import time
 import unittest
 from unittest import mock
 
-from tmnf.guard import operation_guard as guard
-from tmnf.session import supervisor as session
+from trackmania_mac.guard import operation_guard as guard
+from trackmania_mac.session import supervisor as session
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,7 +26,7 @@ scenario = os.environ.get('FAKE_SCENARIO', 'normal')
 inherited_umask = os.umask(0)
 os.umask(inherited_umask)
 if 'FAKE_UMASK' in os.environ: os.umask(int(os.environ['FAKE_UMASK'], 8))
-assert 'TMNF_OPERATION_FD' not in os.environ
+assert 'TRACKMANIA_MAC_OPERATION_FD' not in os.environ
 lock = pathlib.Path(os.environ['FIXTURE_LOCK']).stat()
 for fd in range(3, 256):
     try: info = os.fstat(fd)
@@ -112,7 +112,7 @@ if scenario in ('teardown', 'hunghelper'):
 SERVER = r"""
 import json, os, pathlib, sys, time
 root = pathlib.Path(os.environ['HOME'])
-assert 'TMNF_OPERATION_FD' not in os.environ
+assert 'TRACKMANIA_MAC_OPERATION_FD' not in os.environ
 lock_path = pathlib.Path(os.environ['FIXTURE_LOCK'])
 if lock_path.exists():
     lock = lock_path.stat()
@@ -134,14 +134,14 @@ sys.exit(int(os.environ.get('FAKE_' + option[1:].upper() + '_STATUS', '0')))
 
 class SessionTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="tmnf-session-host-")
+        temporary = tempfile.TemporaryDirectory(prefix="trackmania-mac-session-host-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         self.home = self.root / "home"
         self.home.mkdir(mode=0o700)
         self.prefix = self.home / "prefix with spaces and 'quotes"
         self.prefix.mkdir(mode=0o700)
-        (self.prefix / ".tmnf-prefix").write_text("tmnf:1\n")
+        (self.prefix / ".trackmania-mac-prefix").write_text("tmnf:1\n")
         self.runtime = self.home / "runtime with spaces"
         self.runtime.mkdir()
         self.wine = self.runtime / "wine"
@@ -162,7 +162,7 @@ class SessionTests(unittest.TestCase):
             "WINEPREFIX": "/never/use/inherited/prefix",
             "WINEDLLOVERRIDES": "fixture-secret-override",
             "FIXTURE_LOCK": str(
-                self.prefix.with_name("." + self.prefix.name + ".tmnf-operation.lock")
+                self.prefix.with_name("." + self.prefix.name + ".trackmania-mac-operation.lock")
             ),
         }
         self.addCleanup(self.release_game)
@@ -201,7 +201,7 @@ class SessionTests(unittest.TestCase):
         args = [
             sys.executable,
             "-m",
-            "tmnf.session.supervisor",
+            "trackmania_mac.session.supervisor",
             action,
             "--prefix",
             str(self.prefix),
@@ -219,7 +219,7 @@ class SessionTests(unittest.TestCase):
             args = [
                 sys.executable,
                 "-m",
-                "tmnf.guard.operation_guard",
+                "trackmania_mac.guard.operation_guard",
                 "run",
                 str(self.prefix),
             ] + args
@@ -956,11 +956,11 @@ class SessionTests(unittest.TestCase):
         self.assertIsNone(unrelated.poll())
 
     def test_unowned_and_redirected_prefixes_never_invoke_wine_or_server(self):
-        (self.prefix / ".tmnf-prefix").unlink()
+        (self.prefix / ".trackmania-mac-prefix").unlink()
         for action in ("run", "stop"):
             result = self.cli(action=action)
             self.assertEqual(result.returncode, 2, result.stderr)
-        (self.prefix / ".tmnf-prefix").write_text("tmnf:1")
+        (self.prefix / ".trackmania-mac-prefix").write_text("tmnf:1")
         real = self.home / "real-prefix"
         self.prefix.rename(real)
         self.prefix.symlink_to(real)
@@ -988,13 +988,15 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(self.server_calls(), [])
 
     def test_owned_temporary_prefix_uses_a_private_result_directory_under_home(self):
-        temporary = tempfile.TemporaryDirectory(prefix="tmnf-external-prefix-", dir="/private/tmp")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="trackmania-mac-external-prefix-", dir="/private/tmp"
+        )
         self.addCleanup(temporary.cleanup)
         prefix = Path(temporary.name) / "prefix"
         prefix.mkdir(mode=0o700)
-        (prefix / ".tmnf-prefix").write_text("tmnf:1")
+        (prefix / ".trackmania-mac-prefix").write_text("tmnf:1")
         self.prefix = prefix
-        self.env["FIXTURE_LOCK"] = str(prefix.with_name(".prefix.tmnf-operation.lock"))
+        self.env["FIXTURE_LOCK"] = str(prefix.with_name(".prefix.trackmania-mac-operation.lock"))
         result = self.cli()
         self.assertEqual(result.returncode, 0, result.stderr)
         invocation = json.loads((self.home / "invocation.json").read_text())
@@ -1077,13 +1079,13 @@ class SessionTests(unittest.TestCase):
         caller = (
             "import os, signal, subprocess, sys, time; "
             "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
-            'subprocess.Popen(sys.argv[1:], pass_fds=(int(os.environ["TMNF_OPERATION_FD"]),)); '
+            'subprocess.Popen(sys.argv[1:], pass_fds=(int(os.environ["TRACKMANIA_MAC_OPERATION_FD"]),)); '
             "time.sleep(30)"
         )
         command = [
             sys.executable,
             "-m",
-            "tmnf.guard.operation_guard",
+            "trackmania_mac.guard.operation_guard",
             "run",
             str(self.prefix),
             sys.executable,
@@ -1161,7 +1163,7 @@ class SessionTests(unittest.TestCase):
 
 class ResultTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="tmnf-result-test-")
+        temporary = tempfile.TemporaryDirectory(prefix="trackmania-mac-result-test-")
         self.addCleanup(temporary.cleanup)
         self.path = Path(temporary.name) / "result.json"
 
@@ -1248,7 +1250,7 @@ class SettleDecisionTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        temporary = tempfile.TemporaryDirectory(prefix="tmnf-settle-")
+        temporary = tempfile.TemporaryDirectory(prefix="trackmania-mac-settle-")
         cls.addClassCleanup(temporary.cleanup)
         cls.binary = Path(temporary.name) / "session-settle"
         subprocess.run(

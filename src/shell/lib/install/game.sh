@@ -10,7 +10,7 @@
 #    silently with an explicit /DIR so prefix paths stay predictable.
 #
 # Every installer path pins its SHA-256; every Inno Setup invocation logs to
-# drive_c/tmnf-install.log so the completion watcher can verify on its own.
+# drive_c/trackmania-mac-install.log so the completion watcher can verify on its own.
 
 # _installer_descendants PID — print every descendant of PID, deepest first.
 _installer_descendants() {
@@ -26,7 +26,7 @@ _installer_descendants() {
 # (start.exe) has been seen ignoring both the wineserver shutdown and SIGTERM,
 # which left a bare `wait` blocked forever. Only the tree below PID is touched.
 stop_installer_tree() {
-  local pid="$1" grace="${TMNF_INSTALL_KILL_GRACE:-15}" waited=0 victim victims
+  local pid="$1" grace="${TRACKMANIA_MAC_INSTALL_KILL_GRACE:-15}" waited=0 victim victims
   while kill -0 "$pid" 2>/dev/null && test "$waited" -lt "$grace"; do
     sleep 1
     waited=$((waited + 1))
@@ -45,7 +45,7 @@ stop_installer_tree() {
 # Wine processes (services.exe, explorer.exe, ...) that were reparented to
 # launchd and still hold the dead server's directory open. Setup steps only.
 reap_prefix_leftovers() {
-  without_operation_lock tmnf_python -m tmnf.guard.operation_guard reap "$TMNF_PREFIX" || true
+  without_operation_lock trackmania_mac_python -m trackmania_mac.guard.operation_guard reap "$TRACKMANIA_MAC_PREFIX" || true
 }
 
 # wait_inno_setup PID LOG LABEL: watch a running Inno Setup in the prefix.
@@ -54,7 +54,7 @@ reap_prefix_leftovers() {
 # successful installation and the deinitialization step made it safe.
 wait_inno_setup() {
   local installer_pid="$1" installer_log="$2" label="$3"
-  local elapsed=0 shutdown_wait=0 max_wait="${TMNF_INSTALL_TIMEOUT:-900}"
+  local elapsed=0 shutdown_wait=0 max_wait="${TRACKMANIA_MAC_INSTALL_TIMEOUT:-900}"
   local server_bin
 
   while kill -0 "$installer_pid" 2>/dev/null; do
@@ -65,7 +65,7 @@ wait_inno_setup() {
       if test "$shutdown_wait" -ge 10; then
         say "$label installation completed; stopping the legacy installer after its shutdown wait."
         server_bin="$(wineserver_binary "$(wine_binary)")" || die "Cannot locate wineserver."
-        without_operation_lock env WINEPREFIX="$TMNF_PREFIX" "$server_bin" -k || true
+        without_operation_lock env WINEPREFIX="$TRACKMANIA_MAC_PREFIX" "$server_bin" -k || true
         stop_installer_tree "$installer_pid"
         reap_prefix_leftovers
         break
@@ -75,13 +75,13 @@ wait_inno_setup() {
       if test -f "$installer_log" && grep -Fq 'Installation process succeeded.' "$installer_log"; then
         warn "The installer completed its file installation but did not exit after ${max_wait}s; stopping this prefix."
         server_bin="$(wineserver_binary "$(wine_binary)")" || die "Cannot locate wineserver."
-        without_operation_lock env WINEPREFIX="$TMNF_PREFIX" "$server_bin" -k || true
+        without_operation_lock env WINEPREFIX="$TRACKMANIA_MAC_PREFIX" "$server_bin" -k || true
         stop_installer_tree "$installer_pid"
         reap_prefix_leftovers
         break
       fi
       server_bin="$(wineserver_binary "$(wine_binary)")" || die "Cannot locate wineserver."
-      without_operation_lock env WINEPREFIX="$TMNF_PREFIX" "$server_bin" -k || true
+      without_operation_lock env WINEPREFIX="$TRACKMANIA_MAC_PREFIX" "$server_bin" -k || true
       stop_installer_tree "$installer_pid"
       reap_prefix_leftovers
       die "$label installation timed out. See $installer_log; rerun make install to retry."
@@ -96,21 +96,21 @@ wait_inno_setup() {
 }
 
 # run_released_installer PATH LABEL — start one silent Inno Setup run in the
-# background and remember the watcher PID in TMNF_INSTALLER_PID.
-# TMNF_INNO_DIR optionally pins the Windows install directory for wrappers
+# background and remember the watcher PID in TRACKMANIA_MAC_INSTALLER_PID.
+# TRACKMANIA_MAC_INNO_DIR optionally pins the Windows install directory for wrappers
 # whose default directory is computed at runtime.
 run_released_installer() {
   local installer="$1" label="$2" flags=()
   flags=(/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-)
-  flags+=('/LOG=C:\tmnf-install.log')
-  if test -n "${TMNF_INNO_DIR:-}"; then
-    flags+=("/DIR=$TMNF_INNO_DIR")
+  flags+=('/LOG=C:\trackmania-mac-install.log')
+  if test -n "${TRACKMANIA_MAC_INNO_DIR:-}"; then
+    flags+=("/DIR=$TRACKMANIA_MAC_INNO_DIR")
   fi
   say "Installing $label"
   run_wine "$installer" "${flags[@]}" "${@:3}" &
   # The Wine invocation runs inside a backgrounded function; the PID watches
   # the whole pipeline, exactly like the installer process did before.
-  TMNF_INSTALLER_PID=$!
+  TRACKMANIA_MAC_INSTALLER_PID=$!
 }
 
 # unpack_inner_inno INSTALLER — prints the path of the extracted Inno Setup
@@ -153,11 +153,11 @@ remove_inno_staging() {
 
 download_pinned_installer() {
   local title="$1"
-  test -n "$TMNF_TITLE_SOURCE_URL" && test -n "$TMNF_TITLE_SOURCE_SHA256" \
+  test -n "$TRACKMANIA_MAC_TITLE_SOURCE_URL" && test -n "$TRACKMANIA_MAC_TITLE_SOURCE_SHA256" \
     || die "Title $title has no pinned installer URL and checksum in config/titles."
   # The registry pins the installer size (empty when unknown); cap the download at it.
-  download_verified "$TMNF_TITLE_SOURCE_URL" "$(_cache_installer_path "$title")" \
-    "$TMNF_TITLE_SOURCE_SHA256" "${TMNF_TITLE_SOURCE_SIZE:-}"
+  download_verified "$TRACKMANIA_MAC_TITLE_SOURCE_URL" "$(_cache_installer_path "$title")" \
+    "$TRACKMANIA_MAC_TITLE_SOURCE_SHA256" "${TRACKMANIA_MAC_TITLE_SOURCE_SIZE:-}"
 }
 
 verify_installed_game() {
@@ -169,8 +169,8 @@ verify_installed_game() {
 }
 
 install_game() {
-  local title_id="$TMNF_TITLE" installer_path installer_log
-  local kind="$TMNF_TITLE_INSTALLER"
+  local title_id="$TRACKMANIA_MAC_TITLE" installer_path installer_log
+  local kind="$TRACKMANIA_MAC_TITLE_INSTALLER"
 
   case "$kind" in
     online) ;;
@@ -179,35 +179,35 @@ install_game() {
   esac
 
   installer_path="$(_cache_installer_path "$title_id")"
-  installer_log="${TMNF_PREFIX}/drive_c/tmnf-install.log"
+  installer_log="${TRACKMANIA_MAC_PREFIX}/drive_c/trackmania-mac-install.log"
 
-  if test -f "$GAME_EXE" && test "${TMNF_REINSTALL:-0}" != "1" \
+  if test -f "$GAME_EXE" && test "${TRACKMANIA_MAC_REINSTALL:-0}" != "1" \
     && { test ! -f "$installer_log" || grep -Fq 'Installation process succeeded.' "$installer_log"; }; then
-    if verify_file "$GAME_EXE" "$TMNF_TITLE_GAME_EXE_SHA256"; then
-      say "$TMNF_TITLE_SHORT_NAME $TMNF_TITLE_GAME_VERSION is already installed at $GAME_DIR"
+    if verify_file "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256"; then
+      say "$TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION is already installed at $GAME_DIR"
     else
-      say "$TMNF_TITLE_SHORT_NAME is already installed at $GAME_DIR"
-      warn "The executable differs from the official $TMNF_TITLE_GAME_VERSION build; run src/shell/cli/tmnf update to replace it."
+      say "$TRACKMANIA_MAC_TITLE_SHORT_NAME is already installed at $GAME_DIR"
+      warn "The executable differs from the official $TRACKMANIA_MAC_TITLE_GAME_VERSION build; run src/shell/cli/trackmania-mac update to replace it."
     fi
     return
   fi
 
   download_pinned_installer "$title_id"
   rm -f "$installer_log"
-  run_released_installer "$installer_path" "$TMNF_TITLE_NAME"
-  wait_inno_setup "$TMNF_INSTALLER_PID" "$installer_log" "$TMNF_TITLE_NAME"
-  verify_installed_game "$GAME_EXE" "$TMNF_TITLE_GAME_EXE_SHA256" "$TMNF_TITLE_SHORT_NAME"
-  say "Installed $TMNF_TITLE_SHORT_NAME $TMNF_TITLE_GAME_VERSION at $GAME_DIR"
+  run_released_installer "$installer_path" "$TRACKMANIA_MAC_TITLE_NAME"
+  wait_inno_setup "$TRACKMANIA_MAC_INSTALLER_PID" "$installer_log" "$TRACKMANIA_MAC_TITLE_NAME"
+  verify_installed_game "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256" "$TRACKMANIA_MAC_TITLE_SHORT_NAME"
+  say "Installed $TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION at $GAME_DIR"
 }
 
 install_pinned_inno_game() {
-  local kind="$1" title_id="$TMNF_TITLE"
+  local kind="$1" title_id="$TRACKMANIA_MAC_TITLE"
   local title_name installer_path installer_log inner cleanup
 
-  title_name="$TMNF_TITLE_NAME"
-  installer_log="${TMNF_PREFIX}/drive_c/tmnf-install.log"
+  title_name="$TRACKMANIA_MAC_TITLE_NAME"
+  installer_log="${TRACKMANIA_MAC_PREFIX}/drive_c/trackmania-mac-install.log"
 
-  if test -f "$GAME_EXE" && test "${TMNF_REINSTALL:-0}" != "1" \
+  if test -f "$GAME_EXE" && test "${TRACKMANIA_MAC_REINSTALL:-0}" != "1" \
     && { test ! -f "$installer_log" || grep -Fq 'Installation process succeeded.' "$installer_log"; }; then
     say "$title_name is already installed at $GAME_DIR"
     return
@@ -225,9 +225,9 @@ install_pinned_inno_game() {
   (
     # shellcheck disable=SC2064
     trap "$cleanup" EXIT
-    TMNF_INNO_DIR="C:\\Program Files (x86)\\${TMNF_TITLE_GAME_DIR_NAME}" \
+    TRACKMANIA_MAC_INNO_DIR="C:\\Program Files (x86)\\${TRACKMANIA_MAC_TITLE_GAME_DIR_NAME}" \
       run_released_installer "$inner" "$title_name"
-    wait_inno_setup "$TMNF_INSTALLER_PID" "$installer_log" "$title_name"
+    wait_inno_setup "$TRACKMANIA_MAC_INSTALLER_PID" "$installer_log" "$title_name"
   ) || exit "$?"
   verify_installed_game "$GAME_EXE" "" "$title_name"
   say "Installed $title_name at $GAME_DIR"

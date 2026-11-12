@@ -6,8 +6,8 @@ body:
     attributes:
       value: |
         In the TrackMania Mac app, select the title and choose **Create diagnostics report**.
-        It writes a redacted zip to `~/Library/Logs/TMNF`; attach it below.
-        From a source checkout, `./src/shell/cli/tmnf diagnostics` does the same.
+        It writes a redacted zip to `~/Library/TrackManiaMacOS/logs`; attach it below.
+        From a source checkout, `./src/shell/cli/trackmania-mac diagnostics` does the same.
         For a security problem, use the security policy instead of a public issue.
   - type: dropdown
     id: title
@@ -54,14 +54,14 @@ body:
     id: diagnostics
     attributes:
       label: Diagnostics report
-      description: Drag the diagnostics zip here. If you can't create one, paste the output of `tmnf doctor` instead.
+      description: Drag the diagnostics zip here. If you can't create one, paste the output of `./src/shell/cli/trackmania-mac doctor` instead.
     validations:
       required: true
   - type: textarea
     id: logs
     attributes:
       label: Relevant logs
-      description: From ~/Library/Logs/TMNF (play.log, or <title>-play.log for other titles). Trim long files.
+      description: From ~/Library/TrackManiaMacOS/logs (play.log, or <title>-play.log for other titles). Trim long files.
       render: text
     validations:
       required: false

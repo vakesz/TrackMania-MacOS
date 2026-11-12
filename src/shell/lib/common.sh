@@ -109,12 +109,6 @@ esac
 # checks that runtime_manifest.py lists the same names.
 readonly RUNTIME_D3DX9_DLLS=(d3dx9_30 d3dx9_31 d3dx9_43)
 TMNF_VERSION="$(cat "${TMNF_PROJECT_DIR}/VERSION")"
-TMNF_GAME_VERSION="2.11.26"
-TMNF_GAME_EXE_SHA256="3847cf9f20bfc63914450060ed528c12104f743d96ad23d6e76abd178de8c84f"
-# OpenAL32.dll as installed by the pinned TMNF release: Creative's OpenAL router.
-# OpenAL Soft's official Windows binaries (config/pins.json) replace it; its
-# software mixer costs much more CPU under Wine on macOS 27.
-CREATIVE_OPENAL_SHA256="26ba695d73fdf78ff133ab9c0e12300c26076441627a25ffba80c8b8aedb10ec"
 RUNTIME_VERSION="$TMNF_VERSION"
 RUNTIME_RELEASE_URL="https://github.com/vakesz/TrackMania-MacOS/releases/download/v${RUNTIME_VERSION}"
 RUNTIME_REPOSITORY_URL="https://github.com/vakesz/TrackMania-MacOS.git"
@@ -277,10 +271,12 @@ d9vk_is_installed() {
   cmp -s "$TMNF_D9VK_DLL" "$PREFIX_D9VK_DLL"
 }
 
-# Only TMNF's own OpenAL32.dll is known (CREATIVE_OPENAL_SHA256); other titles
-# keep the library they ship.
+# A title whose release ships Creative's OpenAL router pins that DLL in the
+# registry (creative_openal_sha256). OpenAL Soft's official Windows binaries
+# (config/pins.json) replace it, because the router's software mixer costs much
+# more CPU under Wine on macOS 27. Other titles keep the library they ship.
 openal_applies() {
-  test "$TMNF_TITLE" = tmnf
+  test -n "$TMNF_TITLE_CREATIVE_OPENAL_SHA256"
 }
 
 openal_soft_is_installed() {
@@ -293,7 +289,7 @@ game_openal() {
     printf 'missing\n'
   elif openal_soft_is_installed; then
     printf 'soft\n'
-  elif verify_file "$GAME_OPENAL" "$CREATIVE_OPENAL_SHA256"; then
+  elif verify_file "$GAME_OPENAL" "$TMNF_TITLE_CREATIVE_OPENAL_SHA256"; then
     printf 'creative\n'
   else
     printf 'other\n'

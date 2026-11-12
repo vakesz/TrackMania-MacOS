@@ -62,6 +62,10 @@ _FIELDS: typing.Tuple[_Field, ...] = (
     _Field("source_url", "url", False),
     _Field("source_sha256", "sha", False),
     _Field("source_size", "size", False),
+    # Per-title release pins; set only where the exact build is known.
+    _Field("game_version", "version", False),
+    _Field("game_exe_sha256", "sha", False),
+    _Field("creative_openal_sha256", "sha", False),
     _Field("requires_serial", "bool", True),
     _Field("notes", "notes", False),
 )
@@ -115,6 +119,9 @@ class Title(typing.NamedTuple):
     source_url: typing.Optional[str]
     source_sha256: typing.Optional[str]
     source_size: typing.Optional[int]
+    game_version: typing.Optional[str]
+    game_exe_sha256: typing.Optional[str]
+    creative_openal_sha256: typing.Optional[str]
     requires_serial: bool
     notes: str
 
@@ -188,6 +195,8 @@ def _check_value(field: _Field, value: object, path: pathlib.Path) -> object:
         raise RegistryError(f"{path}: {name} must match [A-Za-z0-9.-]+")
     if kind == "url" and not _URL.match(value):
         raise RegistryError(f"{path}: {name} must be an absolute http(s) URL")
+    if kind == "version" and not _PIN_TEXT.match(value):
+        raise RegistryError(f"{path}: unsafe {name}")
     if kind == "sha" and not _SHA256.match(value):
         raise RegistryError(f"{path}: {name} must be a lowercase hex SHA-256")
     return value
@@ -233,6 +242,11 @@ def _validate(data: object, path: pathlib.Path) -> Title:
             )
     elif url or sha or size:
         raise RegistryError(f"{path}: installer kind {values['installer']} must not carry pins")
+    if values["game_exe_sha256"] and not values["game_version"]:
+        raise RegistryError(f"{path}: game_exe_sha256 requires game_version")
+    # The direct "online" flow verifies the installed executable against its pin.
+    if values["installer"] == "online" and not values["game_exe_sha256"]:
+        raise RegistryError(f"{path}: installer kind online requires game_exe_sha256")
 
     return Title(**values)  # type: ignore[arg-type]  # each value checked by kind above
 

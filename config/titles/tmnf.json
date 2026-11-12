@@ -19,6 +19,9 @@
   "source_url": "https://nadeo-download.cdn.ubi.com/trackmaniaforever/tmnationsforever_setup.exe",
   "source_sha256": "2f659138ed4409da404970841e18f03d29921beaf6a424824c8312ddb20f6355",
   "source_size": null,
+  "game_version": "2.11.26",
+  "game_exe_sha256": "3847cf9f20bfc63914450060ed528c12104f743d96ad23d6e76abd178de8c84f",
+  "creative_openal_sha256": "26ba695d73fdf78ff133ab9c0e12300c26076441627a25ffba80c8b8aedb10ec",
   "requires_serial": false,
   "notes": "Free download from Nadeo CDN. Reference implementation; this registry is the authority for title paths and names."
 }

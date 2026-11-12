@@ -340,6 +340,25 @@ class RegistryValidationTests(unittest.TestCase):
             ("", None, None, None),
         )
 
+    def test_release_pins_are_optional_but_consistent(self):
+        sha = "0" * 64
+        title = self.validate(game_version="1.0", game_exe_sha256=sha, creative_openal_sha256=sha)
+        self.assertEqual((title.game_version, title.game_exe_sha256), ("1.0", sha))
+        self.assertIsNone(self.validate().game_exe_sha256)
+        for changes in (
+            {"game_exe_sha256": sha},
+            {"game_version": "1.0", "game_exe_sha256": "ABC"},
+            {"creative_openal_sha256": "x" * 64},
+            {"game_version": "1.0; rm"},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(self.registry.RegistryError):
+                self.validate(**changes)
+
+    def test_online_installer_requires_an_exe_pin(self):
+        with self.assertRaisesRegex(self.registry.RegistryError, "requires game_exe_sha256"):
+            self.validate(installer="online")
+        self.validate(installer="online", game_version="1.0", game_exe_sha256="0" * 64)
+
     def test_value_types_are_checked(self):
         for field, value in (
             ("needs_tmloader", "yes"),

@@ -22,21 +22,21 @@ update_game() {
   if test -f "$GAME_EXE"; then
     ensure_title_icon || warn "Could not extract the game icon for the hub."
   fi
-  if verify_file "$GAME_EXE" "$TMNF_GAME_EXE_SHA256" \
+  if verify_file "$GAME_EXE" "$TMNF_TITLE_GAME_EXE_SHA256" \
     && { test "$needs_patch" = false || competition_patch_is_ready; } \
     && directx_is_current && openal_is_current; then
     if test "$needs_patch" = true; then
-      say "$label $TMNF_GAME_VERSION, DirectX $DIRECTX_VERSION, Competition Patch $TMCOMP_VERSION and OpenAL are current."
+      say "$label $TMNF_TITLE_GAME_VERSION, DirectX $DIRECTX_VERSION, Competition Patch $TMCOMP_VERSION and OpenAL are current."
     else
-      say "$label $TMNF_GAME_VERSION and DirectX $DIRECTX_VERSION are current."
+      say "$label $TMNF_TITLE_GAME_VERSION and DirectX $DIRECTX_VERSION are current."
     fi
     return
   fi
 
-  if verify_file "$GAME_EXE" "$TMNF_GAME_EXE_SHA256"; then
+  if verify_file "$GAME_EXE" "$TMNF_TITLE_GAME_EXE_SHA256"; then
     exec "${TMNF_PROJECT_DIR}/src/shell/cli/install.sh"
   fi
-  say "Installing the official $label $TMNF_GAME_VERSION release and Competition Patch."
+  say "Installing the official $label $TMNF_TITLE_GAME_VERSION release and Competition Patch."
   TMNF_REINSTALL=1 exec "${TMNF_PROJECT_DIR}/src/shell/cli/install.sh"
 }
 
@@ -51,12 +51,8 @@ doctor() {
   validate_launch_options
   title_name="$TMNF_TITLE_NAME"
   title_short="$TMNF_TITLE_SHORT_NAME"
-  # TMNF_GAME_EXE_SHA256 pins the TMNF release only; other titles have no
-  # executable pin yet and get presence coverage instead.
-  game_expected_sha=""
-  if test "$TMNF_TITLE" = tmnf; then
-    game_expected_sha="${TMNF_GAME_EXE_SHA256:-}"
-  fi
+  # Titles without a registry exe pin get presence coverage instead.
+  game_expected_sha="$TMNF_TITLE_GAME_EXE_SHA256"
   needs_patch="$TMNF_TITLE_NEEDS_TMLOADER"
 
   if test -f "${TMNF_PREFIX}/system.reg" && require_owned_prefix >/dev/null 2>&1; then

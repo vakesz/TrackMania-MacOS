@@ -114,6 +114,9 @@ enum UninstallChoice: Hashable {
 }
 
 enum HubUIText {
+    static let registerKeyButton = String(localized: "Register player key")
+    static let registerKeyNote = String(localized: "First time? Register your player key, then press Play. Play can't ask for the key itself.")
+
     /// The dialog message: every path the backend reported, then the saves folder.
     static func uninstall(_ title: HubTitle) -> String {
         guard let removal = title.removal else {

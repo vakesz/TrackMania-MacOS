@@ -13,6 +13,9 @@ After a full TMNF installation, the hub creates two separate installed apps:
 - **TrackMania Settings** opens the original settings launcher.
 
 The hub opens those app wrappers through macOS; it does not replace them.
+For titles that need a serial (`requiresSerial`), the hub replaces the Settings button
+with "Register player key", which opens the same Settings app, and notes that the key is
+entered there before pressing Play.
 
 ## Backend contract
 

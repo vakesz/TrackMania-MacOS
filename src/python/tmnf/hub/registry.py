@@ -46,6 +46,7 @@ _STRING_FIELDS = (
     "game_dir_name",
     "game_exe",
     "launcher_exe",
+    "user_subdir",
 )
 _SWITCH_FIELDS = ("needs_directx", "needs_tmloader", "requires_serial")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -93,6 +94,7 @@ class Title(typing.NamedTuple):
     game_dir_name: str
     game_exe: str
     launcher_exe: str
+    user_subdir: str
     save_dirs: typing.Tuple[str, ...]
     needs_directx: bool
     needs_tmloader: bool
@@ -162,6 +164,7 @@ def _validate(data: object, path: pathlib.Path) -> Title:
         "game_dir_name",
         "app_name",
         "settings_app_name",
+        "user_subdir",
     ):
         if not _plain_name(data[field]):
             raise RegistryError(f"{path}: unsafe name field {field}")
@@ -177,6 +180,8 @@ def _validate(data: object, path: pathlib.Path) -> Title:
         or not all(isinstance(item, str) and _plain_name(item) for item in save_dirs)
     ):
         raise RegistryError(f"{path}: save_dirs must be a list of plain folder names")
+    if data["user_subdir"] not in save_dirs:
+        raise RegistryError(f"{path}: user_subdir must be one of save_dirs")
 
     url = data.get("source_url")
     if isinstance(url, str) and url:
@@ -303,13 +308,12 @@ def shell_assignments(title: typing.Optional[Title]) -> typing.List[typing.Tuple
     pairs = []
     if title is not None:
         # save_dirs is omitted: names may contain spaces, so a joined string is
-        # ambiguous; the shell only needs the first one.
+        # ambiguous; the shell only needs user_subdir.
         pairs = [
             (f"TMNF_TITLE_{field.upper()}", _shell_value(getattr(title, field)))
             for field in Title._fields
             if field != "save_dirs"
         ]
-        pairs.append(("TMNF_TITLE_FIRST_SAVE_DIR", title.save_dirs[0]))
     pairs += [(key.upper(), value) for key, value in pins().items()]
     return pairs
 

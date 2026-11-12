@@ -14,6 +14,7 @@
   "game_dir_name": "TrackMania",
   "game_exe": "TrackMania.exe",
   "launcher_exe": "TrackManiaLauncher.exe",
+  "user_subdir": "TrackMania",
   "save_dirs": ["TrackMania"],
   "needs_directx": true,
   "needs_tmloader": false,

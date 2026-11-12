@@ -6,6 +6,8 @@ description: Checklist for adding a Forever-era game title to MacTMNF or changin
 `config/titles/*.json` is the only source of title data. The shell reads it through `python -m tmnf.hub.registry export`, and Swift only sees it through `tmnf hub snapshot`. So a title change should be a data change, never a hard-coded path in shell or Swift.
 
 1. **Entry.** Copy a similar title (e.g. `config/titles/tmu.json`) to `config/titles/<id>.json` and fill in every field:
+   - `user_subdir` is the folder under UserData that the game reads (its `Nadeo.ini` `UserSubDir`). It must be one of `save_dirs`, so uninstall guards always cover it. Setup seeds the default graphics settings there.
+   - `needs_tmloader` is true for titles that Play starts through Competition Patch and CoreMod. Other titles launch their own executable.
    - `prefix_subdir` must be unique, because two titles sharing a Wine prefix could overwrite each other's installs.
    - The installer's `source_url`, `source_sha256` and `source_size` go here, not in `config/pins.json`, which holds only shared downloads.
    - New titles start with `status` provisional. Only `tmnf` is supported.

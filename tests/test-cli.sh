@@ -192,7 +192,7 @@ grep -Fq '<reg><add><HKCU\Software\Wine\DllOverrides></v><d3d9>' "$CALL_LOG"
 grep -Fq '<reg><add><HKCU\Software\Wine\Drivers></v><Audio></t><REG_SZ></d><coreaudio></f>' "$CALL_LOG"
 grep -Fq "cwd=${FAKE_GAME}" "$CALL_LOG"
 grep -Fq "overrides=d3d9=n" "$CALL_LOG"
-grep -Fq 'overrides=d3d9=n;d3dx9_30,d3dx9_43,wined3d=b' "$CALL_LOG"
+grep -Fq 'overrides=d3d9=n;d3dx9_30,d3dx9_31,d3dx9_43,wined3d=b' "$CALL_LOG"
 grep -Fq "sidecar=${FAKE_BIN}/x87sidecar" "$CALL_LOG"
 grep -Fq 'rounding=0,0' "$CALL_LOG"
 grep -Fq "dxvk_conf=${PROJECT_DIR}/config/dxvk.conf" "$CALL_LOG"
@@ -246,6 +246,23 @@ grep -Fq "d3d_config=renderer=vulkan" "$CALL_LOG"
 WINE_D3D_CONFIG=csmt=0 "${PROJECT_DIR}/src/shell/cli/tmnf" play-vanilla
 grep -Fq "d3d_config=renderer=gdi,csmt=0" "$CALL_LOG"
 
+# A title without needs_tmloader launches its own executable on play and never
+# looks for the Competition Patch (none of its files exist for Canyon here).
+CANYON_GAME="${FAKE_PREFIX}/drive_c/Program Files (x86)/ManiaPlanet"
+mkdir -p "$CANYON_GAME"
+touch "${CANYON_GAME}/ManiaPlanet.exe"
+cp "${FAKE_PREFIX}/.tmnf-prefix" "${TEST_ROOT}/tmnf-prefix.saved"
+printf 'tm-canyon:1\n' >"${FAKE_PREFIX}/.tmnf-prefix"
+: >"$CALL_LOG"
+TMNF_TITLE=tm-canyon "${PROJECT_DIR}/src/shell/cli/tmnf" play /test-argument
+cp "${TEST_ROOT}/tmnf-prefix.saved" "${FAKE_PREFIX}/.tmnf-prefix"
+grep -Fq "cwd=${CANYON_GAME}" "$CALL_LOG"
+grep -Fq "<--watch><${CANYON_GAME}/ManiaPlanet.exe><--><${CANYON_GAME}/ManiaPlanet.exe></test-argument>" "$CALL_LOG"
+if grep -Fq 'TMLoader' "$CALL_LOG"; then
+  echo 'play for a title without needs_tmloader must not start ModLoader' >&2
+  exit 1
+fi
+
 : >"$CALL_LOG"
 doctor_output="$("${PROJECT_DIR}/src/shell/cli/tmnf" doctor 2>&1)" || true
 printf '%s\n' "$doctor_output" | grep -q 'Renderer: d9vk'
@@ -258,7 +275,7 @@ grep -Fq "<--watch><${FAKE_GAME}/TmForeverLauncher.exe><--watch><${FAKE_GAME}/Tm
 grep -Fxq "server=<-k> prefix=${FAKE_PREFIX}" "$CALL_LOG"
 grep -Fxq "server=<-w> prefix=${FAKE_PREFIX}" "$CALL_LOG"
 # The launcher and its benchmark run with the game's renderer and translator.
-grep -Fq 'overrides=d3d9=n;d3dx9_30,d3dx9_43,wined3d=b' "$CALL_LOG"
+grep -Fq 'overrides=d3d9=n;d3dx9_30,d3dx9_31,d3dx9_43,wined3d=b' "$CALL_LOG"
 grep -Fq "sidecar=${FAKE_BIN}/x87sidecar" "$CALL_LOG"
 grep -Fq "dxvk_conf=${PROJECT_DIR}/config/dxvk.conf" "$CALL_LOG"
 # D9VK reports a listed GPU to the launcher only, so it does not benchmark.

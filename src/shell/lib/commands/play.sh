@@ -37,8 +37,12 @@ play_target() {
       renderer_vars=("WINE_D3D_CONFIG=renderer=gl${WINE_D3D_CONFIG:+,$WINE_D3D_CONFIG}")
       ;;
   esac
-  # CoreMod redirects D3DX30 compilation into D3DX43. Keep both patched compilers.
-  overrides="${overrides};d3dx9_30,d3dx9_43,wined3d=b"
+  # CoreMod redirects D3DX30 compilation into D3DX43, and d3dx9_43 loads
+  # d3dx9_31 for the legacy-compiler flag. DXSETUP installs a native d3dx9_31,
+  # so override the whole set to the restored Wine copies, not just 30 and 43.
+  local d3dx9_overrides
+  d3dx9_overrides="$(IFS=,; printf '%s' "${RUNTIME_D3DX9_DLLS[*]}")"
+  overrides="${overrides};${d3dx9_overrides},wined3d=b"
   if test -n "${WINEDLLOVERRIDES:-}"; then
     overrides="${overrides};${WINEDLLOVERRIDES}"
   fi
@@ -96,6 +100,10 @@ install_d9vk() {
 }
 
 play_game() {
+  if test "$TMNF_TITLE_NEEDS_TMLOADER" != true; then
+    play_vanilla "$@"
+    return
+  fi
   competition_patch_is_ready || die "Competition Patch is missing, outdated, or unconfigured. Run src/shell/cli/install.sh."
   play_target "$TMLOADER_EXE" "$TMLOADER_GAME_EXE" run TmForever competition "$@"
 }

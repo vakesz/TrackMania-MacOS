@@ -85,6 +85,7 @@ case "${1:-}" in
     TMNF_TITLE_GAME_DIR_NAME=""
     TMNF_TITLE_GAME_EXE=""
     TMNF_TITLE_LAUNCHER_EXE=""
+    TMNF_TITLE_USER_SUBDIR=""
     TMNF_TITLE_APP_NAME=""
     TMNF_TITLE_SETTINGS_APP_NAME=""
     DIRECTX_VERSION="" DIRECTX_URL="" DIRECTX_SHA256=""
@@ -103,6 +104,10 @@ case "${1:-}" in
     ;;
 esac
 
+# Wine-owned Direct3D 9 shader compilers the runtime restores and overrides to
+# native-first. tests/test_installation.py checks that runtime_manifest.py
+# lists the same names.
+readonly RUNTIME_D3DX9_DLLS=(d3dx9_30 d3dx9_31 d3dx9_43)
 TMNF_VERSION="$(cat "${TMNF_PROJECT_DIR}/VERSION")"
 TMNF_GAME_VERSION="2.11.26"
 TMNF_GAME_EXE_SHA256="3847cf9f20bfc63914450060ed528c12104f743d96ad23d6e76abd178de8c84f"

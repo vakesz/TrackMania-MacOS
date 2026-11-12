@@ -5,10 +5,11 @@ configure_competition_patch() {
   local product_dir
   local profile_dir
 
+  test -n "$TMNF_TITLE_GAME_DIR_NAME" || die "The title registry has no game_dir_name."
   product_dir="${TMLOADER_DIR}/database/TmForever/products/TmForever"
   profile_dir="${TMLOADER_DIR}/database/TmForever/profiles"
   mkdir -p "$product_dir" "$profile_dir"
-  printf '%s\n' 'install: "C:/Program Files (x86)/TmNationsForever"' >"${product_dir}/settings.yaml"
+  printf 'install: "C:/Program Files (x86)/%s"\n' "$TMNF_TITLE_GAME_DIR_NAME" >"${product_dir}/settings.yaml"
   printf '%s\n' \
     'program:' \
     '  id: TmForever' \

@@ -1,6 +1,19 @@
 #!/bin/bash
 # Wine prefix lifecycle. Sourced by install.sh after common.sh.
 
+# Seed the runtime's default graphics settings into the folder this title's game
+# reads (its UserSubDir). An existing file or link is the user's and stays.
+seed_system_config() {
+  local config_dir
+  test -n "$TMNF_TITLE_USER_SUBDIR" || die "The title registry has no user_subdir."
+  config_dir="${TMNF_USERDATA}/${TMNF_TITLE_USER_SUBDIR}/Config"
+  mkdir -p "$config_dir"
+  if test ! -e "${config_dir}/Default.SystemConfig.Gbx" \
+    && test ! -L "${config_dir}/Default.SystemConfig.Gbx"; then
+    cp "${TMNF_RUNTIME}/config/Default.SystemConfig.Gbx" "${config_dir}/"
+  fi
+}
+
 initialize_prefix() {
   local wine_bin
   local wineboot_bin
@@ -13,6 +26,11 @@ initialize_prefix() {
     test -f "${TMNF_PREFIX}/.tmnf-prefix" || die "This prefix is not managed by TMNF. Choose a new TMNF_PREFIX."
     if test ! -f "${TMNF_PREFIX}/.tmnf-initializing"; then
       WINEDLLOVERRIDES='mscoree,mshtml=' run_wine wineboot --update
+      # Repair seeds only when the game's Documents is this UserData; a legacy
+      # Documents folder inside the prefix is left alone.
+      if tmnf_python -m tmnf.guard.managed_paths documents-linked "$TMNF_PREFIX" "$TMNF_USERDATA" 2>/dev/null; then
+        seed_system_config
+      fi
       say "Prefix is up to date; nothing to repair."
       return
     fi
@@ -23,7 +41,7 @@ initialize_prefix() {
   wineboot_bin="$(wineboot_binary "$wine_bin")" || die "Cannot locate wineboot."
   touch "${TMNF_PREFIX}/.tmnf-initializing" || die "Cannot mark prefix initialization."
   if test ! -f "${TMNF_PREFIX}/.tmnf-prefix"; then
-    if ! printf '%s:1\n' "$TMNF_TITLE" >"${TMNF_PREFIX}/.tmnf-prefix"; then
+    if ! printf '%s\n' "$TMNF_TITLE_PREFIX_MARKER" >"${TMNF_PREFIX}/.tmnf-prefix"; then
       rm -f "${TMNF_PREFIX}/.tmnf-prefix" "${TMNF_PREFIX}/.tmnf-initializing"
       die "Cannot mark prefix ownership."
     fi
@@ -38,12 +56,6 @@ initialize_prefix() {
   # profile arrangements and require explicit backup/repair when seeding is unsafe.
   tmnf_python -m tmnf.guard.managed_paths setup-documents "$TMNF_PREFIX" "$TMNF_USERDATA" \
     || die "Documents setup is incomplete; no external settings were seeded."
-  save_dir="$TMNF_TITLE_FIRST_SAVE_DIR"
-  test -n "$save_dir" || save_dir=TmForever
-  mkdir -p "${TMNF_USERDATA}/${save_dir}/Config"
-  if test ! -e "${TMNF_USERDATA}/${save_dir}/Config/Default.SystemConfig.Gbx" \
-    && test ! -L "${TMNF_USERDATA}/${save_dir}/Config/Default.SystemConfig.Gbx"; then
-    cp "${TMNF_RUNTIME}/config/Default.SystemConfig.Gbx" "${TMNF_USERDATA}/${save_dir}/Config/"
-  fi
+  seed_system_config
   rm -f "${TMNF_PREFIX}/.tmnf-profile-baseline" "${TMNF_PREFIX}/.tmnf-initializing"
 }

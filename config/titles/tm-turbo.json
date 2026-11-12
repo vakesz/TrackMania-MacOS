@@ -14,6 +14,7 @@
   "game_dir_name": "TrackMania Turbo",
   "game_exe": "TrackmaniaTurbo.exe",
   "launcher_exe": "TrackmaniaTurboLauncher.exe",
+  "user_subdir": "TrackMania Turbo",
   "save_dirs": ["TrackMania Turbo", "Turbo"],
   "needs_directx": true,
   "needs_tmloader": false,

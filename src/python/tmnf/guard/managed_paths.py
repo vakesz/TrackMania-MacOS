@@ -506,6 +506,27 @@ def check_uninstall(prefix, userdata):
     return prefix
 
 
+def _links_to_userdata(path, userdata):
+    """True when a Documents entry already resolves to the userdata folder."""
+    try:
+        return path.resolve(strict=True) == userdata
+    except OSError:
+        return False
+
+
+def documents_linked(prefix, userdata):
+    """Read-only: True when every Documents entry of the prefix is already userdata.
+
+    This is the arrangement setup_documents leaves behind; a prefix with a
+    legacy or custom Documents folder is not linked and nothing here changes it.
+    """
+    check_layout([str(prefix), str(userdata)])
+    check_prefix(str(prefix))
+    prefix, userdata = Path(prefix).resolve(), Path(userdata).resolve()
+    documents = list(profile_documents(prefix, links=True))
+    return bool(documents) and all(_links_to_userdata(path, userdata) for path in documents)
+
+
 def setup_documents(prefix, userdata):
     """Redirect empty folders and proven fresh Wine defaults, never host data."""
     check_layout([str(prefix), str(userdata)])
@@ -558,7 +579,7 @@ def setup_documents(prefix, userdata):
         ):
             continue
         resolved = path.resolve(strict=True)
-        if resolved == userdata:
+        if _links_to_userdata(path, userdata):
             continue
         # Wine commonly exposes My Documents as an alias of Documents.
         if path.is_symlink() and any(
@@ -651,6 +672,7 @@ def main():
             "new-prefix",
             "uninstall",
             "setup-documents",
+            "documents-linked",
             "profile-baseline",
             "prefix-layout",
         ),
@@ -658,13 +680,16 @@ def main():
     parser.add_argument("paths", nargs="+")
     args = parser.parse_args()
     try:
-        if args.command in ("uninstall", "setup-documents"):
+        if args.command in ("uninstall", "setup-documents", "documents-linked"):
             if len(args.paths) != 2:
                 raise ValueError("{} requires PREFIX USERDATA".format(args.command))
             if args.command == "uninstall":
                 resolved_prefix = check_uninstall(*args.paths)
                 # The one path the caller may remove: resolved once, already verified.
                 print(resolved_prefix)
+            elif args.command == "documents-linked":
+                # A query, not a failure: exit 1 without a message when unlinked.
+                return 0 if documents_linked(*args.paths) else 1
             else:
                 setup_documents(*args.paths)
         elif args.command == "profile-baseline":

@@ -8,7 +8,8 @@ the two app wrappers.
 
 After a full TMNF installation, the hub creates two separate installed apps:
 
-- **TrackMania Nations Forever** launches the game with Competition Patch.
+- **TrackMania Nations Forever** launches the game with Competition Patch and
+  CoreMod. United Forever does the same.
 - **TrackMania Settings** opens the original settings launcher.
 
 The hub opens those app wrappers through macOS; it does not replace them.
@@ -41,8 +42,10 @@ game's own. Each title also installs its own launcher support directory,
 `~/Library/Application Support/TMNF/launchers/<id>`, so installing one title's
 apps never changes what another title's apps launch.
 
-Nations Forever exposes install/repair, update and app-wrapper actions. United
-Forever and Canyon can also use their pinned official installers. Original can
+Nations Forever and United Forever start with Competition Patch and CoreMod;
+the other titles start their own game executable. Nations Forever exposes
+install/repair, update and app-wrapper actions. United Forever and Canyon can
+also use their pinned official installers. Original can
 be installed from user-owned retail media, while Turbo can copy an existing
 Steam game folder. These other titles remain provisional: installation does not
 mean their renderer, DRM, online services or complete gameplay have been
@@ -53,7 +56,7 @@ qualified under Wine.
 | Title | Install source | Status |
 | --- | --- | --- |
 | Nations Forever (`tmnf`) | free Nadeo download | supported |
-| United Forever (`tmu`) | pinned official retail installer; asks for a serial key | provisional |
+| United Forever (`tmu`) | pinned official retail installer; asks for a serial key; starts with Competition Patch and CoreMod | provisional |
 | Original (`tm-original`) | user-owned retail disk image or setup executable | provisional |
 | TrackMania 2 Canyon (`tm-canyon`) | pinned official ManiaPlanet trial | provisional |
 | Turbo (`tm-turbo`) | existing Steam game folder | provisional |

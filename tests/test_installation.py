@@ -22,6 +22,7 @@ from tmnf.install.runtime_manifest import EXECUTABLES, REQUIRED_FILES, digest, v
 
 
 ROOT = Path(__file__).resolve().parents[1]
+RUNTIME_D3DX9 = ("d3dx9_30", "d3dx9_31", "d3dx9_43")
 
 
 class InstallationTests(unittest.TestCase):
@@ -571,9 +572,11 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
             source.mkdir(parents=True, exist_ok=True)
             dest = self.prefix / "drive_c/windows" / directory
             dest.mkdir(parents=True)
-            for dll in ("d3dx9_30", "d3dx9_43"):
+            for dll in RUNTIME_D3DX9:
                 (source / (dll + ".dll")).write_text(arch + dll)
                 (dest / (dll + ".dll")).write_text("native")
+            # A native compiler the runtime does not manage must stay as DXSETUP left it.
+            (dest / "d3dx9_36.dll").write_text("native")
 
     def test_reused_directx_repairs_all_compilers_without_wine(self):
         self.directx_prefix_fixture()
@@ -583,11 +586,105 @@ elif args and Path(args[0]).name == 'tmnf-session.exe':
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.log.exists())
         for arch, directory in (("i386", "syswow64"), ("x86_64", "system32")):
-            for dll in ("d3dx9_30", "d3dx9_43"):
+            for dll in RUNTIME_D3DX9:
                 self.assertEqual(
                     (self.prefix / "drive_c/windows" / directory / (dll + ".dll")).read_text(),
                     arch + dll,
                 )
+            self.assertEqual(
+                (self.prefix / "drive_c/windows" / directory / "d3dx9_36.dll").read_text(),
+                "native",
+            )
+
+    def test_directx_repair_fails_when_the_runtime_lacks_a_compiler(self):
+        self.directx_prefix_fixture()
+        (self.runtime / "lib/wine/i386-windows/d3dx9_31.dll").unlink()
+        result = self.shell(
+            '. ./src/shell/cli/install.sh; printf "%s\\n" "$DIRECTX_SHA256" >"$DIRECTX_MARKER"; install_directx_runtime'
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("The runtime is missing", result.stderr)
+        self.assertIn("d3dx9_31.dll", result.stderr)
+
+    def test_manifest_and_shell_list_the_same_d3dx9_compilers(self):
+        result = self.shell(
+            '. ./src/shell/lib/common.sh; printf "%s\\n" "${RUNTIME_D3DX9_DLLS[@]}"'
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        shell_names = result.stdout.split()
+        manifest = {
+            Path(name).stem
+            for name in REQUIRED_FILES
+            if Path(name).name.startswith("d3dx9_") and "i386-windows" in name
+        }
+        self.assertEqual(set(shell_names), manifest)
+        self.assertEqual(tuple(shell_names), RUNTIME_D3DX9)
+
+    def test_modloader_profile_points_at_the_titles_own_game_directory(self):
+        for title, directory in (("tmnf", "TmNationsForever"), ("tmu", "TmUnitedForever")):
+            with self.subTest(title=title):
+                result = self.shell(
+                    ". ./src/shell/cli/install.sh; configure_competition_patch; "
+                    'cat "$TMLOADER_DIR/database/TmForever/products/TmForever/settings.yaml"',
+                    TMNF_TITLE=title,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(
+                    result.stdout, 'install: "C:/Program Files (x86)/{}"\n'.format(directory)
+                )
+                self.assertNotIn(
+                    "TmNationsForever" if title == "tmu" else "TmUnited", result.stdout
+                )
+
+    def seed_command(self, call="seed_system_config"):
+        return ". ./src/shell/cli/install.sh; " + call
+
+    def test_seed_system_config_uses_the_titles_user_subdir_and_never_overwrites(self):
+        userdata = self.home / "userdata"
+        config = userdata / "TrackMania/Config/Default.SystemConfig.Gbx"
+        result = self.shell(self.seed_command(), TMNF_TITLE="tmu", TMNF_USERDATA=str(userdata))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            config.read_bytes(), (self.runtime / "config/Default.SystemConfig.Gbx").read_bytes()
+        )
+        self.assertFalse((userdata / "TmForever").exists())
+        config.write_text("personal settings")
+        result = self.shell(self.seed_command(), TMNF_TITLE="tmu", TMNF_USERDATA=str(userdata))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(config.read_text(), "personal settings")
+        config.unlink()
+        elsewhere = self.home / "elsewhere"
+        config.symlink_to(elsewhere)
+        result = self.shell(self.seed_command(), TMNF_TITLE="tmu", TMNF_USERDATA=str(userdata))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(config.is_symlink())
+        self.assertFalse(elsewhere.exists())
+
+    def test_seed_system_config_refuses_an_empty_user_subdir(self):
+        result = self.shell(
+            self.seed_command('TMNF_TITLE_USER_SUBDIR=""; seed_system_config'),
+            TMNF_USERDATA=str(self.home / "userdata"),
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("user_subdir", result.stderr)
+        self.assertFalse((self.home / "userdata").exists())
+
+    def test_initialized_prefix_linked_to_userdata_is_seeded_on_repair(self):
+        userdata = self.home / "userdata"
+        userdata.mkdir()
+        self.prefix.mkdir(parents=True)
+        (self.prefix / ".tmnf-prefix").write_text("tmu:1\n")
+        (self.prefix / "system.reg").touch()
+        profile = self.prefix / "drive_c/users/player"
+        profile.mkdir(parents=True)
+        (profile / "Documents").symlink_to(userdata, target_is_directory=True)
+        result = self.shell(
+            ". ./src/shell/cli/install.sh; run_wine() { return 0; }; initialize_prefix",
+            TMNF_TITLE="tmu",
+            TMNF_USERDATA=str(userdata),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((userdata / "TrackMania/Config/Default.SystemConfig.Gbx").is_file())
 
     # Shell functions replace the network, archive tool and Wine; every call is
     # appended to TEST_LOG as one line. Run with STUB_NO_DXSETUP=1 for an archive
@@ -631,11 +728,15 @@ install_directx_runtime"""
         self.assertEqual(marker.read_text(), pins["directx_sha256"] + "\n")
         # Wine's own d3dx9 replaces whatever DXSETUP left behind.
         for arch, directory in (("i386", "syswow64"), ("x86_64", "system32")):
-            for dll in ("d3dx9_30", "d3dx9_43"):
+            for dll in RUNTIME_D3DX9:
                 self.assertEqual(
                     (self.prefix / "drive_c/windows" / directory / (dll + ".dll")).read_text(),
                     arch + dll,
                 )
+            self.assertEqual(
+                (self.prefix / "drive_c/windows" / directory / "d3dx9_36.dll").read_text(),
+                "native",
+            )
         self.assertEqual(list((self.home / "cache").glob("directx-extract.*")), [])
         # The marker now makes a second run a no-op for Wine.
         result = self.shell(self.FRESH_DIRECTX)

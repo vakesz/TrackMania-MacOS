@@ -79,10 +79,14 @@ the no-3D adapter showed no crash, and the game only needs ddraw for its 2D
 startup windows. Set `WINE_D3D_CONFIG` to add other wined3d options; the
 renderer setting is prepended.
 
-The launcher uses Wine's patched `d3dx9_30` and `d3dx9_43` compilers, including
-when CoreMod redirects shader compilation from one to the other. Microsoft's
-legacy DirectX installer can replace Wine DLLs, so installation restores the
-Wine-owned files afterwards.
+The game and launcher use Wine's patched `d3dx9_30`, `d3dx9_31` and `d3dx9_43`
+compilers, including when CoreMod redirects shader compilation from one to
+another. `d3dx9_43` loads `d3dx9_31` for the legacy-compiler flag CoreMod uses,
+and Microsoft's DirectX installer replaces `d3dx9_31` with a native copy. That
+installer can replace Wine DLLs, and `wineboot --update` does not put them back,
+so installation copies the three files from the runtime into the prefix
+explicitly and Play overrides them to the Wine copies. Other d3dx9 versions stay
+as the installer left them.
 
 Prefix setup skips optional Mono and Gecko downloads. DirectX setup treats
 .NET as unavailable because TMNF uses the native components. Setup also points

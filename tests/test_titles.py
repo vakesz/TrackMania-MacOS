@@ -18,6 +18,7 @@ REQUIRED = {
     "settings_app_name",
     "game_exe",
     "launcher_exe",
+    "user_subdir",
     "save_dirs",
     "needs_directx",
     "needs_tmloader",
@@ -43,6 +44,7 @@ class TitleRegistryTests(unittest.TestCase):
                 self.assertEqual(data["prefix_marker"], data["id"] + ":1")
                 self.assertTrue(data["app_name"].endswith(".app"))
                 self.assertTrue(data["save_dirs"], data)
+                self.assertIn(data["user_subdir"], data["save_dirs"])
                 self.assertTrue(
                     all(
                         isinstance(value, bool)
@@ -261,6 +263,29 @@ class TitleRegistryTests(unittest.TestCase):
                     result.stdout.strip(), "C:\\Program Files (x86)\\" + data["game_dir_name"]
                 )
 
+    def test_user_subdir_export_matches_each_title(self):
+        for path in sorted(TITLES.glob("*.json")):
+            data = json.loads(path.read_text())
+            with self.subTest(title=data["id"]):
+                result = subprocess.run(
+                    [
+                        "/bin/bash",
+                        "-euc",
+                        '. src/shell/lib/common.sh; printf "%s" "$TMNF_TITLE_USER_SUBDIR"',
+                    ],
+                    cwd=ROOT,
+                    text=True,
+                    capture_output=True,
+                    timeout=15,
+                    env={
+                        "PATH": "/usr/bin:/bin",
+                        "HOME": "/tmp/tmnf-no-home",
+                        "TMNF_TITLE": data["id"],
+                    },
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, data["user_subdir"])
+
     def test_save_dirs_are_declared_for_every_guarded_name(self):
         """managed_paths.save_dir_names() must stay a superset of the registry."""
         import sys
@@ -340,6 +365,16 @@ class RegistryValidationTests(unittest.TestCase):
         for value in ("TMNF/..", "/abs", "a//b", "~/x", "a/./b", "a\\b", "TMNF/a\nb"):
             with self.subTest(prefix_subdir=value), self.assertRaises(self.registry.RegistryError):
                 self.validate(prefix_subdir=value)
+
+    def test_user_subdir_must_be_a_declared_save_dir(self):
+        for value in ("Elsewhere", "TmForever/x", "..", "~x"):
+            with self.subTest(user_subdir=value), self.assertRaises(self.registry.RegistryError):
+                self.validate(user_subdir=value)
+        missing = dict(self.data)
+        del missing["user_subdir"]
+        with self.assertRaises(self.registry.RegistryError):
+            self.registry._validate(missing, Path("/x/tmu.json"))
+        self.assertEqual(self.validate().user_subdir, "TrackMania")
 
     def test_bundle_ids_and_urls(self):
         for value in ("a b", "a;b", "a$b", "a/b", "a_b"):

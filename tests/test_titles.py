@@ -398,6 +398,8 @@ TITLE_CONDITIONALS = (
     re.compile(r'\btest\s+"?\$\{?\w+\}?"?\s+!?=\s+"?tmnf"?(\s|;|$)'),
     re.compile(r'case\s+"?\$\{?TMNF_TITLE\}?"?\s+in'),
     re.compile(r'\btitle(_id|\.id)\s*[!=]=\s*["\']'),
+    re.compile(r"\btitle(_id|\.id)\s+(not\s+)?in\s*[(\[{]"),
+    re.compile(r'\$\{?\w+\}?"?\s*!?==?\s*"?tmnf"?\s*\]\]'),
     re.compile(r"NEEDS_TMLOADER"),
     re.compile(r"\bopenal_applies\b"),
     re.compile(r"TmNationsForever"),
@@ -440,6 +442,18 @@ class TitleConditionalTests(unittest.TestCase):
             with self.subTest(file=file, line=line):
                 lines = [item.strip() for item in (ROOT / file).read_text().splitlines()]
                 self.assertIn(line, lines, "remove the stale allowlist entry")
+                self.assertTrue(any(pattern.search(line) for pattern in TITLE_CONDITIONALS))
+
+    def test_patterns_catch_common_spellings(self):
+        for line in (
+            'if test "$TMNF_TITLE" = tmu; then',
+            "if [[ $TMNF_TITLE == tmnf ]]; then",
+            'case "$TMNF_TITLE" in',
+            'if title.id == "tmu":',
+            'if title.id in ("tmnf", "tmu"):',
+            "if title_id not in {'tmnf'}:",
+        ):
+            with self.subTest(line=line):
                 self.assertTrue(any(pattern.search(line) for pattern in TITLE_CONDITIONALS))
 
 

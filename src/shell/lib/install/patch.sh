@@ -18,6 +18,8 @@ configure_competition_patch() {
 # restored if the new one cannot be moved in, so a failure never loses it.
 swap_tmloader_dir() {
   local new="$1" old=""
+  # Without the registry's ModLoader layout TMLOADER_DIR would be the prefix itself.
+  test -n "$TMLOADER_PREFIX_DIR" || die "The ModLoader layout is not loaded."
   mkdir -p "$(dirname "$TMLOADER_DIR")" || die "Cannot create $(dirname "$TMLOADER_DIR")"
   sweep_stale "$(dirname "$TMLOADER_DIR")" '.tmloader-old.*'
   if test -e "$TMLOADER_DIR"; then

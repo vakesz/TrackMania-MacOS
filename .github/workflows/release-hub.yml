@@ -24,10 +24,10 @@ jobs:
       # Never a secret: a manual run on a branch builds an unsigned, unpublished hub.
       IS_TAG_BUILD: ${{ startsWith(github.ref, 'refs/tags/v') }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4, pinned
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, pinned
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.2, pinned
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3, pinned
         with:
           version: 0.13.5
       - name: Verify tag and the runtime and source release assets
@@ -88,7 +88,7 @@ jobs:
           COPYFILE_DISABLE=1 tar -C .build/app -cf "$tarball" "TrackMania Mac.app"
           echo "app_sha256=$(shasum -a 256 "$tarball" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
       - name: Upload unsigned app tar
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4, pinned
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2, pinned
         with:
           name: hub-app-unsigned
           path: ${{ runner.temp }}/hub-app.tar
@@ -108,11 +108,11 @@ jobs:
     # This job must not build anything: no swift build, no uv, no package
     # manager. It runs the tagged package-app.sh `sign` command only.
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4, pinned
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, pinned
         with:
           persist-credentials: false
       - name: Download unsigned app tar
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v4.3.0, pinned
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2, pinned
         with:
           name: hub-app-unsigned
           path: ${{ runner.temp }}/hub-app
@@ -191,7 +191,7 @@ jobs:
           TRACKMANIA_MAC_NOTARY_PROFILE: trackmania-mac-ci
         run: ./src/shell/tools/package-app.sh sign
       - name: Upload app archive artifact
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4, pinned
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2, pinned
         with:
           name: TrackMania-Mac-hub
           path: .build/dist/TrackMania-Mac-*.app.zip*
@@ -212,7 +212,7 @@ jobs:
       contents: write
     steps:
       - name: Download signed app archive
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v4.3.0, pinned
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2, pinned
         with:
           name: TrackMania-Mac-hub
           path: dist

@@ -16,7 +16,6 @@
   "launcher_exe": "TrackmaniaTurboLauncher.exe",
   "user_subdir": "TrackMania Turbo",
   "save_dirs": ["TrackMania Turbo", "Turbo"],
-  "needs_directx": true,
   "needs_tmloader": false,
   "source_url": null,
   "source_sha256": null,

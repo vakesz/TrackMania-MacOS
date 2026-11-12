@@ -16,7 +16,6 @@
   "launcher_exe": "ManiaPlanetLauncher.exe",
   "user_subdir": "ManiaPlanet",
   "save_dirs": ["ManiaPlanet", "Canyon"],
-  "needs_directx": true,
   "needs_tmloader": false,
   "source_url": "https://nadeo-download.cdn.ubi.com/maniaplanet/Maniaplanet_Setup.exe",
   "source_sha256": "4339e5b9eca86d1a33015a9ceb9243ec9a8a0c3cbdec14414a10d6a72c239a29",

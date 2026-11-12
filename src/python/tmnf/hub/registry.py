@@ -59,7 +59,6 @@ _FIELDS: typing.Tuple[_Field, ...] = (
     _Field("launcher_exe", "name", True),
     _Field("user_subdir", "name", True),
     _Field("save_dirs", "names", True),
-    _Field("needs_directx", "bool", True),
     _Field("needs_tmloader", "bool", True),
     _Field("source_url", "url", False),
     _Field("source_sha256", "sha", False),
@@ -114,7 +113,6 @@ class Title(typing.NamedTuple):
     launcher_exe: str
     user_subdir: str
     save_dirs: typing.Tuple[str, ...]
-    needs_directx: bool
     needs_tmloader: bool
     source_url: typing.Optional[str]
     source_sha256: typing.Optional[str]

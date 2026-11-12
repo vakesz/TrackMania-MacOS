@@ -16,7 +16,6 @@
   "launcher_exe": "TrackManiaLauncher.exe",
   "user_subdir": "TrackMania",
   "save_dirs": ["TrackMania"],
-  "needs_directx": true,
   "needs_tmloader": false,
   "source_url": null,
   "source_sha256": null,

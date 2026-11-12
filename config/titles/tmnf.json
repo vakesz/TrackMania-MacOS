@@ -16,7 +16,6 @@
   "launcher_exe": "TmForeverLauncher.exe",
   "user_subdir": "TmForever",
   "save_dirs": ["TmForever"],
-  "needs_directx": true,
   "needs_tmloader": true,
   "source_url": "https://nadeo-download.cdn.ubi.com/trackmaniaforever/tmnationsforever_setup.exe",
   "source_sha256": "2f659138ed4409da404970841e18f03d29921beaf6a424824c8312ddb20f6355",

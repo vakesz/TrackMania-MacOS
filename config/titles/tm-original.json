@@ -6,7 +6,6 @@
   "installer": "disk-image",
   "status": "provisional",
   "prefix_subdir": "TMNF/Original",
-  "prefix_marker": "tm-original:1",
   "app_name": "TrackMania Original.app",
   "settings_app_name": "TrackMania Original Settings.app",
   "bundle_id_game": "local.tmnf.tm-original.game",

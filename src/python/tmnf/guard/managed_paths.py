@@ -58,14 +58,14 @@ def title_markers():
                 "The title registry is missing at {}. The installed launcher "
                 "payload or checkout is incomplete.".format(titles)
             )
+        # Each readable entry's marker is derived from its id (the file stem),
+        # exactly as the registry's Title.prefix_marker does.
         for path in sorted(titles.glob("*.json")):
             try:
-                data = json.loads(path.read_text())
+                json.loads(path.read_text())
             except (OSError, ValueError):
                 continue
-            marker = data.get("prefix_marker")
-            if isinstance(marker, str) and marker:
-                markers.add(marker)
+            markers.add("{}:1".format(path.stem))
         _TITLE_MARKERS = markers
     return _TITLE_MARKERS
 

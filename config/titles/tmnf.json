@@ -6,7 +6,6 @@
   "installer": "online",
   "status": "supported",
   "prefix_subdir": "TMNF",
-  "prefix_marker": "tmnf:1",
   "app_name": "TrackMania Nations Forever.app",
   "settings_app_name": "TrackMania Settings.app",
   "bundle_id_game": "local.tmnf.game",

@@ -6,7 +6,6 @@
   "installer": "online-retail",
   "status": "provisional",
   "prefix_subdir": "TMNF/TM United",
-  "prefix_marker": "tmu:1",
   "app_name": "TrackMania United Forever.app",
   "settings_app_name": "TrackMania United Settings.app",
   "bundle_id_game": "local.tmnf.tmu.game",

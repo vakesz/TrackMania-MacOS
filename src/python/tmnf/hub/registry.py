@@ -49,7 +49,6 @@ _FIELDS: typing.Tuple[_Field, ...] = (
     _Field("installer", "text", True),
     _Field("status", "text", True),
     _Field("prefix_subdir", "subpath", True),
-    _Field("prefix_marker", "text", True),
     _Field("app_name", "name", True),
     _Field("settings_app_name", "name", True),
     _Field("bundle_id_game", "bundle", True),
@@ -103,7 +102,6 @@ class Title(typing.NamedTuple):
     installer: str
     status: str
     prefix_subdir: str
-    prefix_marker: str
     app_name: str
     settings_app_name: str
     bundle_id_game: str
@@ -119,6 +117,11 @@ class Title(typing.NamedTuple):
     source_size: typing.Optional[int]
     requires_serial: bool
     notes: str
+
+    @property
+    def prefix_marker(self) -> str:
+        """Ownership text in the prefix's .tmnf-prefix; derived, never configured."""
+        return f"{self.id}:1"
 
     @property
     def downloads(self) -> bool:
@@ -215,8 +218,6 @@ def _validate(data: object, path: pathlib.Path) -> Title:
         raise RegistryError(f"{path}: unknown installer kind {values['installer']}")
     if values["status"] not in STATUSES:
         raise RegistryError(f"{path}: unknown status {values['status']}")
-    if not str(values["prefix_marker"]).endswith(":1"):
-        raise RegistryError(f"{path}: prefix_marker must end with ':1'")
     if not str(values["app_name"]).endswith(".app"):
         raise RegistryError(f"{path}: app_name must end with '.app'")
     if values["user_subdir"] not in typing.cast(tuple, values["save_dirs"]):
@@ -332,6 +333,7 @@ def shell_assignments(title: typing.Optional[Title]) -> typing.List[typing.Tuple
             for field in Title._fields
             if field != "save_dirs"
         ]
+        pairs.append(("TMNF_TITLE_PREFIX_MARKER", title.prefix_marker))
     pairs += [(key.upper(), value) for key, value in pins().items()]
     return pairs
 

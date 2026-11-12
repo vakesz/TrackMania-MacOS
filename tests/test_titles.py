@@ -221,6 +221,26 @@ class TitleRegistryTests(unittest.TestCase):
                     result.stdout.strip(), "C:\\Program Files (x86)\\" + data["game_dir_name"]
                 )
 
+    def test_prefix_marker_is_derived_and_exported(self):
+        for path in sorted(TITLES.glob("*.json")):
+            with self.subTest(title=path.stem):
+                result = subprocess.run(
+                    [
+                        "/bin/bash",
+                        "-euc",
+                        '. src/shell/lib/common.sh; printf "%s" "$TMNF_TITLE_PREFIX_MARKER"',
+                    ],
+                    cwd=ROOT,
+                    text=True,
+                    capture_output=True,
+                    timeout=15,
+                    env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TMNF_TITLE": path.stem},
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, path.stem + ":1")
+        registry = load_registry()
+        self.assertEqual(registry.get("tmu", TITLES).prefix_marker, "tmu:1")
+
     def test_user_subdir_export_matches_each_title(self):
         for path in sorted(TITLES.glob("*.json")):
             data = json.loads(path.read_text())
@@ -394,7 +414,6 @@ class RegistryValidationTests(unittest.TestCase):
                 name="$(touch pwned) `id` ' \" ; &",
                 notes="line1\nline2 $HOME \\ *",
                 short_name="a b$c",
-                prefix_marker="evil:1",
             )
             titles = Path(directory) / "titles"
             titles.mkdir()

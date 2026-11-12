@@ -6,7 +6,6 @@
   "installer": "steam-copy",
   "status": "provisional",
   "prefix_subdir": "TMNF/Turbo",
-  "prefix_marker": "tm-turbo:1",
   "app_name": "TrackMania Turbo.app",
   "settings_app_name": "TrackMania Turbo Settings.app",
   "bundle_id_game": "local.tmnf.tm-turbo.game",

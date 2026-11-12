@@ -883,7 +883,13 @@ class Operations(unittest.TestCase):
             "if os.fork(): sys.exit(0)\n"
             "os.setsid()\n"
             "pathlib.Path(sys.argv[1]).touch()\n"
-            "while not pathlib.Path(sys.argv[2]).exists(): time.sleep(0.01)"
+            # Also stop once the test's temp dir is gone or a minute has passed: the
+            # release file can be removed with the dir between two polls, and a
+            # detached child must never outlive the test.
+            "release = pathlib.Path(sys.argv[2])\n"
+            "deadline = time.monotonic() + 60\n"
+            "while not release.exists() and release.parent.is_dir()"
+            " and time.monotonic() < deadline: time.sleep(0.01)"
         )
         self.addCleanup(release.touch)
         result = self.cli(

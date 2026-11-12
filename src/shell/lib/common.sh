@@ -104,9 +104,9 @@ case "${1:-}" in
     ;;
 esac
 
-# Wine-owned Direct3D 9 shader compilers the runtime restores and overrides to
-# native-first. tests/test_installation.py checks that runtime_manifest.py
-# lists the same names.
+# Wine-owned Direct3D 9 shader compilers that installation restores over the
+# native DXSETUP copies and Play forces to builtin. tests/test_installation.py
+# checks that runtime_manifest.py lists the same names.
 readonly RUNTIME_D3DX9_DLLS=(d3dx9_30 d3dx9_31 d3dx9_43)
 TMNF_VERSION="$(cat "${TMNF_PROJECT_DIR}/VERSION")"
 TMNF_GAME_VERSION="2.11.26"

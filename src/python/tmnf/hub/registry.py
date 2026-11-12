@@ -24,6 +24,8 @@ import shlex
 import sys
 import typing
 
+from tmnf.install import modloader
+
 
 ONLINE_INSTALLERS = ("online", "online-retail", "online-trial")
 INSTALLERS = frozenset(ONLINE_INSTALLERS + ("steam-copy", "disk-image"))
@@ -359,7 +361,7 @@ def _shell_value(value: object) -> str:
 
 
 def shell_assignments(title: typing.Optional[Title]) -> typing.List[typing.Tuple[str, str]]:
-    """(NAME, value) pairs: TMNF_TITLE_* for the title, then the release pins."""
+    """(NAME, value) pairs: TMNF_TITLE_* for the title, the release pins, the ModLoader layout."""
     pairs = []
     if title is not None:
         # save_dirs is omitted: names may contain spaces, so a joined string is
@@ -371,7 +373,9 @@ def shell_assignments(title: typing.Optional[Title]) -> typing.List[typing.Tuple
         ]
         pairs.append(("TMNF_TITLE_PREFIX_MARKER", title.prefix_marker))
         pairs.append(("TMNF_TITLE_COMPONENTS", " ".join(title.components)))
-    pairs += [(key.upper(), value) for key, value in pins().items()]
+    release = pins()
+    pairs += [(key.upper(), value) for key, value in release.items()]
+    pairs += modloader.shell_assignments(release)
     return pairs
 
 

@@ -70,6 +70,56 @@ class TitleRegistryTests(unittest.TestCase):
             ):
                 self.assertNotIn(literal, (ROOT / source).read_text(), (source, literal))
 
+    def test_modloader_layout_is_unchanged_and_defined_once(self):
+        """The shell's ModLoader paths come from tmnf.install.modloader, byte for byte."""
+        pins = load_registry().pins()
+        result = subprocess.run(
+            [
+                "/bin/bash",
+                "-euc",
+                ". src/shell/lib/common.sh; "
+                'printf "%s\\n" "$TMLOADER_DIR" "$TMLOADER_EXE" "$TMCOMP_DLL" '
+                '"$TMLOADER_GAME_EXE" "$TMLOADER_COREMOD_DLL" "$TMLOADER_SETTINGS" '
+                '"$TMLOADER_PROFILE_FILE" "$TMLOADER_PROGRAM_ID" "$TMLOADER_PROFILE"',
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=15,
+            env={"PATH": "/usr/bin:/bin", "HOME": "/tmp/h", "TMNF_PREFIX": "/tmp/p"},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        loader = "/tmp/p/drive_c/Program Files/TMLoader"
+        database = loader + "/database/TmForever"
+        self.assertEqual(
+            result.stdout.splitlines(),
+            [
+                loader,
+                loader + "/TMLoader.exe",
+                "{}/products/Competition Patch/{}/TMCompPatch.dll".format(
+                    database, pins["tmcomp_version"]
+                ),
+                "{}/products/TmForever/{}/TmForever.exe".format(
+                    database, pins["tmloader_game_version"]
+                ),
+                "{}/products/CoreMod/{}/CoreMod.dll".format(
+                    database, pins["tmloader_coremod_version"]
+                ),
+                database + "/products/TmForever/settings.yaml",
+                database + "/profiles/competition.yaml",
+                "TmForever",
+                "competition",
+            ],
+        )
+        for source in (
+            "src/shell/lib/common.sh",
+            "src/shell/lib/install/patch.sh",
+            "src/shell/lib/commands/play.sh",
+            "src/python/tmnf/hub/state.py",
+        ):
+            self.assertNotIn("database/TmForever", (ROOT / source).read_text(), source)
+            self.assertNotIn('"database"', (ROOT / source).read_text(), source)
+
     def test_tmnf_installer_cache_path_is_historical(self):
         result = subprocess.run(
             [

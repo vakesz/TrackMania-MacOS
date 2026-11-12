@@ -2,21 +2,16 @@
 # Competition Patch and CoreMod via TMLoader. Sourced by install.sh after common.sh.
 
 configure_competition_patch() {
-  local product_dir
-  local profile_dir
-
   test -n "$TMNF_TITLE_GAME_DIR_NAME" || die "The title registry has no game_dir_name."
-  product_dir="${TMLOADER_DIR}/database/TmForever/products/TmForever"
-  profile_dir="${TMLOADER_DIR}/database/TmForever/profiles"
-  mkdir -p "$product_dir" "$profile_dir"
-  printf 'install: "C:/Program Files (x86)/%s"\n' "$TMNF_TITLE_GAME_DIR_NAME" >"${product_dir}/settings.yaml"
+  mkdir -p "$(dirname "$TMLOADER_SETTINGS")" "$(dirname "$TMLOADER_PROFILE_FILE")"
+  printf 'install: "C:/Program Files (x86)/%s"\n' "$TMNF_TITLE_GAME_DIR_NAME" >"$TMLOADER_SETTINGS"
   printf '%s\n' \
     'program:' \
-    '  id: TmForever' \
+    "  id: ${TMLOADER_PROGRAM_ID}" \
     "  version: ${TMLOADER_GAME_VERSION}" \
     'mods:' \
     '  - id: Competition Patch' \
-    '  - id: CoreMod' >"${profile_dir}/competition.yaml"
+    '  - id: CoreMod' >"$TMLOADER_PROFILE_FILE"
 }
 
 # Put NEW in place of TMLOADER_DIR. The old directory is moved aside first and
@@ -63,13 +58,13 @@ install_competition_patch() (
   # shellcheck disable=SC2064
   trap "$cleanup" EXIT
   unzip -q "$TMLOADER_ARCHIVE" -d "$extract_dir"
-  verify_file "${extract_dir}/TMLoader.exe" "$TMLOADER_EXE_SHA256" \
+  verify_file "${extract_dir}/${TMLOADER_EXE_REL}" "$TMLOADER_EXE_SHA256" \
     || die "ModLoader executable verification failed."
-  verify_file "${extract_dir}/database/TmForever/products/Competition Patch/${TMCOMP_VERSION}/TMCompPatch.dll" "$TMCOMP_DLL_SHA256" \
+  verify_file "${extract_dir}/${TMCOMP_DLL_REL}" "$TMCOMP_DLL_SHA256" \
     || die "Competition Patch verification failed."
-  verify_file "${extract_dir}/database/TmForever/products/TmForever/${TMLOADER_GAME_VERSION}/TmForever.exe" "$TMLOADER_GAME_SHA256" \
+  verify_file "${extract_dir}/${TMLOADER_GAME_EXE_REL}" "$TMLOADER_GAME_SHA256" \
     || die "ModLoader compatibility runtime verification failed."
-  verify_file "${extract_dir}/database/TmForever/products/CoreMod/${TMLOADER_COREMOD_VERSION}/CoreMod.dll" "$TMLOADER_COREMOD_SHA256" \
+  verify_file "${extract_dir}/${TMLOADER_COREMOD_DLL_REL}" "$TMLOADER_COREMOD_SHA256" \
     || die "CoreMod verification failed."
 
   swap_tmloader_dir "$extract_dir"

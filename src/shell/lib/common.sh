@@ -93,6 +93,8 @@ case "${1:-}" in
     TMLOADER_GAME_VERSION="" TMLOADER_GAME_SHA256=""
     TMLOADER_COREMOD_VERSION="" TMLOADER_COREMOD_SHA256=""
     TMCOMP_VERSION="" TMCOMP_DLL_SHA256=""
+    TMLOADER_PREFIX_DIR="" TMLOADER_EXE_REL="" TMCOMP_DLL_REL="" TMLOADER_GAME_EXE_REL=""
+    TMLOADER_COREMOD_DLL_REL="" TMLOADER_SETTINGS_REL="" TMLOADER_PROFILE_REL=""
     OPENAL_SOFT_VERSION="" OPENAL_SOFT_URL="" OPENAL_SOFT_SHA256="" OPENAL_SOFT_DLL_SHA256=""
     ;;
   *)
@@ -167,13 +169,17 @@ readonly LAUNCHER_EXE="${GAME_DIR}/${TMNF_TITLE_LAUNCHER_EXE}"
 readonly DIRECTX_ARCHIVE="${TMNF_CACHE}/directx_Jun2010_redist.exe"
 readonly DIRECTX_MARKER="${TMNF_PREFIX}/.tmnf-directx-jun2010"
 readonly TMLOADER_ARCHIVE="${TMNF_CACHE}/TMLoader-${TMLOADER_BUNDLE_VERSION}.zip"
-readonly TMLOADER_DIR="${TMNF_PREFIX}/drive_c/Program Files/TMLoader"
-readonly TMLOADER_EXE="${TMLOADER_DIR}/TMLoader.exe"
-readonly TMCOMP_DLL="${TMLOADER_DIR}/database/TmForever/products/Competition Patch/${TMCOMP_VERSION}/TMCompPatch.dll"
-readonly TMLOADER_GAME_EXE="${TMLOADER_DIR}/database/TmForever/products/TmForever/${TMLOADER_GAME_VERSION}/TmForever.exe"
+# The ModLoader layout comes from tmnf.install.modloader through the registry
+# export; only the prefix-specific base is joined here.
+readonly TMLOADER_DIR="${TMNF_PREFIX}/${TMLOADER_PREFIX_DIR}"
+readonly TMLOADER_EXE="${TMLOADER_DIR}/${TMLOADER_EXE_REL}"
+readonly TMCOMP_DLL="${TMLOADER_DIR}/${TMCOMP_DLL_REL}"
+readonly TMLOADER_GAME_EXE="${TMLOADER_DIR}/${TMLOADER_GAME_EXE_REL}"
 readonly PREFIX_D9VK_DLL="${TMNF_PREFIX}/drive_c/windows/syswow64/d3d9.dll"
 readonly DXVK_CONF="${TMNF_PROJECT_DIR}/config/dxvk.conf"
-readonly TMLOADER_COREMOD_DLL="${TMLOADER_DIR}/database/TmForever/products/CoreMod/${TMLOADER_COREMOD_VERSION}/CoreMod.dll"
+readonly TMLOADER_COREMOD_DLL="${TMLOADER_DIR}/${TMLOADER_COREMOD_DLL_REL}"
+readonly TMLOADER_SETTINGS="${TMLOADER_DIR}/${TMLOADER_SETTINGS_REL}"
+readonly TMLOADER_PROFILE_FILE="${TMLOADER_DIR}/${TMLOADER_PROFILE_REL}"
 readonly OPENAL_SOFT_ARCHIVE="${TMNF_CACHE}/openal-soft-${OPENAL_SOFT_VERSION}-bin.zip"
 readonly GAME_OPENAL="${GAME_DIR}/OpenAL32.dll"
 readonly GAME_OPENAL_CREATIVE="${GAME_DIR}/OpenAL32.creative.dll"
@@ -303,8 +309,8 @@ openal_is_current() {
 
 competition_patch_is_ready() {
   competition_patch_is_current \
-    && test -s "${TMLOADER_DIR}/database/TmForever/products/TmForever/settings.yaml" \
-    && test -s "${TMLOADER_DIR}/database/TmForever/profiles/competition.yaml"
+    && test -s "$TMLOADER_SETTINGS" \
+    && test -s "$TMLOADER_PROFILE_FILE"
 }
 
 validate_launch_options() {

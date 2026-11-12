@@ -105,7 +105,7 @@ play_game() {
     return
   fi
   competition_patch_is_ready || die "Competition Patch is missing, outdated, or unconfigured. Run src/shell/cli/install.sh."
-  play_target "$TMLOADER_EXE" "$TMLOADER_GAME_EXE" run TmForever competition "$@"
+  play_target "$TMLOADER_EXE" "$TMLOADER_GAME_EXE" run "$TMLOADER_PROGRAM_ID" "$TMLOADER_PROFILE" "$@"
 }
 
 play_vanilla() {

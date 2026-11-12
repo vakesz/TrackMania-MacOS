@@ -119,11 +119,43 @@ final class HubUITests: XCTestCase {
         XCTAssertTrue(Notifier.canUseNotifications(bundleIdentifier: "a.b", bundleURL: URL(fileURLWithPath: "/Apps/T.app")))
     }
 
-    func testUninstallMessageNamesPrefixAndFallsBack() {
+    func testUninstallMessageWithoutPreviewNamesPrefixAndFallsBack() {
         let located = HubTitle(id: "x", name: "X", locations: HubLocations(prefix: "/p", userdata: "/u"))
         XCTAssertTrue(HubUIText.uninstall(located).contains("/p"))
         XCTAssertTrue(HubUIText.uninstall(located).contains("/u"))
         XCTAssertTrue(HubUIText.uninstall(HubTitle(id: "x", name: "X")).contains("Wine prefix"))
+        XCTAssertEqual(UninstallChoice.choices(for: located), [.gameOnly])
+    }
+
+    private let removalItems = [
+        HubRemovalItem(kind: "prefix", label: "Wine prefix and game files", path: "/g/prefix"),
+        HubRemovalItem(kind: "game-app", label: "Game app", path: "/Apps/Game.app")
+    ]
+
+    func testUninstallMessageListsEveryReportedPathAndTheSavesFolder() {
+        let title = HubTitle(id: "x", name: "X", removal: HubRemoval(items: removalItems, saves: "/g/UserData"))
+        let message = HubUIText.uninstall(title)
+        XCTAssertTrue(message.contains("Wine prefix and game files: /g/prefix"))
+        XCTAssertTrue(message.contains("Game app: /Apps/Game.app"))
+        XCTAssertTrue(message.contains("/g/UserData"))
+        XCTAssertTrue(message.contains("shared with other games are kept"))
+        XCTAssertEqual(UninstallChoice.choices(for: title), [.keepSaves, .everything])
+        XCTAssertEqual(UninstallChoice.keepSaves.label, "Remove game, keep saves")
+        XCTAssertEqual(UninstallChoice.everything.label, "Remove everything including saves")
+        XCTAssertFalse(UninstallChoice.keepSaves.includesSaves)
+        XCTAssertTrue(UninstallChoice.everything.includesSaves)
+    }
+
+    func testUninstallWithoutSavesOrWithOnlySavesLeft() {
+        let noSaves = HubTitle(id: "x", name: "X", removal: HubRemoval(items: removalItems))
+        XCTAssertTrue(HubUIText.uninstall(noSaves).contains("No saved data was found"))
+        XCTAssertEqual(UninstallChoice.choices(for: noSaves), [.gameOnly])
+        XCTAssertFalse(UninstallChoice.gameOnly.includesSaves)
+        let savesOnly = HubTitle(id: "x", name: "X", removal: HubRemoval(saves: "/g/UserData"))
+        XCTAssertFalse(HubUIText.uninstall(savesOnly).contains("This removes:"))
+        XCTAssertTrue(HubUIText.uninstall(savesOnly).contains("Only your saved data is left, in /g/UserData"))
+        XCTAssertEqual(UninstallChoice.choices(for: savesOnly), [.savesOnly])
+        XCTAssertTrue(UninstallChoice.savesOnly.includesSaves)
     }
 }
 

@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import plistlib
 import signal
 import subprocess
 import sys
@@ -93,7 +94,13 @@ class HubBackendTests(unittest.TestCase):
             for path in (ROOT / "config/titles").glob("*.json"):
                 (titles / path.name).write_text(path.read_text())
             (titles / "tm-turbo.json").write_text("{}")
-            with mock.patch.dict(os.environ, {"TMNF_TITLES_DIR": str(titles), "HOME": directory}):
+            environment = {
+                "TMNF_TITLES_DIR": str(titles),
+                "HOME": directory,
+                # Never the real /Applications: wrappers there would offer Uninstall.
+                "TMNF_APPS_DIR": str(Path(directory) / "Applications"),
+            }
+            with mock.patch.dict(os.environ, environment):
                 actions = hub_run.available_action_ids(registry.get("tmu"))
             self.assertEqual(actions, {"install"})
 
@@ -394,6 +401,7 @@ class HubBackendTests(unittest.TestCase):
                 )
                 self.assertFalse(title["sessionActive"])
         placeholder = snapshot._error_placeholder("broken", "bad")
+        self.assertIsNone(placeholder["removal"])
         self.assertEqual(placeholder["locations"], {})
         self.assertIsNone(placeholder["sourceSize"])
         self.assertIs(placeholder["sessionActive"], False)
@@ -426,6 +434,82 @@ class HubBackendTests(unittest.TestCase):
         self.assertEqual(
             (kinds["doctor"], kinds["diagnostics"], kinds["stop"], kinds["uninstall"]),
             ("verify", "maintenance", "maintenance", "destructive"),
+        )
+
+    def test_uninstall_is_offered_whenever_a_title_left_something_behind(self):
+        # A managed root: the uninstall preview never lists paths outside one.
+        with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
+            home = Path(directory).resolve()
+            apps = home / "Applications"
+            tmu = registry.get("tmu")
+            for name, bundle in (
+                (tmu.app_name, tmu.bundle_id_game),
+                (tmu.settings_app_name, tmu.bundle_id_settings),
+            ):
+                contents = apps / name / "Contents"
+                (contents / "MacOS").mkdir(parents=True)
+                (contents / "Info.plist").write_bytes(
+                    plistlib.dumps({"CFBundleIdentifier": bundle})
+                )
+                (contents / ".tmnf-app").touch()
+            (home / "Games/TMNF/Canyon/UserData").mkdir(parents=True)
+            result = self.run_hub("snapshot", home=home)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            titles = {title["id"]: title for title in json.loads(result.stdout)["titles"]}
+
+        def action_ids(title_id):
+            return [action["id"] for action in titles[title_id]["actions"]]
+
+        self.assertIn("uninstall", action_ids("tmu"))
+        self.assertEqual(
+            [item["kind"] for item in titles["tmu"]["removal"]["items"]],
+            ["game-app", "settings-app"],
+        )
+        self.assertEqual(
+            titles["tmu"]["removal"]["items"][0],
+            {"kind": "game-app", "label": "Game app", "path": str(apps / tmu.app_name)},
+        )
+        self.assertIsNone(titles["tmu"]["removal"]["saves"])
+        self.assertIn("uninstall", action_ids("tm-canyon"))
+        self.assertEqual(
+            titles["tm-canyon"]["removal"],
+            {"items": [], "saves": str(home / "Games/TMNF/Canyon/UserData")},
+        )
+        self.assertNotIn("uninstall", action_ids("tm-original"))
+        self.assertEqual(titles["tm-original"]["removal"], {"items": [], "saves": None})
+
+    def test_include_saves_only_reaches_uninstall(self):
+        for include_saves, extra in (
+            (False, ["uninstall", "--yes"]),
+            (True, ["uninstall", "--yes", "--include-saves"]),
+        ):
+            with (
+                self.subTest(include_saves=include_saves),
+                mock.patch.object(hub_run, "available_action_ids", return_value={"uninstall"}),
+                mock.patch.object(hub_run.os, "execve", side_effect=KeyboardInterrupt) as execve,
+                self.assertRaises(KeyboardInterrupt),
+            ):
+                hub_run.run("tmnf", "uninstall", None, include_saves=include_saves)
+            self.assertEqual(execve.call_args.args[1][2:], extra)
+        for action in ("install", "doctor", "stop"):
+            with (
+                self.subTest(action=action),
+                mock.patch.object(hub_run.os, "execve") as execve,
+                self.assertRaises(SystemExit),
+            ):
+                hub_run.run("tmnf", action, None, include_saves=True)
+            execve.assert_not_called()
+
+    def test_cli_parses_include_saves(self):
+        from tmnf.hub import __main__ as hub_main
+
+        with mock.patch.object(hub_main.hub_run, "run", side_effect=SystemExit(0)) as run:
+            with self.assertRaises(SystemExit):
+                hub_main.main(["run", "tmu", "uninstall", "--include-saves"])
+            with self.assertRaises(SystemExit):
+                hub_main.main(["run", "tmu", "uninstall"])
+        self.assertEqual(
+            [call.kwargs["include_saves"] for call in run.call_args_list], [True, False]
         )
 
     def test_session_active_is_safe(self):

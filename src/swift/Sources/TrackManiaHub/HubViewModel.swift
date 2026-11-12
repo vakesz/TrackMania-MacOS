@@ -122,28 +122,32 @@ final class HubViewModel: ObservableObject {
         }
     }
 
-    func run(_ action: HubAction, for title: HubTitle, source: URL? = nil, runtime: RuntimeSource? = nil) {
+    /// `label` names the chosen dialog button in the activity card and notifications.
+    func run(_ action: HubAction, for title: HubTitle, source: URL? = nil, runtime: RuntimeSource? = nil,
+             includeSaves: Bool = false, label: String? = nil) {
         guard let backend, runningAction == nil else { return }
         if action.kind == .install || action.kind == .import { Notifier.requestAuthorizationOnce() }
         runningAction = action.id
         runningTitleID = title.id
         activityTitleID = title.id
         cancelling = false
-        lastRun = RunRecord(titleID: title.id, actionID: action.id, actionLabel: action.label)
+        let actionLabel = label ?? action.label
+        lastRun = RunRecord(titleID: title.id, actionID: action.id, actionLabel: actionLabel)
         let token = UUID()
         activityToken = token
         let handle = HubCommandHandle()
         commandHandle = handle
         message = nil
         resetLog()
-        enqueue("$ tmnf hub run \(title.id) \(action.id)\(runtime.map { " --runtime \($0.rawValue)" } ?? "")\n")
+        let flags = (runtime.map { " --runtime \($0.rawValue)" } ?? "") + (includeSaves ? " --include-saves" : "")
+        enqueue("$ tmnf hub run \(title.id) \(action.id)\(flags)\n")
         Task { [weak self] in
             guard let self else { return }
             var outcome = RunOutcome.succeeded
             var output = ""
             do {
                 output = try await backend.run(titleID: title.id, actionID: action.id, source: source, runtime: runtime,
-                                               handle: handle) { [weak self] chunk in
+                                               includeSaves: includeSaves, handle: handle) { [weak self] chunk in
                     Task { @MainActor [weak self] in
                         guard self?.activityToken == token else { return }
                         self?.enqueue(chunk)
@@ -158,11 +162,11 @@ final class HubViewModel: ObservableObject {
                 outcome = .failed(error.localizedDescription)
                 enqueue(error.localizedDescription + "\n")
             }
-            finish(action: action, title: title, outcome: outcome, output: output)
+            finish(action: action, label: actionLabel, title: title, outcome: outcome, output: output)
         }
     }
 
-    private func finish(action: HubAction, title: HubTitle, outcome: RunOutcome, output: String) {
+    private func finish(action: HubAction, label: String, title: HubTitle, outcome: RunOutcome, output: String) {
         flushOutput()
         if outcome == .cancelled { enqueue("Cancelled.\n"); flushOutput() }
         lastRun?.outcome = outcome
@@ -173,8 +177,8 @@ final class HubViewModel: ObservableObject {
         commandHandle = nil
         cancelling = false
         switch outcome {
-        case .succeeded: Notifier.notify(title: title.name, body: String(localized: "\(action.label) finished."))
-        case .failed: Notifier.notify(title: title.name, body: String(localized: "\(action.label) failed."))
+        case .succeeded: Notifier.notify(title: title.name, body: String(localized: "\(label) finished."))
+        case .failed: Notifier.notify(title: title.name, body: String(localized: "\(label) failed."))
         case .cancelled: break
         }
         reload(clearMessage: false)

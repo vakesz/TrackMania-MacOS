@@ -20,7 +20,7 @@ The Swift interface is an adapter over exactly two shell commands:
 
 ```sh
 tmnf hub snapshot
-tmnf hub run TITLE ACTION [--source ABSOLUTE_PATH] [--runtime download|build]
+tmnf hub run TITLE ACTION [--source ABSOLUTE_PATH] [--runtime download|build] [--include-saves]
 ```
 
 `snapshot` is read-only and returns one versioned JSON document describing every
@@ -30,7 +30,8 @@ then starts the normal CLI/installer in a fresh process with `TMNF_TITLE` set
 before title-dependent paths are calculated. This prevents one title from using
 another title's prefix or game path. Only the `install` and `install-platform`
 actions accept `--runtime`; it is the only way `run` sets `TMNF_RUNTIME_SOURCE`,
-which is never inherited from the hub's environment.
+which is never inherited from the hub's environment. Only the `uninstall`
+action accepts `--include-saves`.
 
 Each title entry carries `icon` (an absolute path or `null`) and `iconSource`
 (`"game"`, `"bundled"` or `null`). The icon is chosen in this order: the `.icns`
@@ -50,6 +51,63 @@ be installed from user-owned retail media, while Turbo can copy an existing
 Steam game folder. These other titles remain provisional: installation does not
 mean their renderer, DRM, online services or complete gameplay have been
 qualified under Wine.
+
+## Uninstalling a title
+
+The snapshot lists an `uninstall` action for every title that left something
+behind: its prefix, its Game or Settings app, its launcher support directory,
+or only its saves folder. Each title entry also carries `removal`, the paths an
+uninstall would remove, so the confirmation dialog can name them:
+
+```json
+"removal": {
+  "items": [{"kind": "prefix", "label": "Wine prefix and game files", "path": "/Users/me/Games/TMNF/prefix"}],
+  "saves": "/Users/me/Games/TMNF/UserData"
+}
+```
+
+`kind` is one of `prefix`, `game-app`, `settings-app`, `launcher`, `leftover`,
+`cache`, `logs` and `icon`; `saves` is `null` when the title has no saves
+folder. `leftover` is a folder an interrupted uninstall renamed but did not
+finish deleting.
+Error entries carry `"removal": null`. The preview only checks what exists; the
+full checks run when the action does.
+
+`tmnf hub run TITLE uninstall` runs `tmnf uninstall --yes` for that title. It
+removes the title's prefix, its two app wrappers (only our own, marked with
+`.tmnf-app` and carrying the title's bundle identifier), its launcher support
+directory, its cached installer, its logs and diagnostics reports, and its
+extracted icon. It keeps the saves folder, `~/Games/<title>/UserData`, which
+is the prefix's Windows Documents folder. `--include-saves` removes that folder
+too, but only at its default location; save folder names overlap between
+titles, so a custom or shared folder is never removed.
+
+An uninstall never removes the Wine runtime, the shared downloads (DirectX,
+TMLoader, OpenAL Soft), a title root, or another title's files. Nations
+Forever's root `~/Games/TMNF` also holds the other titles' roots, so only its
+`prefix` and `UserData` folders are removed, never the root. The action refuses
+while the game is running or another operation holds the prefix, and an app
+that is not ours, a symlink or an older launcher app is reported and kept.
+
+The guard plans and removes in one Python process; the shell only confirms and
+prints, and never reads a plan back. Each folder is first renamed to a tombstone
+(`.<name>.tmnf-removing.<random>`) in its own folder, so a removal that stops
+halfway is finished by the next uninstall. Tombstones are only recognised where
+the original folder would be accepted: prefix and saves tombstones in the
+title's own root, launcher tombstones as `launchers/<id>`. Keeping saves never
+deletes a saves tombstone: it is renamed back to `UserData` when that name is
+free, and kept otherwise; the snapshot then reports it as `saves`. A planned
+folder that is itself a mount point is kept ("is a mounted volume; unmount it
+first") and left out of `removal`; a prefix or saves folder with a volume
+mounted inside it is kept too, naming the mount point, before anything is
+renamed. Paths are compared by device and
+inode, not by spelling, because APFS is case-insensitive; removal refuses a
+path or parent that changed after it was checked, a folder with another volume
+mounted inside it, and any path containing a control character. For titles
+other than Nations Forever, the download folder `games/<id>` holds no ownership
+marker, so only the pinned installer, its partial downloads and its unpacked
+staging are removed, and the folder only once it is empty. When
+it finishes, the snapshot shows the title as not installed.
 
 ## Titles
 

@@ -318,7 +318,39 @@ if grep -Eq '^sidecar=.' "$CALL_LOG"; then
 fi
 
 : >"$CALL_LOG"
-"${PROJECT_DIR}/src/shell/cli/tmnf" uninstall --yes >/dev/null
-test ! -e "$FAKE_PREFIX"
+# Uninstall removes only this title's files. TM United lives under tmnf's root.
+OTHER_ROOT="${FAKE_ROOT}/TM United"
+FAKE_LOGS="${FAKE_HOME}/Library/Logs/TMNF"
+SETTINGS_APP="${FAKE_HOME}/Applications/TrackMania Settings.app"
+mkdir -p "${OTHER_ROOT}/prefix" "${OTHER_ROOT}/UserData/TmForever" "${TMNF_USERDATA}/TmForever" "$FAKE_LOGS" "$TMNF_CACHE"
+printf 'tmu:1\n' >"${OTHER_ROOT}/prefix/.tmnf-prefix"
+printf 'other save' >"${OTHER_ROOT}/UserData/TmForever/save"
+printf 'save' >"${TMNF_USERDATA}/TmForever/save"
+printf 'shared' >"${TMNF_CACHE}/directx_Jun2010_redist.exe"
+printf 'installer' >"${TMNF_CACHE}/tmnationsforever_setup.exe"
+printf 'log' >"${FAKE_LOGS}/play.log"
+printf 'log' >"${FAKE_LOGS}/tmu-play.log"
+test -d "${TMNF_SUPPORT}/launchers/tmnf"
+test -d "$SETTINGS_APP"
+: >"$CALL_LOG"
+uninstall_output="$("${PROJECT_DIR}/src/shell/cli/tmnf" uninstall --yes)"
+for removed in "$FAKE_PREFIX" "$TMNF_APP" "$SETTINGS_APP" "${TMNF_SUPPORT}/launchers/tmnf" \
+  "${TMNF_CACHE}/tmnationsforever_setup.exe" "${FAKE_LOGS}/play.log"; do
+  if test -e "$removed"; then echo "uninstall left $removed" >&2; exit 1; fi
+done
+test -f "${TMNF_USERDATA}/TmForever/save"
+grep -Fq "Kept ${TMNF_USERDATA} (saves are kept)" <<<"$uninstall_output"
+# With only saves left, --include-saves removes the title's own saves folder.
+"${PROJECT_DIR}/src/shell/cli/tmnf" uninstall --yes --include-saves >/dev/null
+test ! -e "$TMNF_USERDATA"
+test -d "$FAKE_ROOT"
+test -f "${OTHER_ROOT}/UserData/TmForever/save"
+test -f "${OTHER_ROOT}/prefix/.tmnf-prefix"
+test -f "${TMNF_CACHE}/directx_Jun2010_redist.exe"
+test -f "${FAKE_LOGS}/tmu-play.log"
+test -x "${FAKE_BIN}/wine"
+if "${PROJECT_DIR}/src/shell/cli/tmnf" uninstall --bogus >/dev/null 2>&1; then
+  echo 'uninstall accepted an unknown option' >&2; exit 1
+fi
 
 echo "CLI tests passed"

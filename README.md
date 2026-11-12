@@ -102,8 +102,11 @@ the first time it sees a track, and later visits are smoother. See
 [where files go](#where-files-go) for everything else.
 
 **How do I uninstall?** In the hub, select the game, click the **⋯** button and
-choose **Uninstall…**. This removes the game's Wine prefix and keeps your saves,
-the downloaded installers and the runtime.
+choose **Uninstall…**. The dialog lists what it removes for that game: its Wine
+prefix, its Game and Settings apps, its launcher files, its downloaded
+installer and its logs. Choose **Remove game, keep saves** to keep your saves,
+or **Remove everything including saves** to also delete the game's `UserData`
+folder. The runtime and the downloads other games share are always kept.
 
 **Something went wrong.** In the hub, click **⋯ > Open Logs Folder** and attach
 the newest log when you
@@ -201,7 +204,7 @@ the game runs without it. See
 | `make stop` | Stop Wine processes in this game's prefix |
 | `make install` | Install missing files and refresh the app launchers |
 | `./src/shell/cli/tmnf play-vanilla` | Run the official game without Competition Patch |
-| `./src/shell/cli/tmnf uninstall` | Remove the Wine prefix after confirmation |
+| `./src/shell/cli/tmnf uninstall` | Remove this game's prefix, apps, launcher, installer and logs after confirmation; add `--include-saves` to remove its saves too |
 
 To force a fixed windowed size, set `TMNF_WINDOW_SIZE=1280x720` (any `WxH`).
 That runs the game inside a separate Wine virtual desktop for this session.
@@ -224,8 +227,9 @@ explicitly want to stop the selected prefix.
 | App launch logs | `~/Library/Logs/TMNF` |
 
 Older local installations may still save to `~/Documents/TmForever`; the
-installer keeps that existing arrangement. Uninstalling the prefix keeps the
-runtime, download cache and separate user data.
+installer keeps that existing arrangement. Uninstalling keeps the runtime, the
+shared downloads and the `UserData` folder unless you choose to remove saves;
+saves outside `UserData`, such as `~/Documents/TmForever`, are never removed.
 
 To choose another game or app folder, set it when installing:
 

@@ -34,8 +34,39 @@ class TitleRegistryTests(unittest.TestCase):
         subdirs = {}
         for path in sorted(TITLES.glob("*.json")):
             data = json.loads(path.read_text())
-            self.assertNotIn(data["prefix_subdir"], subdirs, data["prefix_subdir"])
-            subdirs[data["prefix_subdir"]] = data["id"]
+            # APFS is case-insensitive: "TMNF/Canyon" and "tmnf/canyon" are one folder.
+            key = data["prefix_subdir"].casefold()
+            self.assertNotIn(key, subdirs, data["prefix_subdir"])
+            subdirs[key] = data["id"]
+        for key, title_id in subdirs.items():
+            for other in subdirs:
+                for area in ("prefix", "userdata"):
+                    self.assertFalse(
+                        key.startswith(other + "/" + area + "/") or key == other + "/" + area,
+                        f"{title_id} sits inside the {area} of another title",
+                    )
+
+    def test_registry_refuses_colliding_or_nested_roots_at_load_time(self):
+        import shutil
+        import sys
+        import tempfile
+
+        sys.path.insert(0, str(ROOT / "src/python"))
+        from tmnf.hub import registry
+
+        self.assertEqual(registry.subdir_conflicts(registry.load_all(TITLES)), {})
+        for subdir in ("tmnf", "TMNF/Prefix/x", "tmnf/userdata/x", "tmnf/canyon"):
+            with self.subTest(subdir=subdir), tempfile.TemporaryDirectory() as directory:
+                titles = Path(directory) / "titles"
+                shutil.copytree(TITLES, titles)
+                data = json.loads((titles / "tm-turbo.json").read_text())
+                data["prefix_subdir"] = subdir
+                (titles / "tm-turbo.json").write_text(json.dumps(data))
+                loaded, errors, _ = registry.load_registry(titles)
+                self.assertIn("tm-turbo", errors)
+                self.assertNotIn("tm-turbo", [title.id for title in loaded])
+                with self.assertRaises(registry.RegistryError):
+                    registry.load_all(titles)
 
     def test_shell_and_python_read_the_same_release_pins(self):
         """config/pins.json is the only home: shell and Python must agree on it."""
@@ -411,8 +442,11 @@ TITLE_CONDITIONAL_ALLOWLIST = (
         'if not identity and title.id == "tmnf" and (prefix / "system.reg").is_file():',
     ),
     ("src/python/tmnf/hub/state.py", 'if not identity and title.id == "tmnf":'),
-    # The single-title installer cache location existing downloads still use.
-    ("src/shell/lib/install/game.sh", 'if test "$title" = tmnf; then'),
+    # The single-title installer cache location existing downloads still use;
+    # uninstall mirrors it and TMNF's unprefixed log names.
+    ("src/shell/lib/titles.sh", 'if test "$title" = tmnf; then'),
+    ("src/python/tmnf/guard/uninstall.py", 'if title.id == "tmnf":'),
+    ("src/python/tmnf/guard/uninstall.py", 'if title_id != "tmnf":'),
     # The shared pre-multi-title launcher only TMNF ever installed.
     ("src/shell/lib/apps/wrappers.sh", 'test "$TMNF_TITLE" = tmnf || return 0'),
     # TMNF's app logs kept their pre-multi-title names (play.log, configure.log).

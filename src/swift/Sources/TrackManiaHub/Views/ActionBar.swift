@@ -61,8 +61,10 @@ struct ActionBar: View {
             }
             Button("Open Logs Folder") { model.openLogsFolder() }
             if !groups.destructive.isEmpty { Divider() }
+            // Uninstall waits until the game has stopped; the backend refuses it too.
             ForEach(groups.destructive) { action in
-                Button(action.label, role: .destructive) { perform(action) }.disabled(busy)
+                Button(action.label, role: .destructive) { perform(action) }
+                    .disabled(busy || title.sessionActive)
             }
         } label: {
             Image(systemName: "ellipsis.circle")

@@ -33,3 +33,20 @@ tmnf_load_title() {
     || return 1
   eval "$assignments"
 }
+
+# _cache_installer_path TITLE — resolved path of the pinned installer download.
+# src/python/tmnf/guard/uninstall.py mirrors it (installer_cache_path); a test keeps them equal.
+_cache_installer_path() {
+  local title="$1" url="$TMNF_TITLE_SOURCE_URL"
+  test "$title" = "$TMNF_TITLE" || die "Installer cache requested for $title, not $TMNF_TITLE."
+  if test -z "$url"; then
+    die "Title $title has no pinned installer URL in config/titles."
+  fi
+  if test "$title" = tmnf; then
+    # Keep the historical single-title cache location so existing downloads
+    # stay valid.
+    printf '%s/%s\n' "$TMNF_CACHE" "${url##*/}"
+  else
+    printf '%s/games/%s/%s\n' "$TMNF_CACHE" "$title" "${url##*/}"
+  fi
+}

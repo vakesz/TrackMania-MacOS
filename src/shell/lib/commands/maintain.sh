@@ -198,21 +198,44 @@ stop_game() {
 }
 
 uninstall_game() {
-  local answer="" prefix_real
+  local answer="" option status=0 assume_yes=false
+  local -a plan_options=() locations
+  for option in "$@"; do
+    case "$option" in
+      --yes) assume_yes=true ;;
+      --include-saves) plan_options=(--include-saves) ;;
+      *) die "Unknown uninstall option: $option (use --yes and --include-saves)" ;;
+    esac
+  done
+  # The app wrappers are removed under the same app lock install_app writes them with.
+  if test "${TMNF_APP_OPERATION_FD+x}" != x; then
+    tmnf_python -m tmnf.guard.operation_guard app-run "$TMNF_PREFIX" \
+      /bin/bash "${TMNF_PROJECT_DIR}/src/shell/cli/tmnf" uninstall "$@"
+    return $?
+  fi
+  tmnf_python -m tmnf.guard.operation_guard app-held "$TMNF_PREFIX" \
+    || die "Invalid app operation lock."
   validate_managed_layout || die "Unsafe installation layout; userdata must be outside the prefix."
-  # The guard prints the prefix resolved once; removal acts on that path only.
-  prefix_real="$(tmnf_python -m tmnf.guard.managed_paths uninstall "$TMNF_PREFIX" "$TMNF_USERDATA")" \
-    || die "Refusing removal until the reported user-data locations are safe."
-  test -n "$prefix_real" || die "The guard did not report a prefix to remove."
-  if test "${1:-}" != "--yes"; then
-    printf 'Remove the TMNF prefix at %s? [y/N] ' "$TMNF_PREFIX"
+  locations=("$TMNF_PREFIX" "$TMNF_USERDATA" "$TMNF_APP" "$TMNF_SETTINGS_APP" "$TMNF_LAUNCHER" \
+    "$TMNF_SUPPORT" "$TMNF_CACHE")
+  # The guard plans and removes in one process; this shell only asks and never
+  # reads the plan back, so nothing in a path or an app can become a command.
+  if test "$assume_yes" != true; then
+    tmnf_python -m tmnf.guard.uninstall plan ${plan_options[@]+"${plan_options[@]}"} "${locations[@]}" \
+      || status=$?
+    case "$status" in
+      0) ;;
+      3) return 0 ;;
+      *) die "Refusing removal until the reported locations are safe." ;;
+    esac
+    printf 'Remove these files from %s? [y/N] ' "$TMNF_TITLE_NAME"
     read -r answer || answer=""
     case "$answer" in
       y|Y|yes|YES) ;;
       *) say "Cancelled."; return 0 ;;
     esac
   fi
-  rm -rf -- "$prefix_real"
-  say "Removed $prefix_real"
-  say "The cached installers and private Wine runtime were kept."
+  tmnf_python -m tmnf.guard.uninstall remove ${plan_options[@]+"${plan_options[@]}"} "${locations[@]}" \
+    || die "The uninstall did not finish. Run it again to remove what is left."
+  say "The Wine runtime and downloads shared with other games were kept."
 }

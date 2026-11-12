@@ -166,11 +166,13 @@ struct HubTitle: Decodable, Equatable, Identifiable {
     let sessionActive: Bool
     let state: HubInstallationState
     let apps: HubApps
+    /// What an uninstall would remove, as reported by the backend; absent from older backends.
+    let removal: HubRemoval?
     let actions: [HubAction]
 
     private enum CodingKeys: String, CodingKey {
         case id, name, shortName, status, notes, engine, kind, icon, iconSource, error
-        case requiresSerial, sourceSize, locations, sessionActive, state, apps, actions
+        case requiresSerial, sourceSize, locations, sessionActive, state, apps, removal, actions
     }
 
     init(from decoder: Decoder) throws {
@@ -191,6 +193,7 @@ struct HubTitle: Decodable, Equatable, Identifiable {
         sessionActive = (try? c.decodeIfPresent(Bool.self, forKey: .sessionActive)) ?? false
         state = (try? c.decodeIfPresent(HubInstallationState.self, forKey: .state)) ?? .empty
         apps = (try? c.decodeIfPresent(HubApps.self, forKey: .apps)) ?? HubApps(game: "", settings: "")
+        removal = (try? c.decodeIfPresent(HubRemoval.self, forKey: .removal)) ?? nil
         actions = c.lossyArray(HubAction.self, forKey: .actions)
     }
 
@@ -199,12 +202,38 @@ struct HubTitle: Decodable, Equatable, Identifiable {
          iconSource: IconSource? = nil, error: String? = nil, requiresSerial: Bool? = nil,
          sourceSize: Int64? = nil, locations: HubLocations? = nil, sessionActive: Bool = false,
          state: HubInstallationState = .empty, apps: HubApps = HubApps(game: "", settings: ""),
-         actions: [HubAction] = []) {
+         removal: HubRemoval? = nil, actions: [HubAction] = []) {
         self.id = id; self.name = name; self.shortName = shortName; self.status = status
         self.notes = notes; self.engine = engine; self.kind = kind; self.icon = icon
         self.iconSource = iconSource; self.error = error; self.requiresSerial = requiresSerial
         self.sourceSize = sourceSize; self.locations = locations; self.sessionActive = sessionActive
-        self.state = state; self.apps = apps; self.actions = actions
+        self.state = state; self.apps = apps; self.removal = removal; self.actions = actions
+    }
+}
+
+/// One path an uninstall removes. Swift only displays it; the backend computes and checks it.
+struct HubRemovalItem: Decodable, Equatable {
+    let kind: String
+    let label: String
+    let path: String
+}
+
+/// The backend's uninstall preview: the paths removed and the saves folder, if any.
+struct HubRemoval: Decodable, Equatable {
+    let items: [HubRemovalItem]
+    let saves: String?
+
+    init(items: [HubRemovalItem] = [], saves: String? = nil) {
+        self.items = items
+        self.saves = saves
+    }
+
+    private enum CodingKeys: String, CodingKey { case items, saves }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        items = c.lossyArray(HubRemovalItem.self, forKey: .items)
+        saves = try? c.decodeIfPresent(String.self, forKey: .saves)
     }
 }
 

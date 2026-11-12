@@ -10,6 +10,8 @@ from __future__ import annotations
 import pathlib
 import typing
 
+from tmnf.guard import uninstall
+
 from . import paths as hub_paths
 from . import registry
 from . import state
@@ -18,7 +20,10 @@ SCHEMA = 2
 
 
 def _actions(
-    title: registry.Title, items: typing.Dict[str, state.Probe], session_active: bool = False
+    title: registry.Title,
+    items: typing.Dict[str, state.Probe],
+    session_active: bool = False,
+    removable: bool = False,
 ) -> typing.List[dict]:
     actions = _base_actions(title, items)
     if items["prefix"].ready:
@@ -35,6 +40,9 @@ def _actions(
             actions.append(
                 {"id": "stop", "label": "Stop game", "primary": False, "kind": "maintenance"}
             )
+    # Offered whenever the title left anything behind: a prefix, its apps or
+    # launcher, or only its saves after an uninstall that kept them.
+    if removable or items["prefix"].ready:
         actions.append(
             {"id": "uninstall", "label": "Uninstall\u2026", "primary": False, "kind": "destructive"}
         )
@@ -110,6 +118,7 @@ def title_payload(
     icon, icon_source = resolved.resolve_icon()
     # Fails safe: any probe error reads as inactive, which hides Stop game.
     active = state.session_active(resolved.prefix)
+    removal = uninstall.preview(title, resolved)
     return {
         "id": title.id,
         "name": title.name,
@@ -127,7 +136,8 @@ def title_payload(
         "iconSource": icon_source,
         "state": {name: probe.payload() for name, probe in items.items()},
         "apps": {"game": str(resolved.app), "settings": str(resolved.settings_app)},
-        "actions": _actions(title, items, active),
+        "removal": removal,
+        "actions": _actions(title, items, active, uninstall.removable(removal)),
     }
 
 
@@ -152,6 +162,7 @@ def contained_payload(title: registry.Title) -> dict:
             "iconSource": None,
             "state": {},
             "apps": {"game": "", "settings": ""},
+            "removal": None,
             "actions": [],
         }
 
@@ -174,6 +185,7 @@ def _error_placeholder(title_id: str, message: str) -> dict:
             "error": message,
             "state": {},
             "apps": {"game": "", "settings": ""},
+            "removal": None,
             "actions": [],
         }
     )

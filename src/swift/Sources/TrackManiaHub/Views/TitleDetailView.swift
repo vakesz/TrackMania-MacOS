@@ -62,16 +62,17 @@ struct TitleDetailView: View {
             titleVisibility: .visible,
             presenting: uninstallAction
         ) { action in
-            Button(Self.confirmLabel(action.label), role: .destructive) { model.run(action, for: title) }
+            // Keeping saves comes first; removing them is never the only or default choice
+            // unless saves are all that is left.
+            ForEach(UninstallChoice.choices(for: title), id: \.self) { choice in
+                Button(choice.label, role: .destructive) {
+                    model.run(action, for: title, includeSaves: choice.includesSaves, label: choice.label)
+                }
+            }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
             Text(HubUIText.uninstall(title))
         }
-    }
-
-    /// Menu items end in "…" because they open a dialog; the dialog's own button must not.
-    nonisolated static func confirmLabel(_ label: String) -> String {
-        label.hasSuffix("…") ? String(label.dropLast()) : label
     }
 
     private func perform(_ action: HubAction) {
@@ -87,11 +88,58 @@ struct TitleDetailView: View {
     }
 }
 
+/// The destructive buttons of the uninstall dialog, chosen from the backend's preview.
+enum UninstallChoice: Hashable {
+    case keepSaves, everything, gameOnly, savesOnly
+
+    var label: String {
+        switch self {
+        case .keepSaves: String(localized: "Remove game, keep saves")
+        case .everything: String(localized: "Remove everything including saves")
+        case .gameOnly: String(localized: "Remove game")
+        case .savesOnly: String(localized: "Remove saves")
+        }
+    }
+
+    var includesSaves: Bool { self == .everything || self == .savesOnly }
+
+    static func choices(for title: HubTitle) -> [UninstallChoice] {
+        guard let removal = title.removal else { return [.gameOnly] }
+        switch (removal.items.isEmpty, removal.saves != nil) {
+        case (false, true): return [.keepSaves, .everything]
+        case (true, true): return [.savesOnly]
+        case (false, false), (true, false): return [.gameOnly]
+        }
+    }
+}
+
 enum HubUIText {
+    /// The dialog message: every path the backend reported, then the saves folder.
     static func uninstall(_ title: HubTitle) -> String {
-        let removed = title.locations?.prefix ?? String(localized: "this game's Wine prefix")
-        let kept = title.locations?.userdata.map { String(localized: "your saved data at \($0)") }
-            ?? String(localized: "your saved data")
-        return String(localized: "This removes \(removed). It keeps \(kept), the cached installers and the runtime.")
+        guard let removal = title.removal else {
+            let removed = title.locations?.prefix ?? String(localized: "this game's Wine prefix")
+            let kept = title.locations?.userdata.map { String(localized: "your saved data at \($0)") }
+                ?? String(localized: "your saved data")
+            return String(localized: "This removes \(removed). It keeps \(kept) and the runtime.")
+        }
+        var parts: [String] = []
+        if !removal.items.isEmpty {
+            let lines = removal.items.map { "• \($0.label): \(display($0.path))" }
+            parts.append(String(localized: "This removes:") + "\n" + lines.joined(separator: "\n"))
+        }
+        if let saves = removal.saves.map(display) {
+            parts.append(removal.items.isEmpty
+                ? String(localized: "Only your saved data is left, in \(saves). Removing it deletes this game's saves, replays, tracks and settings. This cannot be undone.")
+                : String(localized: "Your saves, replays, tracks and settings are in \(saves). \"Remove everything including saves\" deletes that folder too. This cannot be undone."))
+        } else {
+            parts.append(String(localized: "No saved data was found for this game."))
+        }
+        parts.append(String(localized: "The Wine runtime and downloads shared with other games are kept."))
+        return parts.joined(separator: "\n\n")
+    }
+
+    /// Display only: the home folder shown as ~. The backend acts on the full path.
+    private static func display(_ path: String) -> String {
+        (path as NSString).abbreviatingWithTildeInPath
     }
 }

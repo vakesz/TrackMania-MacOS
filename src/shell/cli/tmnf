@@ -26,7 +26,8 @@ Commands:
   titles       List supported TrackMania titles and their status
   hub          Native-hub backend (snapshot or run)
   import       Run a retail setup or copy a Steam game folder (TMNF_TITLE)
-  uninstall    Remove the TMNF prefix after confirmation
+  uninstall    Remove one title's prefix, apps, launcher, cached installer and logs
+               after confirmation; --include-saves also removes its saves folder
   help         Show this help
 EOF
 }
@@ -44,10 +45,21 @@ EOF
 
 command="${1:-help}"
 case "$command" in
-  play|play-vanilla|configure|d9vk|uninstall|import)
+  play|play-vanilla|configure|d9vk|import)
     validate_launch_options
     # Ownership first, so no lock file is created in a prefix this user does not own.
     require_owned_managed_layout
+    hold_prefix_operation "${TMNF_PROJECT_DIR}/src/shell/cli/tmnf" "$@"
+    ;;
+  uninstall)
+    validate_launch_options
+    # A title with only its apps or saves left has no prefix to own. The lock
+    # (and the refusal while Wine is active) applies either way.
+    if test -e "$TMNF_PREFIX" || test -L "$TMNF_PREFIX"; then
+      require_owned_managed_layout
+    else
+      validate_managed_layout || die "Unsafe installation layout."
+    fi
     hold_prefix_operation "${TMNF_PROJECT_DIR}/src/shell/cli/tmnf" "$@"
     ;;
   update|app)
@@ -76,7 +88,7 @@ case "$command" in
   titles) hub_command titles ;;
   hub) hub_command "${@:2}" ;;
   import) import_source "${2:-}" ;;
-  uninstall) uninstall_game "${2:-}" ;;
+  uninstall) uninstall_game "${@:2}" ;;
   help|-h|--help) usage ;;
   *) usage >&2; die "unknown command: $command" ;;
 esac

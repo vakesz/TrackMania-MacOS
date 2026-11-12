@@ -34,6 +34,7 @@ import shutil
 import stat
 import sys
 import typing
+import unicodedata
 from pathlib import Path
 
 from tmnf.hub import registry
@@ -45,7 +46,10 @@ if typing.TYPE_CHECKING:
 
 LEGACY_APP_ID = "local.tmnf.launcher"
 LOG_SUFFIXES = ("", ".1", ".2", ".3")
-TOMBSTONE = re.compile(r"^\.(?P<name>.+)\.tmnf-removing\.[0-9a-f]{8}$")
+# Always matched with fullmatch: "$" would also accept a trailing newline.
+TOMBSTONE = re.compile(r"\.(?P<name>.+)\.tmnf-removing\.[0-9a-f]{8}")
+MOUNTED = "is a mounted volume; unmount it first"
+UNFINISHED_SAVES = "saves from an unfinished uninstall"
 # plan exits with this status when nothing is left to remove.
 NOTHING_TO_REMOVE = 3
 
@@ -53,7 +57,9 @@ Identity = typing.Tuple[int, int]
 
 
 class Entry(typing.NamedTuple):
-    verb: str  # "remove", "prune" (remove only if empty) or "keep"
+    # "remove", "prune" (remove only if empty), "restore" (rename back to
+    # target) or "keep"
+    verb: str
     kind: str
     path: Path
     reason: str = ""
@@ -61,10 +67,13 @@ class Entry(typing.NamedTuple):
     # refuses to act on anything that no longer matches.
     identity: typing.Optional[Identity] = None
     parent: typing.Optional[Identity] = None
+    target: typing.Optional[Path] = None
 
     def describe(self) -> str:
         if self.verb == "keep":
             return "{} ({})".format(self.path, self.reason)
+        if self.verb == "restore":
+            return "{} ({}; moved back to {})".format(self.path, self.reason, self.target)
         return str(self.path)
 
 
@@ -73,14 +82,22 @@ def _identity(info: os.stat_result) -> Identity:
 
 
 def _planned(verb: str, kind: str, path: Path) -> Entry:
-    """A removal of PATH (resolved, not a symlink) with its identity recorded."""
-    return Entry(
-        verb,
-        kind,
-        path,
-        identity=_identity(os.lstat(path)),
-        parent=_identity(os.lstat(path.parent)),
-    )
+    """A removal of PATH (resolved, not a symlink) with its identity recorded.
+
+    A path on another device than its parent is a mount point: removing it
+    would empty that whole volume, so it is kept instead.
+    """
+    info, parent = os.lstat(path), os.lstat(path.parent)
+    if info.st_dev != parent.st_dev:
+        return _keep(kind, path, MOUNTED)
+    return Entry(verb, kind, path, identity=_identity(info), parent=_identity(parent))
+
+
+def _mount_point(path: Path) -> bool:
+    try:
+        return os.lstat(path).st_dev != os.lstat(path.parent).st_dev
+    except OSError:
+        return False
 
 
 def _remove(kind: str, path: Path) -> Entry:
@@ -91,8 +108,13 @@ def _keep(kind: str, path: Path, reason: str) -> Entry:
     return Entry("keep", kind, path, reason)
 
 
+# Control (C0 and C1), format (bidi overrides, zero-width) and line or
+# paragraph separators can all disguise or break a line of output.
+_UNPRINTABLE = frozenset(("Cc", "Cf", "Zl", "Zp"))
+
+
 def _printable(text: str) -> bool:
-    return not any(ord(char) < 32 or ord(char) == 127 for char in text)
+    return not any(unicodedata.category(char) in _UNPRINTABLE for char in text)
 
 
 def _plain_absolute(value: str, what: str) -> Path:
@@ -141,6 +163,18 @@ def load_titles() -> typing.Tuple[registry.Title, typing.List[registry.Title]]:
         titles.extend(loaded)
         if index == 0:
             current = next((title for title in loaded if title.id == title_id), None)
+    # The conflict check keys titles by id, so an override may not quietly
+    # redefine a shipped title's root: every (directory, id) must agree.
+    roots: typing.Dict[str, str] = {}
+    for loaded_title in titles:
+        known = roots.setdefault(loaded_title.id, loaded_title.prefix_subdir)
+        if known.casefold() != loaded_title.prefix_subdir.casefold():
+            raise ValueError(
+                "Fix the title registry before uninstalling: {} has prefix_subdir {} in "
+                "TMNF_TITLES_DIR but {} in the shipped registry".format(
+                    loaded_title.id, known, loaded_title.prefix_subdir
+                )
+            )
     conflicts = registry.subdir_conflicts(titles)
     if conflicts:
         raise ValueError(
@@ -263,12 +297,21 @@ def limits(
         apps_dir,
     ]
     foreign = []
+    own_chain = _chain(title_root(title, home))
     for other in titles:
         if other.id == title.id:
             continue
         root = title_root(other, home)
         protected += [root, root / "prefix", root / "UserData"]
         foreign += [root / "prefix", root / "UserData"]
+        # Another title's root is foreign too, unless it holds this title's root
+        # (tmnf's ~/Games/TMNF holds every other title's root).
+        try:
+            holds_ours = _identity(os.stat(root)) in own_chain
+        except OSError:
+            holds_ours = False
+        if not holds_ours:
+            foreign.append(root)
     return Limits(protected, foreign)
 
 
@@ -281,13 +324,17 @@ def tombstone_name(name: str) -> str:
 
 
 def leftover_entries(directory: Path, name: str, kind: str) -> typing.List[Entry]:
-    """Tombstones of NAME that an interrupted uninstall left in DIRECTORY."""
+    """Tombstones of NAME that an interrupted uninstall left in DIRECTORY.
+
+    Names compare casefolded: a tombstone keeps the spelling the folder was
+    reached by, and APFS treats "userdata" and "UserData" as one name.
+    """
     if not directory.is_dir():
         return []
     entries = []
     for child in sorted(os.listdir(directory)):
-        match = TOMBSTONE.match(child)
-        if not match or match.group("name") != name:
+        match = TOMBSTONE.fullmatch(child)
+        if not match or match.group("name").casefold() != name.casefold():
             continue
         path = directory.resolve(strict=True) / child
         info = os.lstat(path)
@@ -360,10 +407,10 @@ def _regular_file(path: Path) -> bool:
 
 def _installer_files(directory: Path, name: str) -> typing.List[Entry]:
     """NAME and its `.partial.XXXXXX` downloads in DIRECTORY (see download_verified)."""
-    partial = re.compile(r"^{}\.partial\.[A-Za-z0-9]{{6}}$".format(re.escape(name)))
+    partial = re.compile(r"{}\.partial\.[A-Za-z0-9]{{6}}".format(re.escape(name)))
     entries = []
     for child in sorted(os.listdir(directory)):
-        if child != name and not partial.match(child):
+        if child != name and not partial.fullmatch(child):
             continue
         path = directory / child
         if _regular_file(path):
@@ -421,11 +468,11 @@ def log_entries(title: registry.Title, home: Path) -> typing.List[Entry]:
     if directory.is_symlink() or not directory.is_dir():
         return [_keep("logs", directory, "the logs folder is not a plain folder")]
     names = log_names(title.id)
-    report = re.compile(r"^diagnostics-{}-\d{{8}}-\d{{6}}\.zip$".format(re.escape(title.id)))
+    report = re.compile(r"diagnostics-{}-\d{{8}}-\d{{6}}\.zip".format(re.escape(title.id)))
     resolved = managed_paths.safe_path(str(directory))
     entries = []
     for child in sorted(os.listdir(resolved)):
-        if child not in names and not report.match(child):
+        if child not in names and not report.fullmatch(child):
             continue
         path = resolved / child
         if _regular_file(path):
@@ -549,22 +596,91 @@ def userdata_entries(
     return [_remove("saves", resolved)]
 
 
+def _saves_kept(found: typing.List[Entry], userdata: Path) -> typing.List[Entry]:
+    """Keeping saves never deletes them: an unfinished uninstall's saves go back.
+
+    The first saves tombstone is renamed back to the saves folder when that
+    name is free; any other is reported and kept.
+    """
+    entries: typing.List[Entry] = []
+    restoring = os.path.lexists(userdata)  # True once the name is taken
+    for entry in found:
+        if entry.verb == "remove" and not restoring:
+            restoring = True
+            entries.append(entry._replace(verb="restore", reason=UNFINISHED_SAVES, target=userdata))
+        elif entry.verb == "remove":
+            entries.append(_keep("saves", entry.path, UNFINISHED_SAVES))
+        else:
+            entries.append(entry)
+    return entries
+
+
 def _leftovers(
-    prefix: Path, userdata: Path, apps: typing.Sequence[Path], launcher: Path
+    title: registry.Title,
+    home: Path,
+    prefix: Path,
+    userdata: Path,
+    apps: typing.Sequence[Path],
+    launcher: Path,
+    support: Path,
+    include_saves: bool,
 ) -> typing.List[Entry]:
-    """Tombstones of every folder this title's uninstall renames before deleting."""
+    """Tombstones of every folder this title's uninstall renames before deleting.
+
+    Each kind is looked for only where its live folder would pass that
+    folder's own ownership rules: prefix and saves tombstones only in this
+    title's root, launcher tombstones only as `launchers/<id>`, app
+    tombstones only under this title's registry app names.
+    """
     entries = []
-    for path, kind in (
-        (prefix, "prefix"),
-        (userdata, "saves"),
-        (apps[0], "game-app"),
-        (apps[1], "settings-app"),
-        (launcher, "launcher"),
-    ):
+    root = title_root(title, home)
+    for path, kind in ((prefix, "prefix"), (userdata, "saves")):
+        if not _same(path.parent, root):
+            continue
+        found = leftover_entries(path.parent, path.name, kind)
+        if kind == "saves" and not include_saves:
+            found = _saves_kept(found, userdata)
+        entries += found
+    for path, kind in ((apps[0], "game-app"), (apps[1], "settings-app")):
         parent = path.parent
         if os.path.lexists(parent) and not parent.is_symlink():
             entries += leftover_entries(parent, path.name, kind)
+    if launcher.name == title.id and _same(launcher.parent, support / "launchers"):
+        entries += leftover_entries(launcher.parent, title.id, "launcher")
     return entries
+
+
+def _other_titles_documents(
+    entries: typing.Sequence[Entry],
+    title: registry.Title,
+    titles: typing.Sequence[registry.Title],
+    home: Path,
+) -> None:
+    """Refuse removing a folder another title keeps its Documents (saves) in.
+
+    Applies to the prefix as well as the saves folder: a profile link or a
+    user.reg redirection in another prefix may point into either.
+    """
+    removals = [e for e in entries if e.verb != "keep" and e.kind in ("prefix", "saves")]
+    if not removals:
+        return
+    for other in titles:
+        if other.id == title.id:
+            continue
+        other_prefix = title_root(other, home) / "prefix"
+        if not other_prefix.is_dir():
+            continue
+        try:
+            documents = list(managed_paths.profile_documents(other_prefix))
+            documents += managed_paths.redirected_documents(other_prefix)
+            chains = [_chain(location.resolve(strict=True)) for location in documents]
+        except (OSError, ValueError) as error:
+            raise ValueError(
+                "Cannot check where {} keeps its saves: {}".format(other.name, error)
+            ) from error
+        for entry in removals:
+            if any(entry.identity in chain for chain in chains):
+                raise ValueError("{} keeps its saves inside {}".format(other.name, entry.path))
 
 
 def plan(
@@ -608,10 +724,14 @@ def plan(
     entries += prefix_entries(prefix, userdata, title, include_saves, warnings)
     entries += userdata_entries(userdata, title, titles, home, include_saves)
     entries += _leftovers(
+        title,
+        home,
         _plain_absolute(prefix, "prefix"),
         _plain_absolute(userdata, "saves"),
         (app_path, settings_path),
         _plain_absolute(launcher, "launcher"),
+        support_path,
+        include_saves,
     )
     entries += cache_entries(title, cache_path)
     entries += log_entries(title, home)
@@ -625,29 +745,54 @@ def plan(
             raise ValueError("Unsafe path in the uninstall plan: {!r}".format(str(entry.path)))
         if entry.verb != "keep":
             bounds.check(entry)
+    _other_titles_documents(entries, title, titles, home)
     return entries
 
 
-def _same_volume(path: Path, device: int) -> None:
-    """Refuse a tree with another volume mounted inside it; nothing is crossed."""
-    for root, directories, files in os.walk(path, followlinks=False):
-        for name in directories + files:
-            if os.lstat(os.path.join(root, name)).st_dev != device:
+def _same_volume(directory: int, name: str, device: int) -> None:
+    """Refuse a tree with another volume mounted inside it; nothing is crossed.
+
+    Walks from the parent's descriptor without following symlinks.
+    """
+    for root, directories, files, root_fd in os.fwalk(name, dir_fd=directory):
+        for child in directories + files:
+            if os.stat(child, dir_fd=root_fd, follow_symlinks=False).st_dev != device:
                 raise ValueError(
-                    "{} has another volume mounted inside it ({!r}); unmount it and "
-                    "uninstall again".format(path, os.path.join(root, name))
+                    "{!r} has another volume mounted inside it ({!r}); unmount it and "
+                    "uninstall again".format(name, os.path.join(root, child))
                 )
 
 
+def _delete_tree(directory: int, parent: Path, name: str, expected: Identity) -> None:
+    """Delete folder NAME inside the open DIRECTORY, which holds it under that name."""
+    if sys.version_info >= (3, 11):
+        # Fully descriptor-relative: no path is resolved again after the checks.
+        if _identity(os.stat(name, dir_fd=directory, follow_symlinks=False)) != expected:
+            raise ValueError("{} changed after it was checked".format(parent / name))
+        _same_volume(directory, name, expected[0])
+        shutil.rmtree(name, dir_fd=directory)
+        return
+    # Python 3.9 and 3.10 have no rmtree(dir_fd=). The identity is checked by path
+    # immediately before; rmtree itself never follows symlinks inside the tree.
+    # Residual risk: a same-user process swapping an ancestor of PARENT between
+    # this check and rmtree's own open. The bundled Python (3.12) takes the
+    # branch above.
+    _same_volume(directory, name, expected[0])
+    if _identity(os.lstat(parent / name)) != expected:
+        raise ValueError("{} changed after it was checked".format(parent / name))
+    shutil.rmtree(parent / name)
+
+
 def _apply(entry: Entry) -> bool:
-    """Remove one planned entry; False when it was already gone or not empty."""
+    """Carry out one planned entry; False when it was already gone or not empty."""
     assert entry.identity is not None and entry.parent is not None
     parent = entry.path.parent
     # O_NOFOLLOW refuses a parent swapped for a symlink; the identity check
     # refuses one swapped for another folder anywhere along its path.
     descriptor = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        if _identity(os.fstat(descriptor)) != entry.parent:
+        parent_info = os.fstat(descriptor)
+        if _identity(parent_info) != entry.parent:
             raise ValueError("{} changed after it was checked".format(parent))
         try:
             info = os.stat(entry.path.name, dir_fd=descriptor, follow_symlinks=False)
@@ -655,6 +800,21 @@ def _apply(entry: Entry) -> bool:
             return False
         if _identity(info) != entry.identity:
             raise ValueError("{} changed after it was checked".format(entry.path))
+        if info.st_dev != parent_info.st_dev:
+            # A mount point: deleting its contents would empty the whole volume.
+            raise ValueError("{} {}".format(entry.path, MOUNTED))
+        if entry.verb == "restore":
+            assert entry.target is not None and entry.target.parent == parent
+            try:
+                os.stat(entry.target.name, dir_fd=descriptor, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                return False  # The saves folder exists again; the tombstone stays.
+            os.rename(
+                entry.path.name, entry.target.name, src_dir_fd=descriptor, dst_dir_fd=descriptor
+            )
+            return True
         if entry.verb == "prune":
             try:
                 os.rmdir(entry.path.name, dir_fd=descriptor)
@@ -666,12 +826,11 @@ def _apply(entry: Entry) -> bool:
         if not stat.S_ISDIR(info.st_mode):
             os.unlink(entry.path.name, dir_fd=descriptor)
             return True
-        _same_volume(entry.path, info.st_dev)
         name = entry.path.name
-        if not TOMBSTONE.match(name):
+        if not TOMBSTONE.fullmatch(name):
             name = tombstone_name(name)
             os.rename(entry.path.name, name, src_dir_fd=descriptor, dst_dir_fd=descriptor)
-        shutil.rmtree(parent / name)
+        _delete_tree(descriptor, parent, name, entry.identity)
         return True
     finally:
         os.close(descriptor)
@@ -681,20 +840,23 @@ def remove(
     entries: typing.Sequence[Entry],
     report: typing.Optional[typing.Callable[[str], None]] = None,
 ) -> int:
-    """Remove every planned entry in order and report each; returns how many went."""
+    """Carry out every planned entry in order and report each; returns how many acted."""
     report = report or print
     if not shutil.rmtree.avoids_symlink_attacks:
         raise RuntimeError(
             "This Python cannot remove folders without following symlinks; nothing was removed"
         )
-    removed = 0
+    done = 0
     for entry in entries:
         if entry.verb == "keep":
             report("Kept {}".format(entry.describe()))
         elif _apply(entry):
-            removed += 1
-            report("Removed {}".format(entry.path))
-    return removed
+            done += 1
+            if entry.verb == "restore":
+                report("Restored {} from an unfinished uninstall".format(entry.target))
+            else:
+                report("Removed {}".format(entry.path))
+    return done
 
 
 PREVIEW_LABELS = {
@@ -737,7 +899,8 @@ def preview(title: registry.Title, paths: "TitlePaths") -> dict:
             return False
         return True
 
-    if os.path.lexists(paths.prefix) and owned_prefix():
+    # A mount point is kept by plan, so the dialog does not list it either.
+    if os.path.lexists(paths.prefix) and owned_prefix() and not _mount_point(paths.prefix):
         add("prefix", paths.prefix)
     for value, kind in ((paths.app, "game-app"), (paths.settings_app, "settings-app")):
         entry = attempt(app_entry, str(value), title, kind)
@@ -747,10 +910,24 @@ def preview(title: registry.Title, paths: "TitlePaths") -> dict:
     if entry is not None and entry.verb == "remove":
         add("launcher", paths.launcher)
     leftovers = attempt(
-        _leftovers, paths.prefix, paths.userdata, (paths.app, paths.settings_app), paths.launcher
+        _leftovers,
+        title,
+        Path.home(),
+        paths.prefix,
+        paths.userdata,
+        (paths.app, paths.settings_app),
+        paths.launcher,
+        paths.support,
+        True,
     )
+    unfinished_saves = None
     for entry in leftovers or ():
-        if entry.verb == "remove":
+        if entry.verb != "remove":
+            continue
+        if entry.kind == "saves":
+            # Saves still: the dialog offers keeping (restoring) or removing them.
+            unfinished_saves = unfinished_saves or str(entry.path)
+        else:
             add("leftover", entry.path)
     cache = [e for e in attempt(cache_entries, title, paths.cache) or () if e.verb == "remove"]
     if cache:
@@ -761,9 +938,9 @@ def preview(title: registry.Title, paths: "TitlePaths") -> dict:
     entry = attempt(icon_entry, title, paths.support)
     if entry is not None and entry.verb == "remove":
         add("icon", entry.path)
-    saves = None
+    saves = unfinished_saves
     userdata = paths.userdata
-    if userdata.is_dir() and not userdata.is_symlink():
+    if userdata.is_dir() and not userdata.is_symlink() and not _mount_point(userdata):
         saves = str(userdata)
     return {"items": items, "saves": saves}
 
@@ -804,13 +981,19 @@ def main(argv: typing.Optional[typing.List[str]] = None) -> int:
         print("error: {}".format(error), file=sys.stderr)
         return 1
     removals = [entry for entry in entries if entry.verb == "remove"]
+    restores = [entry for entry in entries if entry.verb == "restore"]
     kept = [entry for entry in entries if entry.verb == "keep"]
-    if not removals:
+    if not removals and not restores:
         print("Nothing is left to remove.")
         return NOTHING_TO_REMOVE
-    print("This removes:")
-    for entry in removals:
-        print("  {}".format(entry.describe()))
+    if removals:
+        print("This removes:")
+        for entry in removals:
+            print("  {}".format(entry.describe()))
+    if restores:
+        print("This restores:")
+        for entry in restores:
+            print("  {}".format(entry.describe()))
     if kept:
         print("This keeps:")
         for entry in kept:

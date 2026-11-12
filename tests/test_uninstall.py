@@ -10,6 +10,7 @@ from pathlib import Path
 import plistlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -35,6 +36,13 @@ def make_app(path, bundle_id, marker=True):
     if marker:
         (contents / ".tmnf-app").touch()
     return path
+
+
+def faked_device(info, device):
+    """INFO with another st_dev, as a mount point would report."""
+    values = list(info)
+    values[2] = device
+    return os.stat_result(values)
 
 
 class Fixture:
@@ -487,20 +495,18 @@ class GuardPlanTests(unittest.TestCase):
     def test_removal_renames_to_a_tombstone_before_deleting(self):
         prefix = self.fx.install("tmnf")
         entries = [entry for entry in self.plan() if entry.kind == "prefix"]
-        seen = []
-        real = uninstall.shutil.rmtree
 
-        def stop(path, *args, **kwargs):
-            seen.append(Path(path))
+        def stop(*args, **kwargs):
             raise OSError("interrupted")
 
         with mock.patch.object(uninstall.shutil, "rmtree", side_effect=stop):
             with self.assertRaises(OSError):
                 uninstall.remove(entries, report=lambda line: None)
         self.assertFalse(prefix.exists())
-        self.assertRegex(seen[0].name, r"^\.prefix\.tmnf-removing\.[0-9a-f]{8}$")
-        self.assertEqual(seen[0].parent, self.fx.root("tmnf"))
-        real(seen[0])
+        tombs = [n for n in os.listdir(self.fx.root("tmnf")) if "tmnf-removing" in n]
+        self.assertEqual(len(tombs), 1)
+        self.assertRegex(tombs[0], r"^\.prefix\.tmnf-removing\.[0-9a-f]{8}$")
+        shutil.rmtree(self.fx.root("tmnf") / tombs[0])
 
     def test_removal_refuses_a_parent_or_entry_changed_after_planning(self):
         self.fx.install("tmnf")
@@ -528,9 +534,14 @@ class GuardPlanTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "nothing was removed"):
                 uninstall.remove(entries, report=lambda line: None)
         self.assertTrue(self.fx.prefix("tmnf").is_dir())
-        device = os.lstat(self.fx.prefix("tmnf")).st_dev
-        with self.assertRaisesRegex(ValueError, "another volume"):
-            uninstall._same_volume(self.fx.prefix("tmnf"), device + 1)
+        root = os.open(self.fx.root("tmnf"), os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            device = os.lstat(self.fx.prefix("tmnf")).st_dev
+            uninstall._same_volume(root, "prefix", device)
+            with self.assertRaisesRegex(ValueError, "another volume"):
+                uninstall._same_volume(root, "prefix", device + 1)
+        finally:
+            os.close(root)
 
     def test_paths_are_compared_by_identity_not_spelling(self):
         probe = self.home / "CaseProbe"
@@ -550,6 +561,196 @@ class GuardPlanTests(unittest.TestCase):
         userdata = str(self.fx.userdata("tmnf")).replace("UserData", "userdata")
         removed = self.removed(self.plan(include_saves=True, userdata=userdata))
         self.assertTrue(any(os.path.samefile(path, self.fx.userdata("tmnf")) for path in removed))
+
+    def test_mount_point_at_a_planned_path_is_kept_not_emptied(self):
+        self.fx.install("tmnf")
+        real_lstat = os.lstat
+        mounted = {str(self.fx.userdata("tmnf")), str(self.fx.prefix("tmnf"))}
+
+        def lstat(path, *args, **kwargs):
+            info = real_lstat(path, *args, **kwargs)
+            return faked_device(info, info.st_dev + 1) if str(path) in mounted else info
+
+        with mock.patch.object(uninstall.os, "lstat", side_effect=lstat):
+            entries = self.plan(include_saves=True)
+            removal = PreviewTests.preview_for(self.fx, "tmnf")
+        kept = self.kept(entries)
+        for path in mounted:
+            self.assertEqual(kept[Path(path)].reason, uninstall.MOUNTED)
+            self.assertNotIn(Path(path), self.removed(entries))
+        self.assertIsNone(removal["saves"])
+        self.assertNotIn("prefix", [item["kind"] for item in removal["items"]])
+        # At removal time too: an entry on another device than its parent is refused.
+        userdata = self.fx.userdata("tmnf")
+        info = real_lstat(userdata)
+        entry = uninstall.Entry(
+            "remove",
+            "saves",
+            userdata,
+            identity=(info.st_dev + 1, info.st_ino),
+            parent=uninstall._identity(real_lstat(userdata.parent)),
+        )
+        real_stat = os.stat
+
+        def stat(path, *args, **kwargs):
+            info = real_stat(path, *args, **kwargs)
+            return faked_device(info, info.st_dev + 1) if path == "UserData" else info
+
+        with mock.patch.object(uninstall.os, "stat", side_effect=stat):
+            with self.assertRaisesRegex(ValueError, "mounted volume"):
+                uninstall.remove([entry], report=lambda line: None)
+        self.assertTrue((userdata / "TmForever/Replays/race.Gbx").exists())
+
+    def interrupt(self, entries, kind):
+        """Remove everything before KIND, then stop while deleting KIND (real order)."""
+        index = next(i for i, entry in enumerate(entries) if entry.kind == kind)
+        uninstall.remove(entries[:index], report=lambda line: None)
+
+        def stop(*args, **kwargs):
+            raise OSError("interrupted")
+
+        with mock.patch.object(uninstall.shutil, "rmtree", side_effect=stop):
+            with self.assertRaises(OSError):
+                uninstall.remove([e for e in entries if e.kind == kind], report=lambda line: None)
+        return [
+            self.fx.root("tmnf") / n for n in os.listdir(self.fx.root("tmnf")) if "removing" in n
+        ]
+
+    def test_keeping_saves_restores_an_unfinished_uninstalls_saves(self):
+        self.fx.install("tmnf")
+        (tomb,) = self.interrupt(self.plan(include_saves=True), "saves")
+        self.assertFalse(self.fx.userdata("tmnf").exists())
+        self.assertEqual(PreviewTests.preview_for(self.fx, "tmnf")["saves"], str(tomb))
+        entries = self.plan()
+        self.assertNotIn(tomb, self.removed(entries))
+        uninstall.remove(entries, report=lambda line: None)
+        self.assertTrue((self.fx.userdata("tmnf") / "TmForever/Replays/race.Gbx").exists())
+        self.assertFalse(tomb.exists())
+        # With the saves folder back in place, a second tombstone is kept, not deleted.
+        second = self.fx.root("tmnf") / ".UserData.tmnf-removing.0123abcd"
+        second.mkdir()
+        kept = self.kept(self.plan())
+        self.assertEqual(kept[second].reason, uninstall.UNFINISHED_SAVES)
+        self.assertIn(second, self.removed(self.plan(include_saves=True)))
+
+    def test_tombstones_match_any_spelling_of_the_folder(self):
+        probe = self.home / "CaseProbe"
+        probe.mkdir()
+        if not (self.home / "caseprobe").is_dir():
+            self.skipTest("this volume is case-sensitive")
+        self.fx.install("tmnf")
+        lower = str(self.fx.root("tmnf") / "userdata")
+        (tomb,) = self.interrupt(self.plan(include_saves=True, userdata=lower), "saves")
+        self.assertTrue(tomb.name.startswith(".userdata.tmnf-removing."))
+        self.assertIn(tomb, self.removed(self.plan(include_saves=True)))
+        restore = [e for e in self.plan() if e.verb == "restore"]
+        self.assertEqual([e.path for e in restore], [tomb])
+
+    def test_paths_pointed_at_another_titles_root_never_touch_it(self):
+        canyon = self.fx.install("tm-canyon")
+        root = self.fx.root("tm-canyon")
+        prefix_tomb = root / ".prefix.tmnf-removing.0123abcd"
+        canyon.rename(prefix_tomb)
+        saves_tomb = root / ".UserData.tmnf-removing.89abcdef"
+        saves_tomb.mkdir()
+        launcher_tomb = self.fx.support / "launchers/.tm-canyon.tmnf-removing.11112222"
+        launcher_tomb.mkdir()
+        overrides = dict(
+            prefix=str(canyon),
+            userdata=str(self.fx.userdata("tm-canyon")),
+            launcher=str(self.fx.support / "launchers/tm-canyon"),
+        )
+        removed = self.removed(self.plan(**overrides))
+        for path in removed:
+            self.assertFalse(root == path or root in path.parents, path)
+        self.assertNotIn(launcher_tomb, removed)
+        self.assertNotIn(self.fx.support / "launchers/tm-canyon", removed)
+        with self.assertRaisesRegex(ValueError, "custom folder"):
+            self.plan(include_saves=True, **overrides)
+        # Limits treats another title's root as foreign, unless it holds ours.
+        title, titles = uninstall.load_titles()
+        bounds = uninstall.limits(
+            title, titles, self.home, self.fx.support, self.fx.cache, self.fx.apps
+        )
+        with self.assertRaisesRegex(ValueError, "belongs to another title"):
+            bounds.check(uninstall.Entry("remove", "prefix", prefix_tomb, identity=(0, 0)))
+        os.environ["TMNF_TITLE"] = "tmu"
+        self.fx.install("tmu", apps=False)
+        title, titles = uninstall.load_titles()
+        bounds = uninstall.limits(
+            title, titles, self.home, self.fx.support, self.fx.cache, self.fx.apps
+        )
+        prefix = self.fx.prefix("tmu")
+        bounds.check(uninstall._remove("prefix", prefix))  # inside tmnf's root: allowed
+
+    @unittest.skipIf(sys.version_info < (3, 11), "rmtree(dir_fd=) needs Python 3.11")
+    def test_folders_are_deleted_through_the_parent_descriptor(self):
+        self.fx.install("tmnf")
+        calls = []
+        real = uninstall.shutil.rmtree
+
+        def record(path, *args, **kwargs):
+            calls.append((path, kwargs))
+            return real(path, *args, **kwargs)
+
+        with mock.patch.object(uninstall.shutil, "rmtree", side_effect=record):
+            uninstall.remove(self.plan(), report=lambda line: None)
+        self.assertTrue(calls)
+        for path, kwargs in calls:
+            self.assertIn("dir_fd", kwargs)
+            self.assertRegex(path, r"^\.[^/]+\.tmnf-removing\.[0-9a-f]{8}$")
+
+    def test_names_with_a_trailing_newline_are_ignored(self):
+        self.fx.install("tmnf")
+        odd = [
+            self.fx.root("tmnf") / ".prefix.tmnf-removing.0123abcd\n",
+            self.fx.logs / "diagnostics-tmnf-20260101-120000.zip\n",
+            self.fx.cache / "tmnationsforever_setup.exe.partial.Ab12Cd\n",
+        ]
+        odd[0].mkdir()
+        for path in odd[1:]:
+            path.write_text("x")
+        (self.fx.logs / "play.log").write_text("x")
+        entries = self.plan()
+        for path in odd:
+            self.assertNotIn(path, [entry.path for entry in entries])
+        self.assertIn(self.fx.logs / "play.log", self.removed(entries))
+
+    def test_unicode_controls_fail_closed(self):
+        for text in ("a\x85b", "a\u2028b", "a\u2029b", "a\u202eb", "a\u200bb", "a\x7fb"):
+            self.assertFalse(uninstall._printable(text), repr(text))
+        self.assertTrue(uninstall._printable("TrackMania Nations Forever.app é"))
+        self.fx.install("tmnf")
+        hostile = self.home / "apps\u202eppa"
+        self.fx.apps.rename(hostile)
+        self.fx.apps.symlink_to(hostile)
+        with self.assertRaisesRegex(ValueError, "Unsafe path"):
+            self.plan()
+
+    def test_registry_override_cannot_redefine_a_shipped_root(self):
+        self.fx.install("tmnf")
+        titles = self.home / "titles"
+        shutil.copytree(ROOT / "config/titles", titles)
+        data = json.loads((titles / "tmnf.json").read_text())
+        data["prefix_subdir"] = "Elsewhere/TMNF"
+        (titles / "tmnf.json").write_text(json.dumps(data))
+        os.environ["TMNF_TITLES_DIR"] = str(titles)
+        with self.assertRaisesRegex(ValueError, "tmnf has prefix_subdir"):
+            self.plan()
+
+    def test_another_titles_documents_inside_the_prefix_block_its_removal(self):
+        prefix = self.fx.install("tmnf")
+        shared = prefix / "drive_c/shared"
+        shared.mkdir()
+        other = self.fx.install("tm-canyon", apps=False)
+        documents = other / "drive_c/users/player/Documents"
+        documents.unlink()
+        documents.symlink_to(shared)
+        for include_saves in (False, True):
+            with self.subTest(include_saves=include_saves):
+                with self.assertRaisesRegex(ValueError, "Canyon keeps its saves inside"):
+                    self.plan(include_saves=include_saves)
+        self.assertTrue(prefix.is_dir())
 
     def test_saves_folder_used_through_another_titles_user_reg_is_refused(self):
         self.fx.install("tmnf")
@@ -680,6 +881,22 @@ class ShellUninstallTests(unittest.TestCase):
         self.assertFalse(tomb.exists())
         self.assertIn("Removed {}".format(tomb), result.stdout)
 
+    def test_cancel_then_keep_saves_never_deletes_unfinished_saves(self):
+        self.fx.install("tmnf")
+        save = self.fx.userdata("tmnf") / "TmForever/Replays/race.Gbx"
+        tomb = self.fx.root("tmnf") / ".UserData.tmnf-removing.0123abcd"
+        # An include-saves run that removed the prefix and stopped on the saves.
+        shutil.rmtree(self.fx.prefix("tmnf"))
+        self.fx.userdata("tmnf").rename(tomb)
+        cancelled = self.tmnf("uninstall")
+        self.assertIn("Cancelled.", cancelled.stdout)
+        self.assertIn("moved back to", cancelled.stdout)
+        result = self.tmnf("uninstall", "--yes")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(save.exists())
+        self.assertFalse(tomb.exists())
+        self.assertIn("Restored {}".format(self.fx.userdata("tmnf")), result.stdout)
+
     def test_shell_and_python_agree_on_the_cached_installer(self):
         for title in TITLES.values():
             if not title.source_url:
@@ -722,10 +939,15 @@ class PreviewTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def preview(self, title_id):
+        return self.preview_for(self.fx, title_id)
+
+    @staticmethod
+    def preview_for(fixture, title_id):
         from tmnf.hub import paths as hub_paths
 
         title = TITLES[title_id]
-        return uninstall.preview(title, hub_paths.compute(title))
+        with mock.patch.dict(os.environ, {"TMNF_APPS_DIR": str(fixture.apps)}):
+            return uninstall.preview(title, hub_paths.compute(title))
 
     def test_preview_lists_what_exists(self):
         self.assertEqual(self.preview("tmnf"), {"items": [], "saves": None})

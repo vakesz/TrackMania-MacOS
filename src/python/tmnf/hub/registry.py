@@ -275,6 +275,36 @@ def _validate(data: object, path: pathlib.Path) -> Title:
     return Title(**values)  # type: ignore[arg-type]  # each value checked by kind above
 
 
+def subdir_conflicts(titles: typing.Sequence[Title]) -> typing.Dict[str, str]:
+    """Titles whose root would collide with another title's files, by id.
+
+    APFS compares names case-insensitively, so prefix_subdir values are compared
+    casefolded. Two titles may not share a root, and no root may sit inside
+    another title's prefix or UserData folder (tmnf's root holding the other
+    titles' roots is fine; its prefix and saves folder holding one is not).
+    """
+    keys = {
+        title.id: tuple(part.casefold() for part in title.prefix_subdir.split("/"))
+        for title in titles
+    }
+    names = {title.id: title.prefix_subdir for title in titles}
+    conflicts: typing.Dict[str, str] = {}
+    for inner, inner_key in keys.items():
+        for outer, outer_key in keys.items():
+            if inner == outer:
+                continue
+            if inner_key == outer_key:
+                conflicts[inner] = f"prefix_subdir {names[inner]} is also used by {outer}"
+            elif inner_key[: len(outer_key) + 1] in (
+                outer_key + ("prefix",),
+                outer_key + ("userdata",),
+            ):
+                conflicts[inner] = (
+                    f"prefix_subdir {names[inner]} is inside the prefix or UserData of {outer}"
+                )
+    return conflicts
+
+
 def load_registry(titles_dir_path=None):
     """Load every entry with per-title containment.
 
@@ -294,6 +324,10 @@ def load_registry(titles_dir_path=None):
             titles.append(_validate(data, path))
         except RegistryError as error:
             schema_errors[path.stem] = str(error)
+    conflicts = subdir_conflicts(titles)
+    for title in [title for title in titles if title.id in conflicts]:
+        titles.remove(title)
+        schema_errors[title.id] = f"{directory / (title.id + '.json')}: {conflicts[title.id]}"
     if not titles and not schema_errors and not unreadable:
         raise RegistryError(f"{directory}: the title registry is empty")
     return titles, schema_errors, unreadable

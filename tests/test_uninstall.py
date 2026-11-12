@@ -170,7 +170,8 @@ class GuardPlanTests(unittest.TestCase):
         data["prefix_subdir"] = "TMNF/UserData/evil"
         (titles / "tm-turbo.json").write_text(json.dumps(data))
         os.environ["TMNF_TITLES_DIR"] = str(titles)
-        with self.assertRaisesRegex(ValueError, "contains .*UserData/evil"):
+        # The registry itself refuses a root inside another title's saves folder.
+        with self.assertRaisesRegex(ValueError, "Fix the title registry.*tm-turbo"):
             self.plan(include_saves=True)
         (titles / "tm-turbo.json").write_text("{not json")
         with self.assertRaisesRegex(ValueError, "Fix the title registry"):

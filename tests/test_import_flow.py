@@ -37,6 +37,21 @@ class ImportFlowTests(unittest.TestCase):
             timeout=20,
         )
 
+    def test_online_titles_refuse_import(self):
+        # Download titles install from their pinned installer; import never runs.
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            source = home / "setup.exe"
+            source.write_text("not a real installer")
+            for title in ("tmnf", "tmu", "tm-canyon"):
+                with self.subTest(title=title):
+                    result = self.run_import(
+                        title, source, home, 'run_wine() { touch "$HOME/wine-ran"; }'
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("installs from its official download", result.stderr)
+                    self.assertFalse((home / "wine-ran").exists())
+
     def test_retail_setup_runs_interactively_and_checks_expected_executable(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)

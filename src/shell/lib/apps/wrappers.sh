@@ -96,7 +96,9 @@ EOF
     printf '  exit 1\nfi\n'
     printf 'PYTHONPATH=%q "$python_bin" -m tmnf.app.launch %q %q %q\n' "${TMNF_LAUNCHER}/src/python" \
       "${TMNF_LAUNCHER}/src/shell/cli/tmnf" "$action" "${HOME}/Library/Logs/TMNF/${log_name}"
-    printf 'status=$?\nif test "$status" -ne 0; then\n'
+    printf 'status=$?\nif test "$status" -eq 75; then\n'
+    printf '  alert "Another TrackMania session is still finishing. Try again in a moment."\n'
+    printf 'elif test "$status" -ne 0; then\n'
     printf '  alert "The session failed or its state is uncertain. The game may still be running. Open ~/Library/Logs/TMNF in Finder for the launch log."\n'
     printf 'fi\nexit "$status"\n'
   } >"$tmp"

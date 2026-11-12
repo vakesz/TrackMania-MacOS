@@ -286,6 +286,81 @@ class Operations(unittest.TestCase):
         self.assertEqual(first.returncode, 0)
         self.assertEqual(self.cli("run", self.prefix, sys.executable, "-c", "pass").returncode, 0)
 
+    def hold_prefix(self):
+        ready = self.root / "holder-ready"
+        holder = self.spawn(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "run",
+                str(self.prefix),
+                sys.executable,
+                "-c",
+                (
+                    'import os, pathlib, sys; os.close(int(os.environ.pop("TMNF_OPERATION_FD"))); '
+                    "pathlib.Path(sys.argv[1]).touch(); sys.stdin.read()"
+                ),
+                str(ready),
+            ],
+            stdin=subprocess.PIPE,
+        )
+        self.wait_file(ready, holder)
+        return holder
+
+    def wait_env(self, seconds):
+        return dict(self.env, TMNF_LOCK_WAIT=str(seconds))
+
+    def test_opt_in_wait_succeeds_when_holder_releases_in_window(self):
+        holder = self.hold_prefix()
+        self.env["TMNF_LOCK_WAIT"] = "10"
+        waiter = self.spawn(
+            [sys.executable, str(SCRIPT), "run", str(self.prefix), sys.executable, "-c", "pass"],
+            stdin=subprocess.DEVNULL,
+        )
+        time.sleep(0.6)
+        self.assertIsNone(waiter.poll())
+        holder.communicate("", timeout=5)
+        out, err = waiter.communicate(timeout=8)
+        self.assertEqual(waiter.returncode, 0, err)
+        self.assertEqual(err.count("Waiting for the previous TrackMania session to finish"), 1)
+
+    def test_opt_in_wait_times_out_with_busy_status(self):
+        self.hold_prefix()
+        started = time.monotonic()
+        result = self.cli(
+            "run", self.prefix, sys.executable, "-c", 'print("no")', env=self.wait_env(1)
+        )
+        self.assertEqual(result.returncode, 75, result.stderr)
+        self.assertGreaterEqual(time.monotonic() - started, 0.9)
+        self.assertIn("Another operation is using prefix", result.stderr)
+        self.assertEqual(result.stderr.count("Waiting for the previous"), 1)
+        self.assertEqual(result.stdout, "")
+
+    def test_no_wait_without_opt_in_and_zero_means_none(self):
+        self.hold_prefix()
+        for env in (self.env, self.wait_env(0)):
+            started = time.monotonic()
+            result = self.cli("run", self.prefix, sys.executable, "-c", "pass", env=env)
+            self.assertEqual(result.returncode, 75, result.stderr)
+            self.assertLess(time.monotonic() - started, 0.9)
+            self.assertNotIn("Waiting for", result.stderr)
+
+    def test_wait_also_covers_active_wine_and_shares_one_budget(self):
+        self.hold_record_lock(self.server_lock())
+        started = time.monotonic()
+        with mock.patch.dict(os.environ, {"TMNF_LOCK_WAIT": "1"}):
+            with self.assertRaises(guard.Busy):
+                guard.run(self.prefix, ["/usr/bin/true"], guard.lock_wait_seconds())
+        self.assertGreaterEqual(time.monotonic() - started, 0.9)
+
+    def test_lock_wait_value_is_validated(self):
+        for value in ("-1", "301", "1.5", "abc", " 5", "1000", "\u0663"):
+            result = self.cli("run", self.prefix, "/usr/bin/true", env=self.wait_env(value))
+            self.assertEqual(result.returncode, 1, value)
+            self.assertIn("TMNF_LOCK_WAIT must be an integer from 0 to 300", result.stderr)
+        self.assertEqual(guard.lock_wait_seconds({"TMNF_LOCK_WAIT": "300"}), 300)
+        self.assertEqual(guard.lock_wait_seconds({}), 0)
+
     def test_nested_shell_held_checks_keep_parent_lock(self):
         result = self.cli(
             "run",

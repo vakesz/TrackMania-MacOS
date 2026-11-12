@@ -92,6 +92,16 @@ class AppLaunch(unittest.TestCase):
     def backup(self, number):
         return Path(str(self.log) + "." + str(number))
 
+    def test_launch_opts_in_to_the_lock_wait_unless_already_set(self):
+        self.stub('os.write(1, os.environ.get("TMNF_LOCK_WAIT", "unset").encode())')
+        self.env.pop("TMNF_LOCK_WAIT", None)
+        self.assertEqual(self.cli().returncode, 0)
+        self.assertIn(b"30", self.log.read_bytes())
+        self.env["TMNF_LOCK_WAIT"] = "7"
+        self.log.unlink()
+        self.assertEqual(self.cli().returncode, 0)
+        self.assertIn(b"7", self.log.read_bytes())
+
     def test_bytes_metadata_actions_and_private_creation(self):
         for action in ("play", "configure"):
             with self.subTest(action=action):

@@ -28,6 +28,11 @@ TOKEN = "TMNF_OPERATION_FD"
 APP_TOKEN = "TMNF_APP_OPERATION_FD"
 WINE_SERVER_ROOT = Path("/tmp")
 INTERRUPT_GRACE = 2.0
+# Opt-in bounded wait, set only by the app launch path. Everything else fails at once.
+LOCK_WAIT_ENV = "TMNF_LOCK_WAIT"
+LOCK_POLL = 0.25
+WAIT_MESSAGE = "Waiting for the previous TrackMania session to finish\u2026"
+EXIT_BUSY = 75  # EX_TEMPFAIL
 
 
 def operation_lock_path(prefix):
@@ -139,9 +144,55 @@ def _open_lock(path, dir_fd, create=False):
         raise
 
 
-def acquire(prefix):
+class Busy(ValueError):
+    """The prefix is held by another session. Maps to EX_TEMPFAIL."""
+
+
+class _Waiter:
+    """One bounded retry budget shared by every busy check of a single run."""
+
+    def __init__(self, seconds):
+        self.deadline = time.monotonic() + seconds
+        self.announced = False
+
+    def retry(self, attempt):
+        while True:
+            try:
+                return attempt()
+            except Busy:
+                remaining = self.deadline - time.monotonic()
+                if remaining <= 0:
+                    raise
+                if not self.announced:
+                    self.announced = True
+                    _announce_wait()
+                time.sleep(min(LOCK_POLL, remaining))
+
+
+def _announce_wait():
+    try:
+        print(WAIT_MESSAGE, file=sys.stderr, flush=True)
+    except UnicodeEncodeError:
+        print(WAIT_MESSAGE.replace("\u2026", "..."), file=sys.stderr, flush=True)
+
+
+def lock_wait_seconds(environ=None):
+    """Seconds an opted-in launch may wait for a busy prefix; 0 means fail at once."""
+    value = (os.environ if environ is None else environ).get(LOCK_WAIT_ENV, "")
+    if value == "":
+        return 0
+    if not value.isascii() or not value.isdecimal() or len(value) > 3 or int(value) > 300:
+        raise ValueError(f"{LOCK_WAIT_ENV} must be an integer from 0 to 300")
+    return int(value)
+
+
+def acquire(prefix, waiter=None):
     """Return an exclusively locked FD, owned by the caller. Never unlink it."""
-    return _acquire(operation_lock_path(prefix), f"Another operation is using prefix: {prefix}")
+    path = operation_lock_path(prefix)
+    busy = f"Another operation is using prefix: {prefix}"
+    if waiter is not None:
+        return waiter.retry(lambda: _acquire(path, busy))
+    return _acquire(path, busy)
 
 
 def _acquire(path, busy):
@@ -153,7 +204,7 @@ def _acquire(path, busy):
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError as error:
                 if error.errno in (errno.EACCES, errno.EAGAIN):
-                    raise ValueError(busy) from error
+                    raise Busy(busy) from error
                 raise
             _check_identity(fd, path)
             return fd
@@ -237,7 +288,7 @@ def check_inactive(prefix):
                 fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB, 1, 0, os.SEEK_SET)
             except OSError as error:
                 if error.errno in (errno.EACCES, errno.EAGAIN):
-                    raise ValueError(f"Wine is active for prefix: {prefix}") from error
+                    raise Busy(f"Wine is active for prefix: {prefix}") from error
                 raise
             else:
                 fcntl.lockf(fd, fcntl.LOCK_UN, 1, 0, os.SEEK_SET)
@@ -296,13 +347,21 @@ def _signal_group(pid, signum):
             raise signal_error from error
 
 
-def run(prefix, command):
-    """Run a command with the operation FD inherited; return shell exit status."""
+def run(prefix, command, wait=0):
+    """Run a command with the operation FD inherited; return shell exit status.
+
+    A positive wait is a budget in seconds for the prefix lock and for Wine to
+    finish exiting; a prefix still busy after it raises Busy.
+    """
     if not command:
         raise ValueError("run requires a command")
-    fd = acquire(prefix)
+    waiter = _Waiter(wait) if wait > 0 else None
+    fd = acquire(prefix, waiter)
     try:
-        check_inactive(prefix)
+        if waiter is None:
+            check_inactive(prefix)
+        else:
+            waiter.retry(lambda: check_inactive(prefix))
         return _run(command, {TOKEN: fd})
     finally:
         os.close(fd)
@@ -388,7 +447,10 @@ def main(argv=None):
             return 0
         if args.action == "app-run":
             return app_run(args.prefix, args.command)
-        return run(args.prefix, args.command)
+        return run(args.prefix, args.command, lock_wait_seconds())
+    except Busy as error:
+        print(f"error: {error}", file=sys.stderr)
+        return EXIT_BUSY
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

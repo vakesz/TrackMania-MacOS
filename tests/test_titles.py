@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 import unittest
 from pathlib import Path
@@ -375,8 +376,8 @@ class TitleRegistryTests(unittest.TestCase):
             timeout=15,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        for title_id in ("tmnf", "tmu", "tm-original", "tm-canyon", "tm-turbo"):
-            self.assertIn(title_id, result.stdout)
+        for path in sorted(TITLES.glob("*.json")):
+            self.assertIn(path.stem, result.stdout)
 
     def test_unknown_title_rejected(self):
         result = subprocess.run(
@@ -388,6 +389,58 @@ class TitleRegistryTests(unittest.TestCase):
             env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TMNF_TITLE": "nope"},
         )
         self.assertNotEqual(result.returncode, 0)
+
+
+# Title facts belong in config/titles/*.json. These patterns catch code that
+# branches on a title id instead; only the legacy migration shims may.
+TITLE_CONDITIONALS = (
+    re.compile(r'"?\$\{?TMNF_TITLE\}?"?\s+!?=\s'),
+    re.compile(r'\btest\s+"?\$\{?\w+\}?"?\s+!?=\s+"?tmnf"?(\s|;|$)'),
+    re.compile(r'case\s+"?\$\{?TMNF_TITLE\}?"?\s+in'),
+    re.compile(r'\btitle(_id|\.id)\s*[!=]=\s*["\']'),
+    re.compile(r"NEEDS_TMLOADER"),
+    re.compile(r"\bopenal_applies\b"),
+    re.compile(r"TmNationsForever"),
+)
+TITLE_CONDITIONAL_ALLOWLIST = (
+    # A pre-marker TMNF prefix from before multi-title support.
+    (
+        "src/python/tmnf/hub/state.py",
+        'if not identity and title.id == "tmnf" and (prefix / "system.reg").is_file():',
+    ),
+    ("src/python/tmnf/hub/state.py", 'if not identity and title.id == "tmnf":'),
+    # The single-title installer cache location existing downloads still use.
+    ("src/shell/lib/install/game.sh", 'if test "$title" = tmnf; then'),
+    # The shared pre-multi-title launcher only TMNF ever installed.
+    ("src/shell/lib/apps/wrappers.sh", 'test "$TMNF_TITLE" = tmnf || return 0'),
+)
+
+
+def source_files():
+    for path in sorted((ROOT / "src/shell").rglob("*")):
+        if path.is_file() and (path.suffix == ".sh" or path.parent.name == "cli"):
+            yield path
+    yield from sorted((ROOT / "src/python/tmnf").rglob("*.py"))
+
+
+class TitleConditionalTests(unittest.TestCase):
+    def test_no_title_id_conditionals(self):
+        allowed = {(file, line) for file, line in TITLE_CONDITIONAL_ALLOWLIST}
+        found = []
+        for path in source_files():
+            relative = str(path.relative_to(ROOT))
+            for number, line in enumerate(path.read_text().splitlines(), 1):
+                if any(pattern.search(line) for pattern in TITLE_CONDITIONALS):
+                    if (relative, line.strip()) not in allowed:
+                        found.append(f"{relative}:{number}: {line.strip()}")
+        self.assertEqual(found, [], "move the title fact into config/titles/*.json")
+
+    def test_allowlist_entries_still_exist(self):
+        for file, line in TITLE_CONDITIONAL_ALLOWLIST:
+            with self.subTest(file=file, line=line):
+                lines = [item.strip() for item in (ROOT / file).read_text().splitlines()]
+                self.assertIn(line, lines, "remove the stale allowlist entry")
+                self.assertTrue(any(pattern.search(line) for pattern in TITLE_CONDITIONALS))
 
 
 class RegistryValidationTests(unittest.TestCase):

@@ -50,7 +50,7 @@ class HubBackendTests(unittest.TestCase):
             snapshot = json.loads(result.stdout)
             self.assertEqual(snapshot["schema"], 2)
             titles = {title["id"]: title for title in snapshot["titles"]}
-            self.assertEqual(set(titles), {"tmnf", "tmu", "tm-original", "tm-canyon", "tm-turbo"})
+            self.assertEqual(set(titles), {title.id for title in registry.load_all()})
             canyon = titles["tm-canyon"]
             self.assertEqual(canyon["state"]["game"]["ready"], True)
             self.assertEqual(canyon["kind"], "online-trial")

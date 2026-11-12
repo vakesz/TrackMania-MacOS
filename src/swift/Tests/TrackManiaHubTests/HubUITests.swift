@@ -157,12 +157,37 @@ final class HubUITests: XCTestCase {
         XCTAssertEqual(UninstallChoice.choices(for: savesOnly), [.savesOnly])
         XCTAssertTrue(UninstallChoice.savesOnly.includesSaves)
     }
+
+    func testRegisterKeyShownForSerialTitleWithSettingsReady() {
+        let state = HubInstallationState(game: true, gameApp: true, settingsApp: true)
+        let title = HubTitle(id: "t", name: "T", requiresSerial: true, state: state,
+                             apps: HubApps(game: "/g.app", settings: "/s.app"))
+        XCTAssertTrue(title.showsRegisterKey)
+        XCTAssertEqual(title.registerKeyTarget, "/s.app")
+        XCTAssertEqual(HubUIText.registerKeyButton, "Register player key")
+        XCTAssertEqual(HubUIText.registerKeyNote,
+                       "First time? Register your player key, then press Play. Play can't ask for the key itself.")
+    }
+
+    func testRegisterKeyHiddenWithoutSettingsAppSerialOrGame() {
+        let apps = HubApps(game: "/g.app", settings: "/s.app")
+        let noSettings = HubTitle(id: "t", name: "T", requiresSerial: true,
+                                  state: HubInstallationState(game: true, gameApp: true), apps: apps)
+        XCTAssertFalse(noSettings.showsRegisterKey)
+        XCTAssertNil(noSettings.registerKeyTarget)
+        let state = HubInstallationState(game: true, gameApp: true, settingsApp: true)
+        XCTAssertFalse(HubTitle(id: "t", name: "T", requiresSerial: false, state: state, apps: apps).showsRegisterKey)
+        XCTAssertFalse(HubTitle(id: "t", name: "T", state: state, apps: apps).showsRegisterKey)
+        let noGame = HubInstallationState(gameApp: true, settingsApp: true)
+        XCTAssertFalse(HubTitle(id: "t", name: "T", requiresSerial: true, state: noGame, apps: apps).showsRegisterKey)
+    }
 }
 
 extension HubInstallationState {
-    init(game: Bool = false, gameApp: Bool = false) {
+    init(game: Bool = false, gameApp: Bool = false, settingsApp: Bool = false) {
         self.init()
         if game { self.game = HubProbe(ready: true) }
         if gameApp { self.gameApp = HubProbe(ready: true) }
+        if settingsApp { self.settingsApp = HubProbe(ready: true) }
     }
 }

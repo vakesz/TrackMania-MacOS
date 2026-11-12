@@ -6,6 +6,16 @@ struct ActionBar: View {
     let perform: (HubAction) -> Void
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            controls
+            if title.showsRegisterKey {
+                Text(HubUIText.registerKeyNote).font(.callout).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var controls: some View {
         let busy = model.runningAction != nil
         HStack(spacing: 10) {
             switch title.primaryControl {
@@ -32,7 +42,12 @@ struct ActionBar: View {
                 EmptyView()
             }
 
-            if title.state.settingsApp?.ready == true {
+            if let target = title.registerKeyTarget {
+                // Same app as Settings; for these titles the label says what to do with it.
+                Button(HubUIText.registerKeyButton) { model.openApp(at: target, for: title) }
+                    .controlSize(.large)
+                    .disabled(busy)
+            } else if title.state.settingsApp?.ready == true {
                 Button("Settings") { model.openApp(at: title.apps.settings, for: title) }
                     .controlSize(.large)
                     .disabled(busy)

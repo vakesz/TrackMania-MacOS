@@ -421,6 +421,15 @@ extension HubTitle {
     /// Installed titles are those whose game files are in place.
     var isInstalled: Bool { state.game?.ready == true }
 
+    /// Titles that ask for a player key show a register button and a note. The key can only be
+    /// entered in the game's own launcher, which the Settings app opens; Play cannot ask for it.
+    var showsRegisterKey: Bool {
+        requiresSerial == true && isInstalled && state.settingsApp?.ready == true
+    }
+
+    /// The app the register button opens: the Settings app, or nil when the button is hidden.
+    var registerKeyTarget: String? { showsRegisterKey ? apps.settings : nil }
+
     /// Play when the game app and the game files are both ready (the wrappers outlive an
     /// uninstall); otherwise the backend's primary (or first) action.
     var primaryControl: PrimaryControl? {

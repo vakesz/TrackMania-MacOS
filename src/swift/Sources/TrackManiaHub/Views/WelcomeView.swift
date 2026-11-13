@@ -5,8 +5,16 @@ struct WelcomeView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Welcome to TrackMania Mac")
-                .font(.largeTitle.weight(.semibold))
+            HStack(spacing: 16) {
+                HubIconView(size: 72)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Welcome to TrackMania Mac")
+                        .font(.title.weight(.semibold))
+                    Text("One app for the TrackMania games on Apple Silicon.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
             VStack(alignment: .leading, spacing: 14) {
                 point("cpu", "Rosetta 2 is required. The installer adds it if it is missing.")
                 point("arrow.down.circle", "Each title downloads roughly 1–2 GB.")

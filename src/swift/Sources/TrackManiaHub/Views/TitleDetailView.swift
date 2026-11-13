@@ -16,27 +16,16 @@ struct TitleDetailView: View {
                 }
                 HeroHeaderView(title: title)
                 ActionBar(title: title, model: model, perform: perform)
+                if title.showsNotesFirst { notes }
                 if let run = model.run(for: title) {
                     ActivityCard(run: run, model: model, activity: model.activity)
                 }
                 if let message = model.message(for: title) {
                     Text(message).font(.callout).foregroundStyle(.secondary)
                 }
-                SetupChecklistCard(title: title)
+                SetupChecklistCard(title: title, isInstalling: model.isRunning(title)).id(title.id)
                 DetailsCard(title: title, model: model)
-                if !title.notes.isEmpty {
-                    Callout(text: title.notes, systemImage: "info.circle")
-                }
-                if let link = title.link, let destination = link.destination {
-                    Link(destination: destination) {
-                        Label(link.label, systemImage: "arrow.up.right.square")
-                    }
-                    .font(.callout)
-                    .padding(.horizontal, 14)
-                }
-                if let note = title.contributionNote {
-                    Callout(text: note, systemImage: "hand.raised")
-                }
+                if !title.showsNotesFirst { notes }
                 if let error = title.error {
                     Callout(text: error, systemImage: "exclamationmark.triangle.fill", tint: .orange)
                 }
@@ -82,6 +71,24 @@ struct TitleDetailView: View {
             Button("Cancel", role: .cancel) {}
         } message: { _ in
             Text(HubUIText.uninstall(title))
+        }
+    }
+
+    /// What to know about the title. An unsupported title shows it under the buttons, before
+    /// anyone installs it; the others keep it below the details.
+    @ViewBuilder private var notes: some View {
+        if !title.notes.isEmpty {
+            Callout(text: title.notes, systemImage: "info.circle")
+        }
+        if let link = title.link, let destination = link.destination {
+            Link(destination: destination) {
+                Label(link.label, systemImage: "arrow.up.right.square")
+            }
+            .font(.callout)
+            .padding(.horizontal, 14)
+        }
+        if let note = title.contributionNote {
+            Callout(text: note, systemImage: "hand.raised")
         }
     }
 

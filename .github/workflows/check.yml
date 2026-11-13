@@ -53,7 +53,9 @@ jobs:
   check:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.scripts == 'true') }}
-    runs-on: macos-15
+    # macOS 26 for its Xcode: the hub package test compiles the Icon Composer
+    # icon, which needs actool from Xcode 26 or later.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, pinned
         with:

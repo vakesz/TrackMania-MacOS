@@ -25,7 +25,8 @@ DIST_DIR="${PROJECT_DIR}/.build/dist"
 ZIP_NAME="TrackMania-Mac-${VERSION}.app.zip"
 BUNDLE_ID="${TRACKMANIA_MAC_HUB_BUNDLE_ID:-local.trackmania-mac.hub}"
 BUNDLED_PYTHON_VERSION="${TRACKMANIA_MAC_BUNDLED_PYTHON_VERSION:-3.12.14}"
-HUB_ICON_SOURCE="${PROJECT_DIR}/assets/branding/trackmania-mac-icon.svg"
+HUB_ICON_SOURCE="${PROJECT_DIR}/assets/branding/AppIcon.icon"
+HUB_MIN_MACOS=14.0
 
 # shellcheck source=src/shell/lib/apps/payload.sh
 . "${PROJECT_DIR}/src/shell/lib/apps/payload.sh"
@@ -126,37 +127,21 @@ svg_to_png() {
     || die "Cannot rasterize $source"
 }
 
-build_icns() {
-  local source="$1" out="$2" work iconset master name side
-  test -f "$source" || die "Icon source is missing: $source"
+# Compile the Icon Composer document into the bundle. actool writes Assets.car,
+# which macOS 26 and later read for the layered icon and its dark, tinted and
+# clear variants, and AppIcon.icns, the flat icon earlier systems show.
+stage_hub_icon() {
+  local resources="${1}/Resources" work
+  test -f "${HUB_ICON_SOURCE}/icon.json" || die "Icon source is missing: $HUB_ICON_SOURCE"
   work="$(mktemp -d)" || die "Cannot stage the icon."
   CLEANUP_DIRS+=("$work")
-  iconset="${work}/AppIcon.iconset"
-  mkdir -p "$iconset"
-  master="${iconset}/icon_512x512@2x.png"
-  svg_to_png "$source" 1024 "$master"
-  while IFS=' ' read -r name side; do
-    test "$name" = "icon_512x512@2x.png" && continue
-    sips -z "$side" "$side" "$master" --out "${iconset}/${name}" >/dev/null \
-      || die "Cannot generate icon size: $name"
-  done <<'EOF'
-icon_16x16.png 16
-icon_16x16@2x.png 32
-icon_32x32.png 32
-icon_32x32@2x.png 64
-icon_128x128.png 128
-icon_128x128@2x.png 256
-icon_256x256.png 256
-icon_256x256@2x.png 512
-icon_512x512.png 512
-icon_512x512@2x.png 1024
-EOF
-  iconutil -c icns "$iconset" -o "$out" || die "Cannot compile icon: $out"
-  test -s "$out" || die "Icon output is empty: $out"
-}
-
-stage_hub_icon() {
-  build_icns "$HUB_ICON_SOURCE" "${1}/Resources/AppIcon.icns"
+  xcrun actool "$HUB_ICON_SOURCE" --compile "$resources" --app-icon AppIcon \
+    --platform macosx --minimum-deployment-target "$HUB_MIN_MACOS" \
+    --output-partial-info-plist "${work}/icon.plist" >"${work}/actool.log" 2>&1 \
+    || { cat "${work}/actool.log" >&2; die "Cannot compile the hub icon; it needs Xcode 26 or later."; }
+  # An actool that predates Icon Composer exits 0 without writing anything.
+  test -s "${resources}/Assets.car" && test -s "${resources}/AppIcon.icns" \
+    || { cat "${work}/actool.log" >&2; die "The hub icon was not compiled; it needs Xcode 26 or later."; }
 }
 
 # Rasterize assets/titles/<id>.svg into <launcher>/assets/titles/<id>.png.
@@ -225,13 +210,14 @@ build_appbundle() {
 <plist version="1.0"><dict>
   <key>CFBundleExecutable</key><string>${name}</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundleIconName</key><string>AppIcon</string>
   <key>CFBundleIdentifier</key><string>${bundle_id}</string>
   <key>CFBundleName</key><string>${name}</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${version}</string>
   <key>CFBundleVersion</key><string>${version}</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.games</string>
-  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>LSMinimumSystemVersion</key><string>${HUB_MIN_MACOS}</string>
 </dict></plist>
 EOF
   touch "$APP_DIR"

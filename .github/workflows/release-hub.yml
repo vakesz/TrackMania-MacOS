@@ -15,7 +15,9 @@ permissions:
 #            an existing release asset.
 jobs:
   build:
-    runs-on: macos-15
+    # macOS 26 for its Xcode: package-app.sh compiles the Icon Composer icon,
+    # which needs actool from Xcode 26 or later.
+    runs-on: macos-26
     permissions:
       contents: read
     outputs:

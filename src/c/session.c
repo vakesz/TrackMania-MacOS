@@ -674,7 +674,6 @@ static int redirect_scan(Session *s)
             continue;
         }
         p->redirect_checked = 1;
-        fprintf(stderr, "session: pid=%lu command=%ls\n", p->pid, line);
         if (!redirect_allowed(line, s->redirect_except, s->redirect_except_count))
         {
             fprintf(stderr, "session: pid=%lu has an excepted argument; not redirected\n", p->pid);

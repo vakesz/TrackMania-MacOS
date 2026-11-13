@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+#include "session_infrastructure.h"
 #include "session_redirect.h"
 #include "session_settle.h"
 
@@ -37,6 +38,8 @@ typedef struct process
     int baseline, watched, in_job, exited, root, parent_known;
     int console_candidate, console_verified;
     int desktop_candidate, desktop_verified;
+    /* service_manager: the baseline's verified services.exe. */
+    int service_manager, service_candidate, service_verified;
     int redirect_candidate, redirect_checked, redirected;
     unsigned int redirect_reads;
 } Process;
@@ -56,7 +59,7 @@ typedef struct session
     size_t count, capacity;
     WCHAR *watch[WATCH_CAP];
     BY_HANDLE_FILE_INFORMATION watch_file[WATCH_CAP];
-    Reference conhost, desktop;
+    Reference conhost, desktop, services;
     unsigned int watch_count;
     /* --redirect: a new job process with this file identity is stopped and the
      * session ends as "redirected", so the host can start the play session. */
@@ -369,6 +372,30 @@ static int poll_process(Session *s, Process *p)
     return 1;
 }
 
+/* A program in the native System32 directory that is byte-identical to this
+ * runtime's own copy, such as lsass.exe, which Wine's services.exe starts on
+ * demand. The image must be the very file that was compared. */
+static int builtin_system_image(Session *s, const WCHAR *canonical, const BY_HANDLE_FILE_INFORMATION *identity)
+{
+    WCHAR system[PATH_CAP], *directory = NULL;
+    const WCHAR *name = wcsrchr(canonical, L'\\');
+    Reference reference = {0};
+    DWORD length = GetSystemDirectoryW(system, PATH_CAP);
+    int matched = 0;
+    if (!name || !name[1] || !length || length >= PATH_CAP) return 0;
+    directory = path_name(system, 1, NULL);
+    if (!directory || (size_t)(name - canonical) != wcslen(directory) ||
+            CompareStringOrdinal(canonical, (int)(name - canonical), directory, -1, TRUE) != CSTR_EQUAL)
+        goto done;
+    if (!native_reference(s, name + 1, &reference)) goto done;
+    matched = reference.path && same_file(identity, &reference.file);
+done:
+    free(directory);
+    free(reference.path);
+    if (reference.handle) CloseHandle(reference.handle);
+    return matched;
+}
+
 /* Takes ownership of handle, including on failure. All historical handles are
  * retained; reaching the cap is uncertainty, not permission to forget a PID. */
 static int register_process(Session *s, HANDLE handle, DWORD pid, int baseline, int root, int expect_job)
@@ -469,6 +496,12 @@ static int register_process(Session *s, HANDLE handle, DWORD pid, int baseline, 
     p->desktop_candidate = !baseline && !root && !p->watched && in_job && s->desktop.path &&
             CompareStringOrdinal(canonical, -1, s->desktop.path, -1, TRUE) == CSTR_EQUAL &&
             same_file(&identity, &s->desktop.file);
+    p->service_manager = baseline && !in_job && s->services.path &&
+            CompareStringOrdinal(canonical, -1, s->services.path, -1, TRUE) == CSTR_EQUAL &&
+            same_file(&identity, &s->services.file);
+    /* Only outside the job: a service the game starts in the job stays unknown. */
+    p->service_candidate = !baseline && !root && !p->watched && !in_job && s->services.path &&
+            builtin_system_image(s, canonical, &identity);
     fprintf(stderr, "session: pid=%lu observed%s%s%s%s image=%ls\n", pid, root ? " root" : "",
             p->watched ? " target" : "", in_job ? " job" : " outside-job",
             baseline ? " baseline" : "", canonical);
@@ -762,7 +795,8 @@ int wmain(int argc, WCHAR **argv)
         if (!quote(command, &used, argv[arg])) goto long_command;
 
     if (!service_ready(&s) || !native_reference(&s, L"conhost.exe", &s.conhost) ||
-            !native_reference(&s, L"explorer.exe", &s.desktop)) goto done;
+            !native_reference(&s, L"explorer.exe", &s.desktop) ||
+            !native_reference(&s, L"services.exe", &s.services)) goto done;
     s.job = CreateJobObjectW(NULL, NULL);
     if (!s.job) { s.reason = "job_setup_failed"; goto done; }
     if (!prefix_snapshot(&s, 1)) goto done;
@@ -822,22 +856,35 @@ int wmain(int argc, WCHAR **argv)
             if (p->root) root = p;
             if (p->in_job) ++known_job;
             if ((p->console_candidate && !p->console_verified && p->exited && !p->exit_code) ||
-                    (p->desktop_candidate && !p->desktop_verified))
+                    (p->desktop_candidate && !p->desktop_verified) ||
+                    (p->service_candidate && !p->service_verified))
             {
                 size_t j;
                 if (!p->parent_known) goto unverified;
                 for (j = 0; j < s.count; ++j)
                 {
                     const Process *parent = &s.processes[j];
-                    if (parent == p || parent->pid != p->parent_pid || !parent->in_job ||
-                            !(parent->root || parent->watched) ||
-                            CompareFileTime(&parent->created, &p->created) > 0) continue;
+                    ParentFacts facts = {0};
+                    if (parent == p || parent->pid != p->parent_pid) continue;
+                    facts.in_job = parent->in_job;
+                    facts.root = parent->root;
+                    facts.watched = parent->watched;
+                    facts.baseline = parent->baseline;
+                    facts.service_manager = parent->service_manager;
+                    facts.created_first = CompareFileTime(&parent->created, &p->created) <= 0;
+                    if (!infrastructure_parent(p->service_candidate, &facts)) continue;
                     /* Retained process handles prevent PID reuse. Both images
-                     * were registered in this job, not inferred from a name. */
+                     * were registered here, not inferred from a name. */
                     if (p->console_candidate)
                     {
                         p->console_verified = 1;
                         fprintf(stderr, "session: pid=%lu verified console infrastructure parent=%lu exit=0\n",
+                                p->pid, parent->pid);
+                    }
+                    else if (p->service_candidate)
+                    {
+                        p->service_verified = 1;
+                        fprintf(stderr, "session: pid=%lu verified service infrastructure parent=%lu\n",
                                 p->pid, parent->pid);
                     }
                     else
@@ -851,11 +898,22 @@ int wmain(int argc, WCHAR **argv)
             }
 unverified:
             /* An unrecognized job descendant remains ambiguous even after exit
-             * zero. The explicit launch root is not an unknown descendant. A
-             * verified desktop stays recognized while alive or after exit zero. */
-            if (!p->watched && !p->baseline && !(p->desktop_verified && (!p->exited || !p->exit_code)) &&
-                    ((!p->root && p->in_job && !p->console_verified) ||
-                     (!p->exited && !(desktop && p->root)))) ++ambiguous;
+             * zero. The explicit launch root is not an unknown descendant.
+             * Rules: session_infrastructure.h. */
+            {
+                ProcessFacts facts = {0};
+                facts.watched = p->watched;
+                facts.baseline = p->baseline;
+                facts.root = p->root;
+                facts.in_job = p->in_job;
+                facts.exited = p->exited;
+                facts.exit_code = p->exit_code;
+                facts.desktop_session = desktop;
+                facts.console_verified = p->console_verified;
+                facts.desktop_verified = p->desktop_verified;
+                facts.service_verified = p->service_verified;
+                if (process_is_unrecognized(&facts)) ++ambiguous;
+            }
             if (p->exited) continue;
             if (p->watched) ++live_targets;
             if (p->in_job) ++live_job;
@@ -1041,6 +1099,8 @@ done:
     free(s.conhost.path);
     if (s.desktop.handle) CloseHandle(s.desktop.handle);
     free(s.desktop.path);
+    if (s.services.handle) CloseHandle(s.services.handle);
+    free(s.services.path);
     for (i = 0; i < s.watch_count; ++i) free(s.watch[i]);
     free(result);
     free(executable);

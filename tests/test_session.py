@@ -1488,5 +1488,130 @@ class RedirectDecisionTests(unittest.TestCase):
         self.assertEqual(source.count('state = "redirected";'), 1)
 
 
+@unittest.skipUnless(shutil.which("cc"), "a host C compiler is required")
+class InfrastructureRuleTests(unittest.TestCase):
+    """Which processes session.c recognizes, and which parents vouch for them."""
+
+    @classmethod
+    def setUpClass(cls):
+        temporary = tempfile.TemporaryDirectory(prefix="trackmania-mac-infrastructure-")
+        cls.addClassCleanup(temporary.cleanup)
+        cls.binary = Path(temporary.name) / "session-infrastructure"
+        subprocess.run(
+            [
+                "cc",
+                "-std=c99",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                str(ROOT / "tests/session-infrastructure.c"),
+                "-o",
+                str(cls.binary),
+            ],
+            check=True,
+        )
+
+    PROCESS = dict(
+        watched=0,
+        baseline=0,
+        root=0,
+        in_job=0,
+        exited=0,
+        exit_code=0,
+        desktop_session=0,
+        console_verified=0,
+        desktop_verified=0,
+        service_verified=0,
+    )
+    PARENT = dict(
+        service=1,
+        in_job=0,
+        root=0,
+        watched=0,
+        baseline=1,
+        service_manager=1,
+        created_first=1,
+    )
+
+    def run_rule(self, mode, base, changes):
+        facts = dict(base, **changes)
+        result = subprocess.run(
+            [str(self.binary), mode] + [str(facts[key]) for key in base],
+            text=True,
+            stdout=subprocess.PIPE,
+            check=True,
+        )
+        return result.stdout.strip()
+
+    def process(self, **changes):
+        return self.run_rule("unrecognized", self.PROCESS, changes)
+
+    def parent(self, **changes):
+        return self.run_rule("parent", self.PARENT, changes)
+
+    def test_a_verified_service_outside_the_job_is_known_while_alive_or_after_exit_zero(self):
+        # lsass.exe, started on demand by the baseline services.exe.
+        self.assertEqual(self.process(), "unrecognized")
+        self.assertEqual(self.process(service_verified=1), "known")
+        self.assertEqual(self.process(service_verified=1, exited=1), "known")
+
+    def test_a_service_in_the_job_stays_unrecognized(self):
+        # Only Wine's own services.exe, outside the job, starts a service.
+        self.assertEqual(self.process(service_verified=1, in_job=1), "unrecognized")
+        self.assertEqual(self.process(service_verified=1, in_job=1, exited=1), "unrecognized")
+
+    def test_rules_from_before_services_are_unchanged(self):
+        for changes, expected in (
+            ({"watched": 1}, "known"),
+            ({"baseline": 1}, "known"),
+            ({"exited": 1}, "known"),  # an exited process outside the job
+            ({"in_job": 1, "exited": 1}, "unrecognized"),
+            ({"in_job": 1, "exited": 1, "console_verified": 1}, "known"),
+            ({"in_job": 1, "console_verified": 1}, "unrecognized"),
+            ({"in_job": 1, "desktop_verified": 1}, "known"),
+            ({"in_job": 1, "desktop_verified": 1, "exited": 1, "exit_code": 1}, "unrecognized"),
+            ({"in_job": 1, "root": 1}, "unrecognized"),
+            ({"in_job": 1, "root": 1, "exited": 1, "exit_code": 9}, "known"),
+            ({"in_job": 1, "root": 1, "desktop_session": 1}, "known"),
+        ):
+            with self.subTest(changes=changes):
+                self.assertEqual(self.process(**changes), expected)
+
+    def test_only_the_baseline_services_manager_vouches_for_a_service(self):
+        self.assertEqual(self.parent(), "vouches")
+        for changes in (
+            {"baseline": 0},
+            {"service_manager": 0},
+            {"in_job": 1},
+            {"created_first": 0},
+            {"baseline": 0, "root": 1, "in_job": 1},
+            {"baseline": 0, "watched": 1, "in_job": 1, "service_manager": 0},
+        ):
+            with self.subTest(changes=changes):
+                self.assertEqual(self.parent(**changes), "no")
+
+    def test_console_and_desktop_parents_are_unchanged(self):
+        job_parent = dict(service=0, baseline=0, service_manager=0, in_job=1)
+        self.assertEqual(self.parent(**job_parent, root=1), "vouches")
+        self.assertEqual(self.parent(**job_parent, watched=1), "vouches")
+        self.assertEqual(self.parent(**job_parent), "no")
+        self.assertEqual(self.parent(**dict(job_parent, in_job=0), root=1), "no")
+        self.assertEqual(self.parent(**job_parent, root=1, created_first=0), "no")
+        # The services manager never vouches for a console host or desktop.
+        self.assertEqual(self.parent(service=0), "no")
+
+    def test_session_uses_the_rules_and_needs_a_builtin_image_outside_the_job(self):
+        source = (ROOT / "src/c/session.c").read_text()
+        self.assertIn('#include "session_infrastructure.h"', source)
+        self.assertEqual(source.count("process_is_unrecognized("), 1)
+        self.assertEqual(source.count("infrastructure_parent("), 1)
+        self.assertEqual(source.count("p->service_verified = 1;"), 1)
+        self.assertIn('native_reference(&s, L"services.exe", &s.services)', source)
+        candidate = source[source.index("p->service_candidate = ") :]
+        candidate = candidate[: candidate.index(";")]
+        for condition in ("!baseline", "!root", "!p->watched", "!in_job", "builtin_system_image("):
+            self.assertIn(condition, candidate)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -149,6 +149,14 @@ byte equality with the bundled reference, and a retained parent in the same
 job. Only its completed zero-status lifecycle is exempt from unknown-child
 handling; a namesake or modified image is not trusted as infrastructure.
 
+Wine's `services.exe` starts some services on demand, outside the job, while a
+game runs, such as `lsass.exe` seen during a United Forever session. Such a process
+is recognized only when its image is in native System32 and byte-equal to the
+runtime's own copy, and its retained parent is the verified `services.exe` that
+was already running when the session started. Anything else still running
+outside the job makes the result uncertain, as before. Rules:
+`src/c/session_infrastructure.h`.
+
 `src/python/trackmania_mac/session/supervisor.py` preserves the reported unsigned Windows exit status before
 cleanup. A validated completed session permits bounded, prefix-specific
 wineserver shutdown; `stop` is the explicit user-authorized version of that

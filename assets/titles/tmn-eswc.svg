@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">Nations ESWC</title>
+  <desc id="description">An original icon of a laurel-like pair of arcs around a chequered flag, in violet and gold over deep indigo.</desc>
+  <defs>
+    <linearGradient id="backdrop" x1="130" y1="80" x2="900" y2="980" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2E1B55"/>
+      <stop offset="0.55" stop-color="#180E34"/>
+      <stop offset="1" stop-color="#0B061C"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="200" y1="820" x2="840" y2="220" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E3D2FF"/>
+      <stop offset="1" stop-color="#9A5CF2"/>
+    </linearGradient>
+    <linearGradient id="spark" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#FFE9A0"/>
+      <stop offset="1" stop-color="#FFB020"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.05" r="0.95">
+      <stop stop-color="#7C4DD6" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#7C4DD6" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+    <clipPath id="tile"><rect x="48" y="48" width="928" height="928" rx="218"/></clipPath>
+  </defs>
+
+  <rect x="48" y="48" width="928" height="928" rx="218" fill="url(#backdrop)"/>
+  <rect x="62" y="62" width="900" height="900" rx="204" fill="none" stroke="#E3D2FF" stroke-opacity="0.22" stroke-width="8"/>
+  <ellipse cx="512" cy="210" rx="425" ry="340" fill="url(#glow)" clip-path="url(#tile)"/>
+  <g filter="url(#shadow)" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M250 700 C180 560 200 380 330 270" fill="none" stroke="#0A0420" stroke-width="130"/>
+    <path d="M250 700 C180 560 200 380 330 270" fill="none" stroke="url(#accent)" stroke-width="80"/>
+    <path d="M774 700 C844 560 824 380 694 270" fill="none" stroke="#0A0420" stroke-width="130"/>
+    <path d="M774 700 C844 560 824 380 694 270" fill="none" stroke="url(#accent)" stroke-width="80"/>
+    <path d="M512 780 V300" stroke="#F6EEFF" stroke-width="22" fill="none"/>
+    <path d="M523 310 L720 372 L523 450 Z" fill="url(#spark)"/>
+    <path d="M523 450 L680 500 L523 560 Z" fill="#F6EEFF" fill-opacity="0.9"/>
+  </g>
+</svg>

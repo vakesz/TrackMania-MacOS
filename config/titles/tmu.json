@@ -5,6 +5,7 @@
   "engine": "tmf-classic",
   "installer": "online-retail",
   "status": "provisional",
+  "release_date": "2008-04-16",
   "legacy_prefix_subdir": "TMNF/TM United",
   "app_name": "TrackMania United Forever.app",
   "settings_app_name": "TrackMania United Settings.app",

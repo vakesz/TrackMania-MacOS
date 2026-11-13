@@ -12,7 +12,7 @@ struct WelcomeView: View {
                 point("arrow.down.circle", "Each title downloads roughly 1–2 GB.")
                 point("network", "The first time a game starts it shows its own \"Network check\". Click OK.")
                 point("macwindow.on.rectangle", "Game windows can open behind other windows. Look for them in Mission Control or the Dock.")
-                point("exclamationmark.triangle", "\"Provisional\" means a title installs but is not fully qualified yet.")
+                point("exclamationmark.triangle", "\"Provisional\" means a title installs but is not fully qualified yet. \"Unsupported\" titles are listed but not expected to run yet.")
             }
             HStack {
                 Spacer()

@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import TrackManiaHub
 
@@ -56,12 +57,24 @@ final class HubUITests: XCTestCase {
         XCTAssertTrue([installed].sidebarSections.available.isEmpty)
     }
 
-    func testSidebarOrderPutsInstalledThenSupportedFirst() {
-        let canyon = HubTitle(id: "tm-canyon", name: "Canyon", status: .provisional)
+    func testSidebarKeepsBackendOrderAndDefaultsToInstalledThenSupported() {
+        let original = HubTitle(id: "tm-original", name: "Original", status: .unsupported)
         let tmnf = HubTitle(id: "tmnf", name: "Nations", status: .supported)
-        let tmu = HubTitle(id: "tmu", name: "United", status: .provisional,
-                           state: HubInstallationState(game: true))
-        XCTAssertEqual([canyon, tmnf, tmu].sidebarOrder.map(\.id), ["tmu", "tmnf", "tm-canyon"])
+        let tmu = HubTitle(id: "tmu", name: "United", status: .provisional)
+        let canyon = HubTitle(id: "tm-canyon", name: "Canyon", status: .unsupported, state: HubInstallationState(game: true))
+        XCTAssertEqual([original, tmnf, tmu, canyon].sidebarOrder.map(\.id), ["tm-canyon", "tm-original", "tmnf", "tmu"])
+        XCTAssertEqual([original, tmnf, tmu, canyon].defaultSelection?.id, "tm-canyon")
+        XCTAssertEqual([original, tmnf, tmu].defaultSelection?.id, "tmnf")
+        XCTAssertEqual([original, tmu].defaultSelection?.id, "tm-original")
+        XCTAssertNil([HubTitle]().defaultSelection)
+    }
+
+    func testSupportLabelAndColourPerStatus() {
+        let titles = [TitleStatus.supported, .provisional, .unsupported, .unknown("beta")].map {
+            HubTitle(id: "x", name: "X", status: $0)
+        }
+        XCTAssertEqual(titles.map(\.supportLabel), ["Supported", "Provisional", "Unsupported", "Unsupported"])
+        XCTAssertEqual(titles.map(\.supportColor), [.green, .orange, .secondary, .secondary])
     }
 
     func testDecodesNewFields() throws {

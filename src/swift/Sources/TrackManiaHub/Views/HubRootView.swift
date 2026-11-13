@@ -54,7 +54,7 @@ struct HubRootView: View {
     }
 
     private func selectedTitle(in snapshot: HubSnapshot) -> HubTitle? {
-        snapshot.titles.first(where: { $0.id == model.selectedTitleID }) ?? snapshot.titles.sidebarOrder.first
+        snapshot.titles.first(where: { $0.id == model.selectedTitleID }) ?? snapshot.titles.defaultSelection
     }
 }
 

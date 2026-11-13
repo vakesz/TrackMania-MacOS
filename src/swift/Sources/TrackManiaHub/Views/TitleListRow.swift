@@ -1,7 +1,13 @@
 import SwiftUI
 
 extension HubTitle {
-    var supportColor: Color { isSupported ? .green : .orange }
+    var supportColor: Color {
+        switch status {
+        case .supported: .green
+        case .provisional: .orange
+        case .unsupported, .unknown: .secondary
+        }
+    }
 }
 
 struct TitleListRow: View {
@@ -43,18 +49,18 @@ struct TitleListRow: View {
         } else if title.error != nil {
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
         } else if !title.isSupported {
-            Text("Provisional")
+            Text(title.supportLabel)
                 .font(.caption2.weight(.medium))
-                .foregroundStyle(.orange)
+                .foregroundStyle(title.supportColor)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(Color.orange.opacity(0.15), in: Capsule())
+                .background(title.supportColor.opacity(0.15), in: Capsule())
         }
     }
 
     private var accessibilityLabel: String {
         var parts = [title.name, title.availability]
-        if !title.isSupported { parts.append(String(localized: "Provisional")) }
+        if !title.isSupported { parts.append(title.supportLabel) }
         if isRunning { parts.append(String(localized: "Working")) }
         return parts.joined(separator: ", ")
     }

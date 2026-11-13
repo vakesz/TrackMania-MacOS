@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import shutil
 import signal
 import subprocess
 import sys
@@ -101,10 +102,19 @@ class HubBackendTests(unittest.TestCase):
             self.assertEqual(
                 set(titles), {path.stem for path in (ROOT / "config/titles").glob("*.json")}
             )
+            # Oldest release first; the hub keeps this order within its sections.
+            self.assertEqual(
+                [(title["releaseDate"], title["id"]) for title in snapshot["titles"]],
+                sorted((title["releaseDate"], title["id"]) for title in snapshot["titles"]),
+            )
+            self.assertEqual(snapshot["titles"][0]["id"], "tm-original")
             canyon = titles["tm-canyon"]
             self.assertEqual(canyon["state"]["game"]["ready"], True)
             self.assertEqual(canyon["kind"], "online-trial")
-            self.assertEqual(canyon["status"], "provisional")
+            self.assertEqual(canyon["status"], "unsupported")
+            self.assertEqual(canyon["releaseDate"], "2011-09-14")
+            self.assertEqual(titles["tmu"]["status"], "provisional")
+            self.assertEqual(titles["tmnf"]["status"], "supported")
             self.assertEqual(Path(canyon["apps"]["game"]).name, "TrackMania 2 Canyon.app")
             # TMU's retail installer keeps the serial-key note surfaced.
             self.assertEqual(titles["tmu"]["requiresSerial"], True)
@@ -289,6 +299,60 @@ class HubBackendTests(unittest.TestCase):
         placeholder = snapshot._error_placeholder("broken", "bad")
         self.assertIsNone(placeholder["icon"])
         self.assertIsNone(placeholder["iconSource"])
+
+    def test_invalid_entries_become_unsupported_placeholders(self):
+        placeholder = snapshot._error_placeholder("broken", "bad")
+        self.assertEqual(placeholder["status"], "unsupported")
+        self.assertIsNone(placeholder["releaseDate"])
+        with tempfile.TemporaryDirectory() as directory:
+            titles = Path(directory) / "titles"
+            shutil.copytree(ROOT / "config/titles", titles)
+            data = json.loads((titles / "tm-original.json").read_text())
+            data["release_date"] = "2003-02-30"
+            (titles / "tm-original.json").write_text(json.dumps(data))
+            with mock.patch.dict(os.environ, {"TRACKMANIA_MAC_TITLES_DIR": str(titles)}):
+                loaded, errors, _ = registry.load_registry()
+            self.assertIn("tm-original", errors)
+            self.assertEqual(
+                [title.id for title in loaded],
+                [
+                    "tmn-eswc",
+                    "tmnf",
+                    "tmu",
+                    "tm-canyon",
+                    "tm-stadium",
+                    "tm-valley",
+                    "tm-turbo",
+                    "tm-lagoon",
+                    "tm-2020",
+                ],
+            )
+
+    def test_link_is_an_object_or_null(self):
+        linked = registry.get("tm-2020")
+        self.assertEqual(
+            snapshot._link(linked),
+            {"label": linked.link_label, "url": linked.link_url},
+        )
+        self.assertTrue(linked.link_url.startswith("https://"))
+        self.assertIsNone(snapshot._link(registry.get("tmnf")))
+        self.assertIsNone(snapshot._error_placeholder("broken", "bad")["link"])
+        with mock.patch.object(snapshot, "title_payload", side_effect=OSError("boom")):
+            self.assertEqual(snapshot.contained_payload(linked)["link"], snapshot._link(linked))
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_hub("snapshot", home=directory)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            links = {t["id"]: t["link"] for t in json.loads(result.stdout)["titles"]}
+            self.assertEqual(links["tm-2020"], snapshot._link(linked))
+            self.assertIsNone(links["tmnf"])
+
+    def test_contained_payload_keeps_status_and_release_date(self):
+        title = registry.get("tm-turbo")
+        with mock.patch.object(snapshot, "title_payload", side_effect=OSError("boom")):
+            payload = snapshot.contained_payload(title)
+        self.assertEqual(payload["error"], "boom")
+        self.assertEqual(payload["status"], "unsupported")
+        self.assertEqual(payload["releaseDate"], "2016-03-24")
 
     def test_launchers_are_per_title(self):
         with mock.patch.dict(

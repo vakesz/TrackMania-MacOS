@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">Valley</title>
+  <desc id="description">An original icon of rolling green hills with a river-like road and a pale sun, in moss and meadow green over forest night.</desc>
+  <defs>
+    <linearGradient id="backdrop" x1="130" y1="80" x2="900" y2="980" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1F4A2A"/>
+      <stop offset="0.55" stop-color="#0F2B18"/>
+      <stop offset="1" stop-color="#07160C"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="200" y1="820" x2="840" y2="220" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E4FFC8"/>
+      <stop offset="1" stop-color="#6CCB4A"/>
+    </linearGradient>
+    <linearGradient id="spark" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#FFF7C2"/>
+      <stop offset="1" stop-color="#F2D35A"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.05" r="0.95">
+      <stop stop-color="#3FA04F" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#3FA04F" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+    <clipPath id="tile"><rect x="48" y="48" width="928" height="928" rx="218"/></clipPath>
+  </defs>
+
+  <rect x="48" y="48" width="928" height="928" rx="218" fill="url(#backdrop)"/>
+  <rect x="62" y="62" width="900" height="900" rx="204" fill="none" stroke="#E4FFC8" stroke-opacity="0.22" stroke-width="8"/>
+  <ellipse cx="512" cy="210" rx="425" ry="340" fill="url(#glow)" clip-path="url(#tile)"/>
+  <circle cx="700" cy="330" r="100" fill="url(#spark)" opacity="0.95"/>
+  <g filter="url(#shadow)" stroke-linejoin="round">
+    <path d="M110 700 C250 520 400 520 520 640 C640 520 800 480 914 620 V780 H110 Z" fill="#2A6B38"/>
+    <path d="M110 790 C260 640 420 650 560 730 C700 650 820 650 914 720 V860 H110 Z" fill="#3F8F46"/>
+  </g>
+  <path d="M520 900 C450 840 650 800 560 740 C500 700 600 680 540 650" fill="none" stroke="url(#accent)" stroke-width="40" stroke-linecap="round" stroke-dasharray="6 70"/>
+</svg>

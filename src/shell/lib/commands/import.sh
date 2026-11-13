@@ -3,8 +3,8 @@
 # Steam game folders (steam-copy titles). Disk images can be mounted for
 # inventory, but their setup executable must be copied out before installation.
 # Local owned media only. Serial keys are entered inside the game and are
-# never stored. Provisional titles stay provisional until user media is
-# inventoried; nothing here pretends otherwise.
+# never stored. An import does not change a title's registry status; it stays
+# provisional or unsupported until user media is inventoried.
 
 # shellcheck source=src/shell/lib/apps/icons.sh
 . "${TRACKMANIA_MAC_PROJECT_DIR}/src/shell/lib/apps/icons.sh"

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">Stadium</title>
+  <desc id="description">An original icon of a looping stadium track under floodlights, in electric blue and white over navy.</desc>
+  <defs>
+    <linearGradient id="backdrop" x1="130" y1="80" x2="900" y2="980" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#12285E"/>
+      <stop offset="0.55" stop-color="#0A1636"/>
+      <stop offset="1" stop-color="#050A1C"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="200" y1="820" x2="840" y2="220" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#CFE4FF"/>
+      <stop offset="1" stop-color="#2F7CFF"/>
+    </linearGradient>
+    <linearGradient id="spark" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#9CC8FF"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.05" r="0.95">
+      <stop stop-color="#2D5FD2" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#2D5FD2" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+    <clipPath id="tile"><rect x="48" y="48" width="928" height="928" rx="218"/></clipPath>
+  </defs>
+
+  <rect x="48" y="48" width="928" height="928" rx="218" fill="url(#backdrop)"/>
+  <rect x="62" y="62" width="900" height="900" rx="204" fill="none" stroke="#CFE4FF" stroke-opacity="0.22" stroke-width="8"/>
+  <ellipse cx="512" cy="210" rx="425" ry="340" fill="url(#glow)" clip-path="url(#tile)"/>
+  <g filter="url(#shadow)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <ellipse cx="512" cy="620" rx="300" ry="170" stroke="#030A1C" stroke-width="170"/>
+    <ellipse cx="512" cy="620" rx="300" ry="170" stroke="url(#accent)" stroke-width="110"/>
+    <ellipse cx="512" cy="620" rx="300" ry="170" stroke="#0B1C42" stroke-width="56"/>
+    <ellipse cx="512" cy="620" rx="300" ry="170" stroke="#F4F9FF" stroke-opacity="0.9" stroke-width="10" stroke-dasharray="40 34"/>
+    <path d="M300 330 L330 230 M512 300 V190 M724 330 L694 230" stroke="url(#spark)" stroke-width="30"/>
+  </g>
+</svg>

@@ -5,6 +5,7 @@
   "engine": "tmf-classic",
   "installer": "online",
   "status": "supported",
+  "release_date": "2008-04-16",
   "legacy_prefix_subdir": "TMNF",
   "app_name": "TrackMania Nations Forever.app",
   "settings_app_name": "TrackMania Settings.app",

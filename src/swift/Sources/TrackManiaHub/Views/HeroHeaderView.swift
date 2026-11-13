@@ -13,12 +13,8 @@ struct HeroHeaderView: View {
                     .font(.system(size: 32, weight: .bold, design: .rounded))
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
-                    if title.isSupported {
-                        chip(title.supportLabel, color: .green)
-                    } else {
-                        chip(title.supportLabel, color: .orange)
-                            .help("Installs, but graphics, DRM and online play are not yet qualified under Wine")
-                    }
+                    chip(title.supportLabel, color: title.supportColor)
+                        .help(supportHelp)
                     chip(title.availability, color: .secondary)
                     if title.requiresSerial == true {
                         chip("Serial key required", systemImage: "key.fill", color: .secondary)
@@ -37,6 +33,14 @@ struct HeroHeaderView: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .accessibilityElement(children: .contain)
+    }
+
+    private var supportHelp: String {
+        switch title.status {
+        case .supported: String(localized: "Installs and plays; changes are checked against this title")
+        case .provisional: String(localized: "Installs, but graphics, DRM and online play are not yet qualified under Wine")
+        case .unsupported, .unknown: String(localized: "Listed for completeness; not expected to run yet")
+        }
     }
 
     private func chip(_ text: String, systemImage: String? = nil, color: Color) -> some View {

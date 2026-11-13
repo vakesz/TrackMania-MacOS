@@ -50,5 +50,6 @@ If **Play** stays off, open the game folder (**⋯ › Show in Finder**), open
 InstallKey=YOUR-CD-KEY
 ```
 
-The hub only checks that the line holds a key. It never reads the key out,
-stores it or sends it anywhere.
+The hub only checks that a key is there: the line above, or the key file the
+launcher saves when you register (`pkey.dat` in the game's `Config` folder). It
+never reads the key out, stores it or sends it anywhere.

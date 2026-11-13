@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import pathlib
+import stat
 import typing
 
 from . import paths as hub_paths
@@ -185,8 +186,25 @@ def install_key(ini: pathlib.Path) -> typing.Optional[str]:
     return found
 
 
-def _cd_key_ready(paths: hub_paths.TitlePaths) -> Probe:
-    """Whether Nadeo.ini holds a real InstallKey. The key itself is never reported."""
+def _launcher_key_registered(title: registry.Title, paths: hub_paths.TitlePaths) -> bool:
+    """Whether the game launcher stored a registered key in the player's Config.
+
+    The retail launcher's Register key writes Config/pkey.dat under the title's
+    user folder and leaves Nadeo.ini at Key=Ask. Only its presence is checked.
+    """
+    pkey = paths.userdata / title.user_subdir / "Config" / "pkey.dat"
+    try:
+        info = pkey.lstat()
+    except OSError:
+        return False
+    return stat.S_ISREG(info.st_mode) and info.st_size > 0
+
+
+def _cd_key_ready(title: registry.Title, paths: hub_paths.TitlePaths) -> Probe:
+    """Whether the game has a CD key: a real InstallKey in Nadeo.ini (Steam
+    copies) or a key registered in the game launcher. The key is never reported."""
+    if _launcher_key_registered(title, paths):
+        return Probe(True, "CD key present")
     ini = paths.game_dir / "Nadeo.ini"
     if not ini.is_file():
         return Probe(False, "Nadeo.ini not found in the game folder")
@@ -235,7 +253,7 @@ def probe(
         "settingsApp": Probe(_app_ready(resolved.settings_app), ""),
     }
     if title.cd_key_in_nadeo_ini and resolved.game_exe.is_file():
-        items["cdKey"] = _cd_key_ready(resolved)
+        items["cdKey"] = _cd_key_ready(title, resolved)
     return items
 
 

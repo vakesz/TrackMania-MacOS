@@ -176,6 +176,35 @@ class HubBackendTests(unittest.TestCase):
             # The snapshot reports only whether a key exists, never the key.
             self.assertNotIn(placeholder, result.stdout)
 
+    def test_cd_key_gate_accepts_a_key_registered_in_the_game_launcher(self):
+        # The retail launcher's Register key stores the key in the player's
+        # Config/pkey.dat and leaves Nadeo.ini at Key=Ask with no InstallKey.
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            game = home / "Library/TrackManiaMacOS/games/tmu/prefix/drive_c/Program Files (x86)"
+            game = game / "TmUnitedForever"
+            game.mkdir(parents=True)
+            (game / "TmForever.exe").touch()
+            (game / "Nadeo.ini").write_text("[TmForever]\nKey=Ask\n")
+            config = home / "Library/TrackManiaMacOS/saves/tmu/TrackMania/Config"
+            config.mkdir(parents=True)
+
+            def cd_key():
+                result = self.run_hub("snapshot", home=home)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                titles = {t["id"]: t for t in json.loads(result.stdout)["titles"]}
+                return titles["tmu"]["state"]["cdKey"]
+
+            # An empty file is not a registered key.
+            (config / "pkey.dat").touch()
+            self.assertEqual(cd_key(), {"ready": False, "note": "CD key required"})
+            (config / "pkey.dat").write_bytes(b"\x01" * 824)
+            self.assertEqual(cd_key(), {"ready": True, "note": "CD key present"})
+            # Only a regular file counts.
+            (config / "pkey.dat").unlink()
+            (config / "pkey.dat").symlink_to(game / "Nadeo.ini")
+            self.assertEqual(cd_key(), {"ready": False, "note": "CD key required"})
+
     def test_install_key_parses_the_tmforever_section(self):
         with tempfile.TemporaryDirectory() as directory:
             ini = Path(directory) / "Nadeo.ini"

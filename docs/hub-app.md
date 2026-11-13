@@ -209,7 +209,7 @@ is now `local.trackmania-mac.hub`.
 | Title | Install source | Starts with | Status |
 | --- | --- | --- | --- |
 | Nations Forever (`tmnf`) | free Nadeo download | Competition Patch and CoreMod | supported |
-| United Forever (`tmu`) | pinned official retail installer; asks for a serial key | Competition Patch and CoreMod | provisional |
+| United Forever (`tmu`) | pinned official retail installer; asks for a serial key | Competition Patch and CoreMod | supported |
 | Original (`tm-original`) | user-owned retail disk image or setup executable | its own game executable | unsupported |
 | TrackMania 2 Canyon (`tm-canyon`) | pinned official ManiaPlanet trial | its own game executable | unsupported |
 | Turbo (`tm-turbo`) | existing Steam game folder | its own game executable | unsupported |

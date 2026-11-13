@@ -114,7 +114,7 @@ class HubBackendTests(unittest.TestCase):
             self.assertEqual(canyon["kind"], "online-trial")
             self.assertEqual(canyon["status"], "unsupported")
             self.assertEqual(canyon["releaseDate"], "2011-09-14")
-            self.assertEqual(titles["tmu"]["status"], "provisional")
+            self.assertEqual(titles["tmu"]["status"], "supported")
             self.assertEqual(titles["tmnf"]["status"], "supported")
             self.assertEqual(Path(canyon["apps"]["game"]).name, "TrackMania 2 Canyon.app")
             # TMU's retail installer keeps the serial-key note surfaced.

@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Runtime (patched Wine + D9VK + MoltenVK + x87sidecar) and native Swift hub app for a collection of TrackMania games on Apple Silicon. `tmnf` (Nations Forever) is the supported title id, `tmu` (United Forever) is provisional, and the others are unsupported.
+Runtime (patched Wine + D9VK + MoltenVK + x87sidecar) and native Swift hub app for a collection of TrackMania games on Apple Silicon. `tmnf` (Nations Forever) and `tmu` (United Forever) are the supported title ids, and the others are unsupported.
 
 ## Commands
 

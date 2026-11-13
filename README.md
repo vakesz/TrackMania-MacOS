@@ -4,8 +4,8 @@
 Mac hub, installs and launches a collection of TrackMania titles and sets up
 what they need: a patched Windows compatibility layer (Wine), DirectX and, for
 Nations and United Forever, the Competition Patch. You don't need Windows, a
-virtual machine or developer tools. Nations Forever is supported today, United
-Forever is provisional and the other games are listed but unsupported (see
+virtual machine or developer tools. Nations and United Forever are supported
+and the other games are listed but unsupported (see
 [Which games work?](#which-games-work)).
 
 **Website:** <https://tmmac.vakesz.com/> ·
@@ -43,7 +43,8 @@ by you. They are not redistributed here.
    **System Settings > Privacy & Security**, scroll down and click
    **Open Anyway**. You only have to do this once.
 4. **Pick a game** in the sidebar. If you're not sure, choose TrackMania
-   Nations Forever, the only supported title, and click **Install or repair**.
+   Nations Forever, which is free, and click **Install or repair**. United
+   Forever is supported too and needs your CD key.
    Choose **Download prebuilt (recommended)** when asked how to get the
    runtime. Downloading takes a few minutes; building it yourself takes hours.
    The other games ask for what they need: a retail installer, a disc image or
@@ -81,7 +82,7 @@ rate overlay enabled (`DXVK_HUD=fps,frametimes`).
 | Title | Where the game comes from | Status |
 | --- | --- | --- |
 | Nations Forever (`tmnf`) | free download from Nadeo | supported |
-| United Forever (`tmu`) | official retail installer (needs your serial key); starts with Competition Patch | provisional |
+| United Forever (`tmu`) | official retail installer (needs your serial key); starts with Competition Patch | supported |
 | Original (`tm-original`) | your own retail disc image or setup file | unsupported |
 | TrackMania 2 Canyon (`tm-canyon`) | official ManiaPlanet trial | unsupported |
 | Turbo (`tm-turbo`) | your existing Steam game folder | unsupported |
@@ -91,8 +92,8 @@ rate overlay enabled (`DXVK_HUD=fps,frametimes`).
 | TrackMania 2 Lagoon (`tm-lagoon`) | official ManiaPlanet trial | unsupported |
 | Trackmania 2020 (`tm-2020`) | your existing Trackmania game folder | unsupported |
 
-**Supported** means the game installs and plays, and it is the title changes
-are developed and checked against. **Provisional** means the title installs,
+**Supported** means the game installs and plays, and changes are developed and
+checked against it. **Provisional** means the title installs,
 but graphics, copy protection, online play and full gameplay have not been
 tested enough under Wine to call it supported. **Unsupported** means the title
 is listed for completeness but is not expected to run yet. See [the hub

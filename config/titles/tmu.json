@@ -4,7 +4,7 @@
   "short_name": "TMU",
   "engine": "tmf-classic",
   "installer": "online-retail",
-  "status": "provisional",
+  "status": "supported",
   "release_date": "2008-04-16",
   "legacy_prefix_subdir": "TMNF/TM United",
   "app_name": "TrackMania United Forever.app",

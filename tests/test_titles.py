@@ -73,7 +73,7 @@ class TitleRegistryTests(unittest.TestCase):
             {title.id: title.status for title in registry.load_all(TITLES)},
             {
                 "tmnf": "supported",
-                "tmu": "provisional",
+                "tmu": "supported",
                 "tm-original": "unsupported",
                 "tm-canyon": "unsupported",
                 "tm-turbo": "unsupported",

@@ -8,7 +8,7 @@ virtual machine or developer tools. Nations Forever is supported today, United
 Forever is provisional and the other games are listed but unsupported (see
 [Which games work?](#which-games-work)).
 
-**Website:** <https://vakesz.github.io/TrackMania-MacOS/> ·
+**Website:** <https://tmmac.vakesz.com/> ·
 **Download:** [latest release](https://github.com/vakesz/TrackMania-MacOS/releases/latest)
 
 <picture>

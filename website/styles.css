@@ -436,6 +436,7 @@ code { padding: 1px 5px; border-radius: 5px; background: var(--bg); font: 0.86em
 /* Footer */
 .site-footer { padding: 32px 0 44px; background: var(--asphalt-deep); color: #a7afba; font-size: 14px; }
 .site-footer .shell { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px 32px; }
+.footer-notes { display: grid; gap: 6px; max-width: 70ch; }
 .site-footer nav { display: flex; flex-wrap: wrap; gap: 4px 20px; }
 .site-footer a { color: #a7afba; }
 .site-footer a:hover { color: #fff; }

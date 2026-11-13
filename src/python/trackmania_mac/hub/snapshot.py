@@ -7,14 +7,21 @@ title-card problem, never as a broken window.
 `migration` says whether files of an earlier release still wait to move into
 the data folder (trackmania_mac.guard.relocate). Until they have, no title offers an
 action: a fresh install would otherwise start beside the old one.
+
+`storage` (trackmania_mac.guard.storage) sizes what the Settings window can clean,
+and each title's `launchOptions` are the game defaults its installed launcher
+records; both are read without running anything.
 """
 
 from __future__ import annotations
 
+import os
 import pathlib
 import typing
 
+from trackmania_mac.app import launcher_config
 from trackmania_mac.guard import relocate
+from trackmania_mac.guard import storage
 from trackmania_mac.guard import uninstall
 from trackmania_mac.install import version as project_version
 
@@ -116,6 +123,54 @@ def _locations(paths: hub_paths.TitlePaths) -> dict:
     }
 
 
+LAUNCH_FIELDS = (
+    ("WINDOW_SIZE", "windowSize"),
+    ("AUDIO", "audio"),
+    ("X87", "x87"),
+    ("RENDERER", "renderer"),
+)
+REINSTALL = "Reinstall the Game and Settings apps from the hub to change them here."
+
+
+def launch_options(launcher: pathlib.Path) -> typing.Optional[dict]:
+    """The game defaults an installed launcher records, or None without one.
+
+    A value that is missing reads as its default (common.sh). The hub may
+    change them (`set-defaults`) only when every line is in the form install_app
+    writes; an invalid recorded value is shown as its default and replaced by
+    the next change.
+    """
+    config = launcher / launcher_config.CONFIG
+    if not os.path.lexists(config):
+        return None
+    options: dict = {field: launcher_config.LAUNCH_DEFAULTS[key] for key, field in LAUNCH_FIELDS}
+    options.update(editable=False, reason=None)
+    if launcher.is_symlink() or not uninstall.has_marker(launcher, "LAUNCHER"):
+        options["reason"] = "These apps were not installed by this hub. " + REINSTALL
+        return options
+    try:
+        settings = launcher_config.read(config)
+    except (OSError, ValueError):
+        options["reason"] = "The game's launch settings are not in the expected form. " + REINSTALL
+        return options
+    invalid = []
+    for key, field in LAUNCH_FIELDS:
+        value = settings.get(key)
+        if value is None:
+            continue
+        if launcher_config.valid_launch_option(key, value):
+            options[field] = value
+        else:
+            invalid.append(field)
+    options["editable"] = True
+    if invalid:
+        options["reason"] = (
+            "A recorded setting is not valid ({}); the game will not start until "
+            "it is changed here.".format(", ".join(invalid))
+        )
+    return options
+
+
 def _link(title: registry.Title) -> typing.Optional[dict]:
     """The title's related page, or None; the registry sets both fields or neither."""
     if not title.link_url or not title.link_label:
@@ -152,6 +207,7 @@ def title_payload(
         "state": {name: probe.payload() for name, probe in items.items()},
         "apps": {"game": str(resolved.app), "settings": str(resolved.settings_app)},
         "removal": removal,
+        "launchOptions": launch_options(resolved.launcher),
         "actions": _actions(title, items, active, uninstall.removable(removal)),
     }
 
@@ -180,6 +236,7 @@ def contained_payload(title: registry.Title) -> dict:
             "state": {},
             "apps": {"game": "", "settings": ""},
             "removal": None,
+            "launchOptions": None,
             "actions": [],
         }
 
@@ -205,6 +262,7 @@ def _error_placeholder(title_id: str, message: str) -> dict:
             "state": {},
             "apps": {"game": "", "settings": ""},
             "removal": None,
+            "launchOptions": None,
             "actions": [],
         }
     )
@@ -244,6 +302,7 @@ def snapshot() -> dict:
             "schema": SCHEMA,
             "hubVersion": _hub_version(),
             "migration": moving,
+            "storage": storage.preview(),
             "titles": [],
             "error": str(failure),
         }
@@ -263,6 +322,7 @@ def snapshot() -> dict:
         "schema": SCHEMA,
         "hubVersion": _hub_version(),
         "migration": moving,
+        "storage": storage.preview(),
         "titles": payloads,
     }
     if error is not None:

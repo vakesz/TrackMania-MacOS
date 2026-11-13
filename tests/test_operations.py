@@ -985,10 +985,19 @@ class Operations(unittest.TestCase):
 
 
 HOLDER = """
-import os, signal, sys, time
-if sys.argv[2] == "ignore":
+import mmap, os, signal, sys, time
+if sys.argv[2] in ("ignore", "mapped"):
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
-fd = os.open(sys.argv[1], os.O_RDONLY)
+if sys.argv[2] == "mapped":
+    # Like a Wine client's view of a wineserver tmpmap file: the server unlinks
+    # the file as soon as it creates it, and the client only keeps a mapping.
+    fd = os.open(sys.argv[1], os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+    os.ftruncate(fd, mmap.PAGESIZE)
+    os.unlink(sys.argv[1])
+    view = mmap.mmap(fd, mmap.PAGESIZE)
+    os.close(fd)
+else:
+    fd = os.open(sys.argv[1], os.O_RDONLY)
 print("ready", flush=True)
 deadline = time.monotonic() + 30
 while time.monotonic() < deadline:
@@ -1034,6 +1043,15 @@ class Reap(unittest.TestCase):
         self.assertEqual(output, "Stopped 2 Wine processes left behind by the installer.\n")
         self.assertEqual(polite.wait(timeout=5), -signal.SIGTERM)
         self.assertEqual(stubborn.wait(timeout=5), -signal.SIGKILL)
+
+    def test_stops_a_holder_that_only_maps_a_deleted_server_file(self):
+        # Installer leftovers hold nothing linked in the server directory, only
+        # mappings of tmpmap files that wineserver unlinked on creation.
+        directory = self.server_dir()
+        orphan = self.holder(directory / "tmpmap-0000beef", "mapped")
+        count, _ = self.reap()
+        self.assertEqual(count, 1)
+        self.assertEqual(orphan.wait(timeout=5), -signal.SIGKILL)
 
     def test_leaves_unrelated_processes_alone(self):
         directory = self.server_dir()

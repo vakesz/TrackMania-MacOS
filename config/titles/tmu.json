@@ -4,7 +4,7 @@
   "short_name": "TMU",
   "engine": "tmf-classic",
   "installer": "online-retail",
-  "status": "provisional",
+  "status": "supported",
   "release_date": "2008-04-16",
   "legacy_prefix_subdir": "TMNF/TM United",
   "app_name": "TrackMania United Forever.app",
@@ -24,5 +24,6 @@
   "source_size": 1211926014,
   "requires_serial": true,
   "cd_key_in_nadeo_ini": true,
+  "creative_openal_sha256": "26ba695d73fdf78ff133ab9c0e12300c26076441627a25ffba80c8b8aedb10ec",
   "notes": "Pinned retail installer. Enter your CD key with Register player key; Play stays off until the game has it. Play starts it with Competition Patch and CoreMod."
 }

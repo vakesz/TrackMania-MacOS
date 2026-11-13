@@ -71,6 +71,16 @@ def log_dir(home: typing.Optional[pathlib.Path] = None) -> pathlib.Path:
     return data_dir(home) / "logs"
 
 
+def support_dir() -> pathlib.Path:
+    """runtime/, launchers/ and icons/: TRACKMANIA_MAC_SUPPORT, else the data folder."""
+    return pathlib.Path(os.environ.get("TRACKMANIA_MAC_SUPPORT") or default_support())
+
+
+def cache_dir() -> pathlib.Path:
+    """Downloads and build workspaces: TRACKMANIA_MAC_CACHE, else cache/ in the data folder."""
+    return pathlib.Path(os.environ.get("TRACKMANIA_MAC_CACHE") or default_cache())
+
+
 class TitlePaths(typing.NamedTuple):
     title_id: str
     root: pathlib.Path
@@ -122,9 +132,9 @@ def compute(title: registry.Title) -> TitlePaths:
     user_data = default_userdata(title.id)
     prefix = root / "prefix"
 
-    support = pathlib.Path(os.environ.get("TRACKMANIA_MAC_SUPPORT") or default_support())
+    support = support_dir()
     runtime = support / "runtime" / version
-    cache = pathlib.Path(os.environ.get("TRACKMANIA_MAC_CACHE") or default_cache())
+    cache = cache_dir()
 
     apps_env = os.environ.get("TRACKMANIA_MAC_APPS_DIR")
     if apps_env:

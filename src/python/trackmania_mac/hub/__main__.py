@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Console entry: python -m trackmania_mac.hub [snapshot|titles|migrate|run ...]"""
+"""Console entry: python -m trackmania_mac.hub [snapshot|titles|migrate|clean|run ...]"""
 
 from __future__ import annotations
 
@@ -23,6 +23,12 @@ def main(argv=None) -> int:
     sub_run.add_argument("--source", default=None)
     sub_run.add_argument("--runtime", default=None)
     sub_run.add_argument("--include-saves", action="store_true")
+    for flag in hub_run.LAUNCH_FLAGS:
+        sub_run.add_argument(flag, default=None)
+    sub_clean = subparsers.add_parser(
+        "clean", help="Remove cached downloads, unused runtimes or logs not in use"
+    )
+    sub_clean.add_argument("kind")
 
     arguments = parser.parse_args(argv)
     try:
@@ -35,6 +41,8 @@ def main(argv=None) -> int:
             return 0
         if arguments.command == "migrate":
             hub_run.migrate()
+        if arguments.command == "clean":
+            hub_run.clean(arguments.kind)
         if arguments.command == "diagnostics":
             from . import diagnostics
 
@@ -45,6 +53,11 @@ def main(argv=None) -> int:
             arguments.source,
             arguments.runtime,
             include_saves=arguments.include_saves,
+            launch_options={
+                "--window-size": arguments.window_size,
+                "--audio": arguments.audio,
+                "--x87": arguments.x87,
+            },
         )
     except registry.RegistryError as error:
         print(f"error: {error}", file=sys.stderr)

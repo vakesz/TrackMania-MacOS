@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -113,7 +114,7 @@ class HubBackendTests(unittest.TestCase):
             self.assertEqual(canyon["kind"], "online-trial")
             self.assertEqual(canyon["status"], "unsupported")
             self.assertEqual(canyon["releaseDate"], "2011-09-14")
-            self.assertEqual(titles["tmu"]["status"], "provisional")
+            self.assertEqual(titles["tmu"]["status"], "supported")
             self.assertEqual(titles["tmnf"]["status"], "supported")
             self.assertEqual(Path(canyon["apps"]["game"]).name, "TrackMania 2 Canyon.app")
             # TMU's retail installer keeps the serial-key note surfaced.
@@ -175,6 +176,35 @@ class HubBackendTests(unittest.TestCase):
             self.assertEqual(cd_key, {"ready": True, "note": "CD key present"})
             # The snapshot reports only whether a key exists, never the key.
             self.assertNotIn(placeholder, result.stdout)
+
+    def test_cd_key_gate_accepts_a_key_registered_in_the_game_launcher(self):
+        # The retail launcher's Register key stores the key in the player's
+        # Config/pkey.dat and leaves Nadeo.ini at Key=Ask with no InstallKey.
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            game = home / "Library/TrackManiaMacOS/games/tmu/prefix/drive_c/Program Files (x86)"
+            game = game / "TmUnitedForever"
+            game.mkdir(parents=True)
+            (game / "TmForever.exe").touch()
+            (game / "Nadeo.ini").write_text("[TmForever]\nKey=Ask\n")
+            config = home / "Library/TrackManiaMacOS/saves/tmu/TrackMania/Config"
+            config.mkdir(parents=True)
+
+            def cd_key():
+                result = self.run_hub("snapshot", home=home)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                titles = {t["id"]: t for t in json.loads(result.stdout)["titles"]}
+                return titles["tmu"]["state"]["cdKey"]
+
+            # An empty file is not a registered key.
+            (config / "pkey.dat").touch()
+            self.assertEqual(cd_key(), {"ready": False, "note": "CD key required"})
+            (config / "pkey.dat").write_bytes(b"\x01" * 824)
+            self.assertEqual(cd_key(), {"ready": True, "note": "CD key present"})
+            # Only a regular file counts.
+            (config / "pkey.dat").unlink()
+            (config / "pkey.dat").symlink_to(game / "Nadeo.ini")
+            self.assertEqual(cd_key(), {"ready": False, "note": "CD key required"})
 
     def test_install_key_parses_the_tmforever_section(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -583,7 +613,12 @@ class HubBackendTests(unittest.TestCase):
                     str(Path(directory) / "Library/TrackManiaMacOS/logs"),
                 )
                 self.assertFalse(title["sessionActive"])
+                self.assertIsNone(title["launchOptions"])  # no launcher installed
+            self.assertEqual(set(data["storage"]), {"downloads", "runtimes", "logs", "error"})
+            self.assertEqual(data["storage"]["runtimes"]["current"], project_version.read(ROOT))
+            self.assertEqual(data["storage"]["downloads"], {"bytes": 0, "items": []})
         placeholder = snapshot._error_placeholder("broken", "bad")
+        self.assertIsNone(placeholder["launchOptions"])
         self.assertIsNone(placeholder["removal"])
         self.assertEqual(placeholder["locations"], {})
         self.assertIsNone(placeholder["sourceSize"])
@@ -756,6 +791,157 @@ class HubBackendTests(unittest.TestCase):
             command = execve.call_args.args[1]
             self.assertTrue(command[1].endswith("src/shell/cli/trackmania-mac"))
             self.assertEqual(command[2:], extra)
+
+    def write_launcher(self, title_id, lines):
+        launcher = Path(os.environ["HOME"]) / "Library/TrackManiaMacOS/launchers" / title_id
+        (launcher / "config").mkdir(parents=True)
+        (launcher / ".trackmania-mac-launcher").touch()
+        settings = {"TITLE": title_id, **lines}
+        (launcher / "config/installation.sh").write_text(
+            "".join(
+                f'if test -z "${{TRACKMANIA_MAC_{key}:-}}"; then export TRACKMANIA_MAC_{key}={value}; fi\n'
+                for key, value in settings.items()
+            )
+        )
+        return launcher
+
+    def test_launch_options_read_the_installed_launcher(self):
+        tmnf = registry.get("tmnf")
+        self.assertIsNone(snapshot.title_payload(tmnf)["launchOptions"])
+        launcher = self.write_launcher("tmnf", {"WINDOW_SIZE": "1280x720", "AUDIO": "off"})
+        self.assertEqual(
+            snapshot.title_payload(tmnf)["launchOptions"],
+            {
+                "windowSize": "1280x720",
+                "audio": "off",
+                "x87": "on",
+                "renderer": "d9vk",
+                "editable": True,
+                "reason": None,
+            },
+        )
+        config = launcher / "config/installation.sh"
+        config.write_text(config.read_text().replace("AUDIO=off", "AUDIO=loud"))
+        options = snapshot.title_payload(tmnf)["launchOptions"]
+        self.assertEqual((options["audio"], options["editable"]), ("on", True))
+        self.assertIn("audio", options["reason"])
+        with config.open("a") as stream:
+            stream.write("echo surprise\n")
+        options = snapshot.title_payload(tmnf)["launchOptions"]
+        self.assertFalse(options["editable"])
+        self.assertTrue(options["reason"])
+        (launcher / ".trackmania-mac-launcher").unlink()
+        config.write_text(config.read_text().replace("echo surprise\n", ""))
+        self.assertFalse(snapshot.title_payload(tmnf)["launchOptions"]["editable"])
+
+    def test_set_defaults_runs_the_defaults_command(self):
+        self.write_launcher("tmnf", {})
+        with (
+            mock.patch.object(hub_run.os, "execve", side_effect=KeyboardInterrupt) as execve,
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            hub_run.run(
+                "tmnf",
+                "set-defaults",
+                None,
+                launch_options={"--audio": "off", "--window-size": "1280x720", "--x87": None},
+            )
+        command, env = execve.call_args.args[1], execve.call_args.args[2]
+        self.assertTrue(command[1].endswith("src/shell/cli/trackmania-mac"))
+        self.assertEqual(command[2:], ["defaults", "--window-size", "1280x720", "--audio", "off"])
+        self.assertEqual(env["TRACKMANIA_MAC_TITLE"], "tmnf")
+
+    def test_set_defaults_is_refused_without_flags_apps_or_a_readable_config(self):
+        cases = [("tmnf", {}), ("tmu", {"--audio": "off"})]  # tmu has no launcher
+        self.write_launcher("tmnf", {})
+        broken = self.write_launcher("tm-canyon", {})
+        with (broken / "config/installation.sh").open("a") as stream:
+            stream.write("echo surprise\n")
+        cases.append(("tm-canyon", {"--x87": "off"}))
+        for title_id, options in cases:
+            with (
+                self.subTest(title=title_id, options=options),
+                mock.patch.object(hub_run.os, "execve") as execve,
+                mock.patch("sys.stderr", new_callable=io.StringIO) as stderr,
+                self.assertRaises(SystemExit) as raised,
+            ):
+                hub_run.run(title_id, "set-defaults", None, launch_options=options)
+            execve.assert_not_called()
+            self.assertEqual(raised.exception.code, 1)
+            self.assertTrue(stderr.getvalue().startswith("error: "), stderr.getvalue())
+
+    def test_launch_flags_only_reach_set_defaults(self):
+        for action in ("install", "doctor", "uninstall"):
+            with (
+                self.subTest(action=action),
+                mock.patch.object(hub_run, "available_action_ids", return_value={action}),
+                mock.patch.object(hub_run.os, "execve") as execve,
+                self.assertRaises(SystemExit),
+            ):
+                hub_run.run("tmnf", action, None, launch_options={"--audio": "off"})
+            execve.assert_not_called()
+
+    def test_cli_parses_launch_flags_and_clean(self):
+        from trackmania_mac.hub import __main__ as hub_main
+
+        with mock.patch.object(hub_main.hub_run, "run", side_effect=SystemExit(0)) as run:
+            with self.assertRaises(SystemExit):
+                hub_main.main(["run", "tmu", "set-defaults", "--window-size", "800x600"])
+        self.assertEqual(
+            run.call_args.kwargs["launch_options"],
+            {"--window-size": "800x600", "--audio": None, "--x87": None},
+        )
+        with mock.patch.object(hub_main.hub_run, "clean", side_effect=SystemExit(0)) as clean:
+            with self.assertRaises(SystemExit):
+                hub_main.main(["clean", "logs"])
+        clean.assert_called_once_with("logs")
+
+    def test_clean_runs_the_cli_without_title_overrides(self):
+        environment = {"TRACKMANIA_MAC_ROOT": "/x", "TRACKMANIA_MAC_TITLE": "tmu"}
+        with (
+            mock.patch.dict(os.environ, environment),
+            mock.patch.object(hub_run.os, "execve", side_effect=KeyboardInterrupt) as execve,
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            hub_run.clean("downloads")
+        command, env = execve.call_args.args[1], execve.call_args.args[2]
+        self.assertTrue(command[1].endswith("src/shell/cli/trackmania-mac"))
+        self.assertEqual(command[2:], ["clean", "downloads"])
+        self.assertNotIn("TRACKMANIA_MAC_ROOT", env)
+        self.assertNotIn("TRACKMANIA_MAC_TITLE", env)
+
+    def test_clean_refuses_unknown_kinds_and_waits_for_the_migration(self):
+        with (
+            mock.patch.object(hub_run.os, "execve") as execve,
+            mock.patch("sys.stderr", new_callable=io.StringIO),
+            self.assertRaises(SystemExit),
+        ):
+            hub_run.clean("everything")
+        execve.assert_not_called()
+        (Path(os.environ["HOME"]) / "Library/Logs/TMNF").mkdir(parents=True)
+        with (
+            mock.patch.object(hub_run.os, "execve") as execve,
+            mock.patch("sys.stderr", new_callable=io.StringIO),
+            self.assertRaises(SystemExit),
+        ):
+            hub_run.clean("logs")
+        execve.assert_not_called()
+
+    def test_hub_clean_and_set_defaults_end_to_end(self):
+        home = Path(os.environ["HOME"])
+        logs = home / "Library/TrackManiaMacOS/logs"
+        logs.mkdir(parents=True)
+        (logs / "play.log").write_text("log")
+        result = self.run_hub("clean", "logs", home=home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"Removed {logs.resolve() / 'play.log'}", result.stdout)
+        self.assertTrue((logs / "play.log.lock").exists())
+        result = self.run_hub("clean", "bogus", home=home)
+        self.assertEqual(result.returncode, 1)
+        self.assertTrue(result.stderr.startswith("error: "), result.stderr)
+        result = self.run_hub("run", "tmnf", "set-defaults", "--audio", "off", home=home)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("error: ", result.stderr)
 
     def test_redact_home_and_username(self):
         text = "/Users/alice/Games and alice here, malice and alice_x stay; ~/x"

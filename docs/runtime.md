@@ -131,10 +131,31 @@ exited, the job has no active process, a fresh job accounting read matches every
 process it observed, and nothing is unrecognized. A failed accounting query,
 desktop close, or live job process keeps the full wait.
 
+For a title with the Competition Patch, a settings session also names the
+game's own `TmForever.exe` for redirection. When the launcher starts that file,
+the helper reads the new process's command line from its PEB (Wine has no
+`ProcessCommandLineInformation`). Unless an argument starts with `/bench` or
+`/list_benchs`, the launcher's benchmark switches, it stops the process, gives
+the launcher the two-second window to exit, and reports `redirected` if every
+job process is still recognized. The supervisor then shuts the prefix down as
+after a normal exit, and `configure`, still holding the prefix lock, runs `play`.
+So the launcher's Play gets Competition Patch and CoreMod as the Game app does.
+A command line that cannot be read leaves the game running as before. Wine does
+not honour Image File Execution Options `Debugger`, and ModLoader starts its own
+copy of `TmForever.exe`, a different file, so it is never redirected.
+
 Wine's console host is recognized only by native System32 path/file identity,
 byte equality with the bundled reference, and a retained parent in the same
 job. Only its completed zero-status lifecycle is exempt from unknown-child
 handling; a namesake or modified image is not trusted as infrastructure.
+
+Wine's `services.exe` starts some services on demand, outside the job, while a
+game runs, such as `lsass.exe` seen during a United Forever session. Such a process
+is recognized only when its image is in native System32 and byte-equal to the
+runtime's own copy, and its retained parent is the verified `services.exe` that
+was already running when the session started. Anything else still running
+outside the job makes the result uncertain, as before. Rules:
+`src/c/session_infrastructure.h`.
 
 `src/python/trackmania_mac/session/supervisor.py` preserves the reported unsigned Windows exit status before
 cleanup. A validated completed session permits bounded, prefix-specific
@@ -156,12 +177,13 @@ no system Rosetta files, privileged service or debugger entitlement is needed.
 
 ### OpenAL
 
-Applies to: Nations Forever today. Only a title whose registry entry sets
-`creative_openal_sha256` gets this replacement, and only `tmnf` does.
+Applies to: Nations and United Forever. Only a title whose registry entry sets
+`creative_openal_sha256` gets this replacement.
 
-Nations Forever plays its sound through `OpenAL32.dll` in the game directory. The game ships
+Both games play their sound through `OpenAL32.dll` in the game directory. They ship
 Creative's OpenAL router with its `wrap_oal.dll` software mixer, which on macOS 27
 keeps a real-time thread busy for much of a core and lowers race frame rates.
+Both ship the same Creative `OpenAL32.dll`, so both entries pin the same hash.
 `make install` replaces it with OpenAL Soft's official 32-bit `soft_oal.dll`
 (pinned version and SHA-256), keeps the original as `OpenAL32.creative.dll` and
 puts OpenAL Soft's license beside it as `OpenAL32.COPYING.txt`. OpenAL Soft runs
@@ -175,8 +197,8 @@ the prefix user's `AppData/Roaming/alsoft.ini`.
 `TRACKMANIA_MAC_OPENAL=creative make install` restores Creative's library; later installs
 and updates keep that choice until `TRACKMANIA_MAC_OPENAL=soft make install`. A different
 `OpenAL32.dll` placed there by the user is left unchanged. Only a library
-whose hash the title registry pins (`creative_openal_sha256`, today Nations Forever's) is
-replaced; other titles keep the OpenAL they ship.
+whose hash the title registry pins (`creative_openal_sha256`) is replaced; other
+titles keep the OpenAL they ship.
 
 ### Launcher and first launch
 
@@ -191,7 +213,8 @@ GPU up in `GfxDevicePerfs.txt` by PCI ID. Apple GPUs are not listed, so without
 the spoof it starts `TmForever.exe /bench`, which does not complete under
 Rosetta, and its older adapter probing could crash. The game keeps its actual
 renderer identity. The launcher runs with the same environment as the game, so
-a benchmark or game started from it inherits the D9VK settings and x87sidecar.
+a benchmark started from it inherits the D9VK settings and x87sidecar. Its Play
+button is redirected to Play (see the session section above).
 
 The first launch shows the game's own "Network check" dialog, which confirms the
 peer-to-peer firewall test, followed by the account screen. Both are the

@@ -4,8 +4,8 @@
 Mac hub, installs and launches a collection of TrackMania titles and sets up
 what they need: a patched Windows compatibility layer (Wine), DirectX and, for
 Nations and United Forever, the Competition Patch. You don't need Windows, a
-virtual machine or developer tools. Nations Forever is supported today, United
-Forever is provisional and the other games are listed but unsupported (see
+virtual machine or developer tools. Nations and United Forever are supported
+and the other games are listed but unsupported (see
 [Which games work?](#which-games-work)).
 
 **Website:** <https://tmmac.vakesz.com/> ·
@@ -43,7 +43,8 @@ by you. They are not redistributed here.
    **System Settings > Privacy & Security**, scroll down and click
    **Open Anyway**. You only have to do this once.
 4. **Pick a game** in the sidebar. If you're not sure, choose TrackMania
-   Nations Forever, the only supported title, and click **Install or repair**.
+   Nations Forever, which is free, and click **Install or repair**. United
+   Forever is supported too and needs your CD key.
    Choose **Download prebuilt (recommended)** when asked how to get the
    runtime. Downloading takes a few minutes; building it yourself takes hours.
    The other games ask for what they need: a retail installer, a disc image or
@@ -57,7 +58,7 @@ your Applications folder. For Nations Forever they are:
 | App | What it does |
 | --- | --- |
 | **TrackMania Nations Forever** | Starts the game with Competition Patch. Use this to play. |
-| **TrackMania Settings** | Opens the game's own launcher to change graphics, resolution and audio. Close the game first, then save and close Settings before you play. |
+| **TrackMania Settings** | Opens the game's own launcher to change graphics, resolution and audio. Close the game first. The launcher's Play button starts the game the same way as the Game app, with Competition Patch. |
 
 ### Your first launch on Nations or United Forever
 
@@ -81,7 +82,7 @@ rate overlay enabled (`DXVK_HUD=fps,frametimes`).
 | Title | Where the game comes from | Status |
 | --- | --- | --- |
 | Nations Forever (`tmnf`) | free download from Nadeo | supported |
-| United Forever (`tmu`) | official retail installer (needs your serial key); starts with Competition Patch | provisional |
+| United Forever (`tmu`) | official retail installer (needs your serial key); starts with Competition Patch | supported |
 | Original (`tm-original`) | your own retail disc image or setup file | unsupported |
 | TrackMania 2 Canyon (`tm-canyon`) | official ManiaPlanet trial | unsupported |
 | Turbo (`tm-turbo`) | your existing Steam game folder | unsupported |
@@ -91,8 +92,8 @@ rate overlay enabled (`DXVK_HUD=fps,frametimes`).
 | TrackMania 2 Lagoon (`tm-lagoon`) | official ManiaPlanet trial | unsupported |
 | Trackmania 2020 (`tm-2020`) | your existing Trackmania game folder | unsupported |
 
-**Supported** means the game installs and plays, and it is the title changes
-are developed and checked against. **Provisional** means the title installs,
+**Supported** means the game installs and plays, and changes are developed and
+checked against it. **Provisional** means the title installs,
 but graphics, copy protection, online play and full gameplay have not been
 tested enough under Wine to call it supported. **Unsupported** means the title
 is listed for completeness but is not expected to run yet. See [the hub
@@ -134,6 +135,18 @@ prefix, its Game and Settings apps, its launcher files, its downloaded
 installer and its logs. Choose **Remove game, keep saves** to keep your saves,
 or **Remove everything including saves** to also delete the game's saves
 folder. The runtime and the downloads other games share are always kept.
+
+**How do I free disk space?** Open the hub's Settings (the gear at the bottom
+left of the sidebar, or **TrackMania Mac > Settings**). **Clear downloads**
+removes the downloaded installers and archives, which are downloaded again
+when needed. **Remove old runtimes** removes Wine runtimes of earlier releases
+that no installed game uses. **Clear logs** removes the logs no game is
+writing. They wait until no game or install is running.
+
+**How do I play in a window or without sound?** In the hub's Settings, choose
+the game under **Game defaults**, then its display mode (full screen or a
+window size), sound and x87 acceleration. Quit the game first; the change
+applies the next time it starts and stays when you update the apps.
 
 **Something went wrong.** In the hub, select the game, click **⋯ > Create
 diagnostics report** and attach the zip, which is written to the logs folder
@@ -245,13 +258,20 @@ example, `TRACKMANIA_MAC_TITLE=tmu make doctor` checks United Forever.
 | `./src/shell/cli/trackmania-mac play-vanilla` | Run the official game without Competition Patch |
 | `./src/shell/cli/trackmania-mac migrate` | Move an install from an earlier release into the data folder (see [moving from an earlier release](#moving-from-an-earlier-release)) |
 | `./src/shell/cli/trackmania-mac uninstall` | Remove this game's prefix, apps, launcher, installer and logs after confirmation; add `--include-saves` to remove its saves too |
+| `./src/shell/cli/trackmania-mac defaults --window-size 1280x720 --audio off --x87 on` | Change the launch defaults this game's installed apps use (any of the three options) |
+| `./src/shell/cli/trackmania-mac clean downloads` | Remove cached downloads; `clean runtimes` removes runtimes no installed game uses, `clean logs` logs no game is writing |
 
 To force a fixed windowed size, set `TRACKMANIA_MAC_WINDOW_SIZE=1280x720` (any `WxH`).
 That runs the game inside a separate Wine virtual desktop for this session.
-Each dimension must be between 1 and 65535.
+Each dimension must be between 1 and 65535. To make it the default of the
+installed apps, use `trackmania-mac defaults --window-size 1280x720` or the
+hub's Settings. `make install` keeps the defaults the apps record unless you
+set one of these variables for it.
 
 The session supervisor tracks both settings and game executables, so a launcher
-exit alone does not authorize cleanup. Normal quits are quiet; failed or
+exit alone does not authorize cleanup. For Nations and United Forever, a game
+the settings launcher starts for play is stopped at once and started again as
+`play` does, with Competition Patch and CoreMod; its benchmark runs as it is. Normal quits are quiet; failed or
 uncertain sessions show an alert with the log location. Uncertainty does not
 authorize killing a game that may still be running. Use `make stop` when you
 explicitly want to stop the selected prefix.
@@ -321,9 +341,9 @@ output goes directly to a file, not a pipe that could interrupt a surviving game
 ### Diagnostic overrides
 
 `TRACKMANIA_MAC_X87=off make play` uses stock Rosetta math for a comparison.
-`TRACKMANIA_MAC_AUDIO=off make play` disables sound. Normal installs enable both audio
-and the patched translator. These temporary overrides do not change saved game
-settings. `make install` replaces the game's Creative OpenAL with OpenAL Soft;
+`TRACKMANIA_MAC_AUDIO=off make play` disables sound. A new install enables both audio
+and the patched translator. These temporary overrides change neither saved game
+settings nor the defaults of the installed apps. `make install` replaces the game's Creative OpenAL with OpenAL Soft;
 `TRACKMANIA_MAC_OPENAL=creative make install` puts the original back and keeps it on
 later installs.
 

@@ -59,6 +59,8 @@ struct HubRootView: View {
 }
 
 struct HubSidebar: View {
+    static let minimumWidth: CGFloat = 250
+
     @ObservedObject var model: HubViewModel
     let titles: [HubTitle]
 
@@ -75,21 +77,11 @@ struct HubSidebar: View {
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom, spacing: 0) { footer }
         .navigationTitle("TrackMania")
-        .navigationSplitViewColumnWidth(min: 220, ideal: 300, max: 380)
+        .navigationSplitViewColumnWidth(min: HubSidebar.minimumWidth, ideal: 300, max: 380)
     }
 
     private var footer: some View {
-        HStack(spacing: 8) {
-            HubIconView(size: 22)
-            Text("TrackMania Mac").font(.callout.weight(.medium))
-            if let version = UpdateChecker.bundleVersion ?? model.snapshot?.hubVersion {
-                Text(version).font(.caption).foregroundStyle(.secondary).monospacedDigit()
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .accessibilityElement(children: .combine)
+        HubSidebarFooter(version: UpdateChecker.bundleVersion ?? model.snapshot?.hubVersion)
     }
 
     private func rows(_ titles: [HubTitle]) -> some View {
@@ -100,6 +92,35 @@ struct HubSidebar: View {
                 TitleListRow(title: title)
             }
         }
+    }
+}
+
+/// The row under the sidebar list: the settings button, then the app icon, name and version.
+struct HubSidebarFooter: View {
+    static let settingsSymbol = "gearshape"
+    static let settingsLabel = "Settings"
+
+    let version: String?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            // Opens the same window as the app menu item and Command-comma.
+            SettingsLink { Image(systemName: Self.settingsSymbol) }
+                .buttonStyle(.borderless)
+                .help(Self.settingsLabel)
+                .accessibilityLabel(Self.settingsLabel)
+            HStack(spacing: 8) {
+                HubIconView(size: 22)
+                Text("TrackMania Mac").font(.callout.weight(.medium)).lineLimit(1)
+                if let version {
+                    Text(version).font(.caption).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 }
 

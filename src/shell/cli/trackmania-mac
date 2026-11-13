@@ -23,6 +23,8 @@ Commands:
   diagnostics  Write a redacted diagnostics zip to ~/Library/TrackManiaMacOS/logs
   stop         Stop the Wine processes of the game's prefix
   app          Install the game and settings apps in Applications
+  defaults     Change the game's launch defaults in its installed apps:
+               --window-size fullscreen|WIDTHxHEIGHT, --audio on|off, --x87 on|off
   setup        Install runtime, prefix and DirectX without the game
   titles       List supported TrackMania titles and their status
   hub          Native-hub backend (snapshot or run)
@@ -31,6 +33,8 @@ Commands:
                after confirmation; --include-saves also removes its saves folder
   migrate      Move every title's files from the folders of earlier releases
                into ~/Library/TrackManiaMacOS (title commands do this first)
+  clean        Remove cached downloads, runtimes no installed game uses, or logs
+               no game is writing: clean downloads|runtimes|logs
   help         Show this help
 EOF
 }
@@ -48,7 +52,7 @@ EOF
 
 command="${1:-help}"
 case "$command" in
-  install|directx|setup|update|play|play-vanilla|configure|d9vk|doctor|stop|app|import|uninstall)
+  install|directx|setup|update|play|play-vanilla|configure|d9vk|doctor|stop|app|defaults|import|uninstall|clean)
     migrate_legacy_install
     ;;
 esac
@@ -74,6 +78,13 @@ case "$command" in
     validate_launch_options
     guard_prefix_operation "${TRACKMANIA_MAC_PROJECT_DIR}/src/shell/cli/trackmania-mac" "$@"
     ;;
+  defaults)
+    # Arguments first, so a mistake is reported before any lock is taken.
+    parse_launcher_defaults "${@:2}"
+    validate_launch_options
+    require_owned_managed_layout
+    hold_prefix_operation "${TRACKMANIA_MAC_PROJECT_DIR}/src/shell/cli/trackmania-mac" "$@"
+    ;;
   hub|titles|diagnostics)
     # Snapshot and listing must work even with an unrelated launch-option env
     # var mistyped; launch options only matter for play paths below.
@@ -93,10 +104,12 @@ case "$command" in
   diagnostics) hub_command diagnostics ;;
   stop) stop_game ;;
   app) install_app ;;
+  defaults) launcher_defaults "${@:2}" ;;
   titles) hub_command titles ;;
   hub) hub_command "${@:2}" ;;
   import) import_source "${2:-}" ;;
   uninstall) uninstall_game "${@:2}" ;;
+  clean) trackmania_mac_python -m trackmania_mac.guard.storage clean "${2:-}" ;;
   migrate)
     trackmania_mac_python -m trackmania_mac.guard.relocate run /bin/bash "${TRACKMANIA_MAC_PROJECT_DIR}/src/shell/cli/trackmania-mac" relink-apps
     ;;

@@ -102,6 +102,11 @@ if scenario == 'disappear':
     result.unlink()
     time.sleep(30)
 if scenario == 'longgame': time.sleep(2.5)
+if scenario == 'redirected':
+    publish({'state': 'running'})
+    time.sleep(0.15)
+    publish({'state': 'redirected', 'cleanup': True})
+    sys.exit(0)
 publish({'state': 'exited', 'exit_code': int(os.environ.get('FAKE_EXIT', '0')), 'cleanup': True})
 if scenario in ('teardown', 'hunghelper'):
     while not (root / 'helper-release').exists():
@@ -769,6 +774,66 @@ class SessionTests(unittest.TestCase):
                 self.assertEqual("exception status" in result.stderr, code == 0xC0000005)
                 self.assertNotIn("crash", result.stderr.lower())
 
+    def test_redirect_reaches_the_helper_and_returns_redirected_after_cleanup(self):
+        game = str(self.home / "TmForever.exe")
+        result = self.cli(
+            "redirected",
+            options=[
+                "--settings",
+                "--watch",
+                str(self.exe),
+                "--watch",
+                game,
+                "--redirect",
+                game,
+                "--redirect-except",
+                "/bench",
+                "--redirect-except",
+                "/list_benchs",
+            ],
+        )
+        self.assertEqual(result.returncode, session.REDIRECTED, result.stderr)
+        self.assertEqual(session.REDIRECTED, 3)
+        args = json.loads((self.home / "invocation.json").read_text())["args"]
+        self.assertEqual(
+            args[args.index("--redirect") : args.index("--")],
+            [
+                "--redirect",
+                game,
+                "--redirect-except",
+                "/bench",
+                "--redirect-except",
+                "/list_benchs",
+            ],
+        )
+        self.assertIn("redirected; stopping the prefix", result.stderr)
+        self.assertNotIn("target status", result.stderr)
+        self.assert_cleanup()
+        self.assert_no_results()
+
+    def test_a_session_without_redirect_passes_no_redirect_options(self):
+        result = self.cli(options=["--settings"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = json.loads((self.home / "invocation.json").read_text())["args"]
+        self.assertNotIn("--redirect", args)
+        self.assertNotIn("--redirect-except", args)
+
+    def test_invalid_redirect_options_never_call_wine(self):
+        game = str(self.home / "TmForever.exe")
+        for options in (
+            ["--redirect-except", "/bench"],
+            ["--redirect", ""],
+            ["--redirect", game, "--redirect-except", "bench"],
+            ["--redirect", game, "--redirect-except", "/bench x"],
+            ["--redirect", game, "--redirect-except", "/"],
+            ["--redirect", game] + ["--redirect-except", "/a"] * 9,
+        ):
+            with self.subTest(options=options):
+                result = self.cli(options=options)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(self.wine_calls(), [])
+                self.assertEqual(self.server_calls(), [])
+
     def test_helper_exit_without_result_is_not_success(self):
         for scenario in ("noresult", "helpererror"):
             with self.subTest(scenario=scenario):
@@ -785,6 +850,8 @@ class SessionTests(unittest.TestCase):
             b"{}",
             b'{"state":"exited","exit_code":0}',
             b'{"state":"uncertain","reason":"test","cleanup":true}',
+            b'{"state":"redirected","cleanup":false}',
+            b'{"state":"redirected"}',
             b"x" * 4097,
         ):
             with self.subTest(raw=raw[:80]):
@@ -1175,6 +1242,7 @@ class ResultTests(unittest.TestCase):
             {"state": "starting"},
             {"state": "running"},
             {"state": "exited", "exit_code": 0xFFFFFFFF, "cleanup": True},
+            {"state": "redirected", "cleanup": True},
             {"state": "failed", "reason": "create_process_failed", "cleanup": False},
             {"state": "uncertain", "reason": "process_limit", "cleanup": False},
         ):
@@ -1194,6 +1262,11 @@ class ResultTests(unittest.TestCase):
             {"state": "running", "cleanup": True},
             {"state": "starting", "extra": 0},
             {"state": "exited", "cleanup": True},
+            {"state": "redirected"},
+            {"state": "redirected", "cleanup": False},
+            {"state": "redirected", "cleanup": 1},
+            {"state": "redirected", "exit_code": 0, "cleanup": True},
+            {"state": "redirected", "reason": "test", "cleanup": True},
             {"state": "failed", "reason": "", "cleanup": False},
             {"state": "uncertain", "reason": "test", "cleanup": True},
             {"state": "failed", "reason": 1, "cleanup": False},
@@ -1328,6 +1401,216 @@ class SettleDecisionTests(unittest.TestCase):
         self.assertLess(early, settled)
         # The early path reuses the settled branch, so state and reason cannot differ.
         self.assertEqual(source.count('state = "exited";'), 1)
+
+
+@unittest.skipUnless(shutil.which("cc"), "a host C compiler is required")
+class RedirectDecisionTests(unittest.TestCase):
+    """Which game starts session.c hands to Play, from their command lines."""
+
+    @classmethod
+    def setUpClass(cls):
+        temporary = tempfile.TemporaryDirectory(prefix="trackmania-mac-redirect-")
+        cls.addClassCleanup(temporary.cleanup)
+        cls.binary = Path(temporary.name) / "session-redirect"
+        subprocess.run(
+            [
+                "cc",
+                "-std=c99",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                str(ROOT / "tests/session-redirect.c"),
+                "-o",
+                str(cls.binary),
+            ],
+            check=True,
+        )
+
+    EXCEPT = ("/bench", "/list_benchs")
+
+    def decide(self, command, switches=EXCEPT):
+        result = subprocess.run(
+            [str(self.binary), command] + list(switches),
+            text=True,
+            stdout=subprocess.PIPE,
+            check=True,
+        )
+        return result.stdout.strip()
+
+    def test_play_starts_are_redirected(self):
+        for command in (
+            "TmForever.exe",
+            r'"C:\Program Files (x86)\TmUnitedForever\TmForever.exe"',
+            r'"C:\Games\TmForever.exe" /userdir=C:\Users\me',
+            "TmForever.exe   /nolauncher\t",
+            "",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decide(command), "redirect")
+
+    def test_benchmark_switches_keep_the_process_in_any_case_or_form(self):
+        for command in (
+            "TmForever.exe /bench",
+            "TmForever.exe /BENCH=Bench.Replay.Gbx /out=Bench_1.txt",
+            r'"C:\Games\TmForever.exe" /config=Bench.SystemConfig.Gbx /bench=x',
+            'TmForever.exe "/bench=with space"',
+            "TmForever.exe /list_benchs=x",
+            r'"C:\Games\TmForever.exe"/bench',
+            "TmForever.exe\t/bench",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decide(command), "keep")
+
+    def test_a_switch_inside_another_argument_is_not_a_switch(self):
+        for command in (
+            'TmForever.exe "a /bench"',
+            r'TmForever.exe "a\" /bench"',
+            r'TmForever.exe a\\" /bench"',
+            "TmForever.exe x/bench",
+            "/bench.exe",
+            r'"C:\bench dir /bench\TmForever.exe"',
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decide(command), "redirect")
+
+    def test_without_excepted_switches_every_start_is_redirected(self):
+        self.assertEqual(self.decide("TmForever.exe /bench", ()), "redirect")
+
+    def test_session_checks_arguments_before_it_stops_a_process(self):
+        source = (ROOT / "src/c/session.c").read_text()
+        self.assertIn('#include "session_redirect.h"', source)
+        self.assertEqual(source.count("redirect_allowed("), 1)
+        self.assertEqual(source.count("TerminateProcess(handle, ERROR_PROCESS_ABORTED)"), 1)
+        self.assertLess(
+            source.index("redirect_allowed("),
+            source.index("TerminateProcess(handle, ERROR_PROCESS_ABORTED)"),
+        )
+        self.assertEqual(source.count('state = "redirected";'), 1)
+
+
+@unittest.skipUnless(shutil.which("cc"), "a host C compiler is required")
+class InfrastructureRuleTests(unittest.TestCase):
+    """Which processes session.c recognizes, and which parents vouch for them."""
+
+    @classmethod
+    def setUpClass(cls):
+        temporary = tempfile.TemporaryDirectory(prefix="trackmania-mac-infrastructure-")
+        cls.addClassCleanup(temporary.cleanup)
+        cls.binary = Path(temporary.name) / "session-infrastructure"
+        subprocess.run(
+            [
+                "cc",
+                "-std=c99",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                str(ROOT / "tests/session-infrastructure.c"),
+                "-o",
+                str(cls.binary),
+            ],
+            check=True,
+        )
+
+    PROCESS = dict(
+        watched=0,
+        baseline=0,
+        root=0,
+        in_job=0,
+        exited=0,
+        exit_code=0,
+        desktop_session=0,
+        console_verified=0,
+        desktop_verified=0,
+        service_verified=0,
+    )
+    PARENT = dict(
+        service=1,
+        in_job=0,
+        root=0,
+        watched=0,
+        baseline=1,
+        service_manager=1,
+        created_first=1,
+    )
+
+    def run_rule(self, mode, base, changes):
+        facts = dict(base, **changes)
+        result = subprocess.run(
+            [str(self.binary), mode] + [str(facts[key]) for key in base],
+            text=True,
+            stdout=subprocess.PIPE,
+            check=True,
+        )
+        return result.stdout.strip()
+
+    def process(self, **changes):
+        return self.run_rule("unrecognized", self.PROCESS, changes)
+
+    def parent(self, **changes):
+        return self.run_rule("parent", self.PARENT, changes)
+
+    def test_a_verified_service_outside_the_job_is_known_while_alive_or_after_exit_zero(self):
+        # lsass.exe, started on demand by the baseline services.exe.
+        self.assertEqual(self.process(), "unrecognized")
+        self.assertEqual(self.process(service_verified=1), "known")
+        self.assertEqual(self.process(service_verified=1, exited=1), "known")
+
+    def test_a_service_in_the_job_stays_unrecognized(self):
+        # Only Wine's own services.exe, outside the job, starts a service.
+        self.assertEqual(self.process(service_verified=1, in_job=1), "unrecognized")
+        self.assertEqual(self.process(service_verified=1, in_job=1, exited=1), "unrecognized")
+
+    def test_rules_from_before_services_are_unchanged(self):
+        for changes, expected in (
+            ({"watched": 1}, "known"),
+            ({"baseline": 1}, "known"),
+            ({"exited": 1}, "known"),  # an exited process outside the job
+            ({"in_job": 1, "exited": 1}, "unrecognized"),
+            ({"in_job": 1, "exited": 1, "console_verified": 1}, "known"),
+            ({"in_job": 1, "console_verified": 1}, "unrecognized"),
+            ({"in_job": 1, "desktop_verified": 1}, "known"),
+            ({"in_job": 1, "desktop_verified": 1, "exited": 1, "exit_code": 1}, "unrecognized"),
+            ({"in_job": 1, "root": 1}, "unrecognized"),
+            ({"in_job": 1, "root": 1, "exited": 1, "exit_code": 9}, "known"),
+            ({"in_job": 1, "root": 1, "desktop_session": 1}, "known"),
+        ):
+            with self.subTest(changes=changes):
+                self.assertEqual(self.process(**changes), expected)
+
+    def test_only_the_baseline_services_manager_vouches_for_a_service(self):
+        self.assertEqual(self.parent(), "vouches")
+        for changes in (
+            {"baseline": 0},
+            {"service_manager": 0},
+            {"in_job": 1},
+            {"created_first": 0},
+            {"baseline": 0, "root": 1, "in_job": 1},
+            {"baseline": 0, "watched": 1, "in_job": 1, "service_manager": 0},
+        ):
+            with self.subTest(changes=changes):
+                self.assertEqual(self.parent(**changes), "no")
+
+    def test_console_and_desktop_parents_are_unchanged(self):
+        job_parent = dict(service=0, baseline=0, service_manager=0, in_job=1)
+        self.assertEqual(self.parent(**job_parent, root=1), "vouches")
+        self.assertEqual(self.parent(**job_parent, watched=1), "vouches")
+        self.assertEqual(self.parent(**job_parent), "no")
+        self.assertEqual(self.parent(**dict(job_parent, in_job=0), root=1), "no")
+        self.assertEqual(self.parent(**job_parent, root=1, created_first=0), "no")
+        # The services manager never vouches for a console host or desktop.
+        self.assertEqual(self.parent(service=0), "no")
+
+    def test_session_uses_the_rules_and_needs_a_builtin_image_outside_the_job(self):
+        source = (ROOT / "src/c/session.c").read_text()
+        self.assertIn('#include "session_infrastructure.h"', source)
+        self.assertEqual(source.count("process_is_unrecognized("), 1)
+        self.assertEqual(source.count("infrastructure_parent("), 1)
+        self.assertEqual(source.count("p->service_verified = 1;"), 1)
+        self.assertIn('native_reference(&s, L"services.exe", &s.services)', source)
+        candidate = source[source.index("p->service_candidate = ") :]
+        candidate = candidate[: candidate.index(";")]
+        for condition in ("!baseline", "!root", "!p->watched", "!in_job", "builtin_system_image("):
+            self.assertIn(condition, candidate)
 
 
 if __name__ == "__main__":

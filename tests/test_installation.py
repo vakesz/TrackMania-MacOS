@@ -543,7 +543,7 @@ elif args and Path(args[0]).name == 'trackmania-mac-session.exe':
         # Other titles ship their own OpenAL32.dll, whose checksum is not pinned.
         result = self.shell(
             ". ./src/shell/lib/common.sh; openal_is_current; ! title_has openal",
-            TRACKMANIA_MAC_TITLE="tmu",
+            TRACKMANIA_MAC_TITLE="tm-canyon",
             TRACKMANIA_MAC_OPENAL="creative",
         )
         self.assertEqual(result.returncode, 0, result.stderr)

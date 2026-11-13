@@ -73,7 +73,7 @@ class TitleRegistryTests(unittest.TestCase):
             {title.id: title.status for title in registry.load_all(TITLES)},
             {
                 "tmnf": "supported",
-                "tmu": "provisional",
+                "tmu": "supported",
                 "tm-original": "unsupported",
                 "tm-canyon": "unsupported",
                 "tm-turbo": "unsupported",
@@ -447,7 +447,7 @@ class TitleRegistryTests(unittest.TestCase):
         registry = load_registry()
         components = {title.id: title.components for title in registry.load_all(TITLES)}
         self.assertEqual(components["tmnf"], ("competition-patch", "openal", "system-config"))
-        self.assertEqual(components["tmu"], ("competition-patch", "system-config"))
+        self.assertEqual(components["tmu"], ("competition-patch", "openal", "system-config"))
         for title_id in ("tm-canyon", "tm-turbo", "tm-original"):
             self.assertEqual(components[title_id], (), title_id)
 

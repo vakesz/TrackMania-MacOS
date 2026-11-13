@@ -230,6 +230,28 @@ def acquire(prefix, waiter=None):
     return _acquire(path, busy)
 
 
+def acquire_prefixes(prefixes):
+    """Every PREFIX's locks (the earlier releases' one first) with Wine inactive.
+
+    Wine is probed for every prefix before any lock is taken, which changes
+    nothing, and again once each is held. Returns the FDs, owned by the
+    caller; raises Busy (or anything else) with none of them left open.
+    """
+    fds = []
+    try:
+        for prefix in prefixes:
+            check_inactive(prefix)
+        for prefix in prefixes:
+            fds.append(acquire_legacy(prefix))
+            fds.append(acquire(prefix))
+            check_inactive(prefix)
+    except BaseException:
+        for fd in fds:
+            os.close(fd)
+        raise
+    return fds
+
+
 def _acquire(path, busy):
     parent = _open_directory(path.parent)
     try:
@@ -363,17 +385,35 @@ def _ancestors():
 
 
 def _server_dir_holders(directory):
-    """PIDs of this user's processes holding files in a Wine server directory open."""
+    """PIDs of this user's processes holding a Wine server directory or a file in it.
+
+    Matches on the names lsof reports rather than with `+d`: wineserver unlinks
+    each tmpmap file as soon as it creates it, so installer leftovers often hold
+    only mappings of deleted files that a directory scan cannot see. lsof still
+    reports their original paths.
+    """
     result = subprocess.run(
-        ["/usr/sbin/lsof", "-t", "-a", "-u", str(os.getuid()), "+d", str(directory)],
+        ["/usr/sbin/lsof", "-w", "-n", "-P", "-u", str(os.getuid()), "-F", "pn"],
         capture_output=True,
         text=True,
+        errors="replace",
         check=False,
     )
-    # lsof exits 1 when nothing matches; anything else with no output is an error.
+    # lsof exits 1 when some process could not be listed; any other failure is an error.
     if result.returncode not in (0, 1):
         raise RuntimeError(f"lsof failed: {result.stderr.strip() or result.returncode}")
-    return {int(token) for token in result.stdout.split() if token.isdecimal()}
+    root = str(directory)
+    inside = root.rstrip("/") + "/"
+    holders = set()
+    pid = None
+    for line in result.stdout.splitlines():
+        if line.startswith("p") and line[1:].isdecimal():
+            pid = int(line[1:])
+        elif line.startswith("n") and pid is not None:
+            name = line[1:]
+            if name == root or name.startswith(inside):
+                holders.add(pid)
+    return holders
 
 
 def reap(prefix, grace=INTERRUPT_GRACE):

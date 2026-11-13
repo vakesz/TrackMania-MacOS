@@ -91,7 +91,7 @@ enum IconSource: TolerantStringEnum {
 }
 
 /// Decodes one array element, recording the failure instead of aborting the whole array.
-private struct Lossy<Value: Decodable>: Decodable {
+struct Lossy<Value: Decodable>: Decodable {
     let value: Value?
     let error: String?
 
@@ -113,7 +113,7 @@ private struct Lossy<Value: Decodable>: Decodable {
 }
 
 extension KeyedDecodingContainer {
-    fileprivate func lossyArray<Value: Decodable>(_ type: Value.Type, forKey key: Key) -> [Value] {
+    func lossyArray<Value: Decodable>(_ type: Value.Type, forKey key: Key) -> [Value] {
         ((try? decodeIfPresent([Lossy<Value>].self, forKey: key)) ?? nil)?.compactMap(\.value) ?? []
     }
 }
@@ -182,9 +182,12 @@ struct HubSnapshot: Decodable, Equatable {
     let hubVersion: String?
     /// Descriptions of title entries that could not be decoded and were skipped.
     let skippedTitles: [String]
+    /// Disk use of downloads, runtimes and logs; absent from older backends.
+    let storage: HubStorage?
 
     init(schema: Int, titles: [HubTitle], error: String?, hubVersion: String? = nil, skippedTitles: [String] = [],
-         migration: HubMigration? = nil) {
+         migration: HubMigration? = nil, storage: HubStorage? = nil) {
+        self.storage = storage
         self.migration = migration
         self.hubVersion = hubVersion
         self.schema = schema
@@ -193,7 +196,7 @@ struct HubSnapshot: Decodable, Equatable {
         self.skippedTitles = skippedTitles
     }
 
-    private enum CodingKeys: String, CodingKey { case schema, titles, error, hubVersion, migration }
+    private enum CodingKeys: String, CodingKey { case schema, titles, error, hubVersion, migration, storage }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -201,6 +204,7 @@ struct HubSnapshot: Decodable, Equatable {
         error = try? container.decodeIfPresent(String.self, forKey: .error)
         hubVersion = try? container.decodeIfPresent(String.self, forKey: .hubVersion)
         migration = (try? container.decodeIfPresent(HubMigration.self, forKey: .migration)) ?? nil
+        storage = (try? container.decodeIfPresent(HubStorage.self, forKey: .storage)) ?? nil
         let entries = (try? container.decodeIfPresent([Lossy<HubTitle>].self, forKey: .titles)) ?? nil
         titles = (entries ?? []).compactMap(\.value)
         skippedTitles = (entries ?? []).enumerated().compactMap { index, entry in
@@ -244,10 +248,12 @@ struct HubTitle: Decodable, Equatable, Identifiable {
     /// What an uninstall would remove, as reported by the backend; absent from older backends.
     let removal: HubRemoval?
     let actions: [HubAction]
+    /// Defaults the game starts with; nil when the backend reports none for this title.
+    let launchOptions: HubLaunchOptions?
 
     private enum CodingKeys: String, CodingKey {
         case id, name, shortName, status, releaseDate, notes, link, engine, kind, icon, iconSource, error
-        case requiresSerial, sourceSize, locations, sessionActive, state, apps, removal, actions
+        case requiresSerial, sourceSize, locations, sessionActive, state, apps, removal, actions, launchOptions
     }
 
     init(from decoder: Decoder) throws {
@@ -272,6 +278,7 @@ struct HubTitle: Decodable, Equatable, Identifiable {
         apps = (try? c.decodeIfPresent(HubApps.self, forKey: .apps)) ?? HubApps(game: "", settings: "")
         removal = (try? c.decodeIfPresent(HubRemoval.self, forKey: .removal)) ?? nil
         actions = c.lossyArray(HubAction.self, forKey: .actions)
+        launchOptions = (try? c.decodeIfPresent(HubLaunchOptions.self, forKey: .launchOptions)) ?? nil
     }
 
     init(id: String, name: String, shortName: String? = nil, status: TitleStatus = .supported,
@@ -279,12 +286,13 @@ struct HubTitle: Decodable, Equatable, Identifiable {
          iconSource: IconSource? = nil, error: String? = nil, requiresSerial: Bool? = nil,
          sourceSize: Int64? = nil, locations: HubLocations? = nil, sessionActive: Bool = false,
          state: HubInstallationState = .empty, apps: HubApps = HubApps(game: "", settings: ""),
-         removal: HubRemoval? = nil, actions: [HubAction] = []) {
+         removal: HubRemoval? = nil, actions: [HubAction] = [], launchOptions: HubLaunchOptions? = nil) {
         self.id = id; self.name = name; self.shortName = shortName; self.status = status
         self.releaseDate = releaseDate; self.notes = notes; self.link = link; self.engine = engine; self.kind = kind; self.icon = icon
         self.iconSource = iconSource; self.error = error; self.requiresSerial = requiresSerial
         self.sourceSize = sourceSize; self.locations = locations; self.sessionActive = sessionActive
         self.state = state; self.apps = apps; self.removal = removal; self.actions = actions
+        self.launchOptions = launchOptions
     }
 }
 

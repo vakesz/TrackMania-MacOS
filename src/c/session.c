@@ -8,17 +8,23 @@
 #define _UNICODE
 #define _WIN32_WINNT 0x0601
 #include <windows.h>
+#include <winternl.h>
 #include <tlhelp32.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+#include "session_infrastructure.h"
+#include "session_redirect.h"
 #include "session_settle.h"
 
 #define PATH_CAP 32768
 #define PROCESS_CAP 256
 #define WATCH_CAP 8
+#define EXCEPT_CAP 8
+/* Polls in which an unreadable command line may still be a process starting up. */
+#define REDIRECT_READS 8
 #define SETTLE_MS 2000
 /* Wine closes an unused desktop about a second after its last window owner exits. */
 #define DESKTOP_MS 5000
@@ -32,6 +38,10 @@ typedef struct process
     int baseline, watched, in_job, exited, root, parent_known;
     int console_candidate, console_verified;
     int desktop_candidate, desktop_verified;
+    /* service_manager: the baseline's verified services.exe. */
+    int service_manager, service_candidate, service_verified;
+    int redirect_candidate, redirect_checked, redirected;
+    unsigned int redirect_reads;
 } Process;
 
 /* A verified native runtime image, compared byte-for-byte against the prefix copy. */
@@ -49,8 +59,14 @@ typedef struct session
     size_t count, capacity;
     WCHAR *watch[WATCH_CAP];
     BY_HANDLE_FILE_INFORMATION watch_file[WATCH_CAP];
-    Reference conhost, desktop;
+    Reference conhost, desktop, services;
     unsigned int watch_count;
+    /* --redirect: a new job process with this file identity is stopped and the
+     * session ends as "redirected", so the host can start the play session. */
+    BY_HANDLE_FILE_INFORMATION redirect_file;
+    const WCHAR *redirect_except[EXCEPT_CAP];
+    unsigned int redirect_except_count;
+    int has_redirect, redirecting;
     DWORD target_exit;
     int seen_target;
     const char *reason;
@@ -281,6 +297,8 @@ static int result_file(const WCHAR *path, const char *state, DWORD code, const c
         bytes = snprintf(json, sizeof(json), "{\"state\":\"%s\"}\n", state);
     else if (!strcmp(state, "exited"))
         bytes = snprintf(json, sizeof(json), "{\"state\":\"exited\",\"exit_code\":%lu,\"cleanup\":true}\n", code);
+    else if (!strcmp(state, "redirected"))
+        bytes = snprintf(json, sizeof(json), "{\"state\":\"redirected\",\"cleanup\":true}\n");
     else bytes = snprintf(json, sizeof(json), "{\"state\":\"%s\",\"reason\":\"%s\",\"cleanup\":false}\n", state, reason);
     file = CreateFileW(temp, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
     if (file == INVALID_HANDLE_VALUE) { free(temp); return 0; }
@@ -346,10 +364,36 @@ static int poll_process(Session *s, Process *p)
     if (wait != WAIT_OBJECT_0 || !GetExitCodeProcess(p->handle, &p->exit_code))
         return problem(s, "process_status_failed");
     p->exited = 1;
-    if (p->watched && !s->target_exit && p->exit_code) s->target_exit = p->exit_code;
+    /* A redirected process was stopped here; its status is not the game's. */
+    if (p->watched && !p->redirected && !s->target_exit && p->exit_code) s->target_exit = p->exit_code;
     if (!p->baseline)
-        fprintf(stderr, "session: pid=%lu exited=%lu%s\n", p->pid, p->exit_code, p->watched ? " target" : "");
+        fprintf(stderr, "session: pid=%lu exited=%lu%s\n", p->pid, p->exit_code,
+                p->redirected ? " redirected" : p->watched ? " target" : "");
     return 1;
+}
+
+/* A program in the native System32 directory that is byte-identical to this
+ * runtime's own copy, such as lsass.exe, which Wine's services.exe starts on
+ * demand. The image must be the very file that was compared. */
+static int builtin_system_image(Session *s, const WCHAR *canonical, const BY_HANDLE_FILE_INFORMATION *identity)
+{
+    WCHAR system[PATH_CAP], *directory = NULL;
+    const WCHAR *name = wcsrchr(canonical, L'\\');
+    Reference reference = {0};
+    DWORD length = GetSystemDirectoryW(system, PATH_CAP);
+    int matched = 0;
+    if (!name || !name[1] || !length || length >= PATH_CAP) return 0;
+    directory = path_name(system, 1, NULL);
+    if (!directory || (size_t)(name - canonical) != wcslen(directory) ||
+            CompareStringOrdinal(canonical, (int)(name - canonical), directory, -1, TRUE) != CSTR_EQUAL)
+        goto done;
+    if (!native_reference(s, name + 1, &reference)) goto done;
+    matched = reference.path && same_file(identity, &reference.file);
+done:
+    free(directory);
+    free(reference.path);
+    if (reference.handle) CloseHandle(reference.handle);
+    return matched;
 }
 
 /* Takes ownership of handle, including on failure. All historical handles are
@@ -442,6 +486,8 @@ static int register_process(Session *s, HANDLE handle, DWORD pid, int baseline, 
     p->in_job = in_job;
     for (i = 0; i < s->watch_count; ++i)
         if (same_file(&identity, &s->watch_file[i])) p->watched = 1;
+    p->redirect_candidate = s->has_redirect && !baseline && !root && in_job &&
+            same_file(&identity, &s->redirect_file);
     p->console_candidate = !baseline && !root && !p->watched && in_job && s->conhost.path &&
             CompareStringOrdinal(canonical, -1, s->conhost.path, -1, TRUE) == CSTR_EQUAL &&
             same_file(&identity, &s->conhost.file);
@@ -450,6 +496,12 @@ static int register_process(Session *s, HANDLE handle, DWORD pid, int baseline, 
     p->desktop_candidate = !baseline && !root && !p->watched && in_job && s->desktop.path &&
             CompareStringOrdinal(canonical, -1, s->desktop.path, -1, TRUE) == CSTR_EQUAL &&
             same_file(&identity, &s->desktop.file);
+    p->service_manager = baseline && !in_job && s->services.path &&
+            CompareStringOrdinal(canonical, -1, s->services.path, -1, TRUE) == CSTR_EQUAL &&
+            same_file(&identity, &s->services.file);
+    /* Only outside the job: a service the game starts in the job stays unknown. */
+    p->service_candidate = !baseline && !root && !p->watched && !in_job && s->services.path &&
+            builtin_system_image(s, canonical, &identity);
     fprintf(stderr, "session: pid=%lu observed%s%s%s%s image=%ls\n", pid, root ? " root" : "",
             p->watched ? " target" : "", in_job ? " job" : " outside-job",
             baseline ? " baseline" : "", canonical);
@@ -552,17 +604,108 @@ static int reconcile(Session *s, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION *account
     return 1;
 }
 
+/* The command line a process was created with, read from its PEB; heap-owned.
+ * Wine has no ProcessCommandLineInformation, and a WOW64 game also has this
+ * native PEB, filled from the same creation parameters. NULL if unreadable. */
+static WCHAR *process_command_line(HANDLE process)
+{
+    union
+    {
+        FARPROC proc;
+        NTSTATUS (NTAPI *query)(HANDLE, PROCESSINFOCLASS, PVOID, ULONG, PULONG);
+    } nt;
+    PROCESS_BASIC_INFORMATION basic;
+    PEB peb;
+    RTL_USER_PROCESS_PARAMETERS parameters;
+    SIZE_T bytes;
+    WCHAR *line;
+    USHORT length;
+    nt.proc = GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationProcess");
+    if (!nt.proc || nt.query(process, ProcessBasicInformation, &basic, sizeof(basic), NULL) ||
+            !basic.PebBaseAddress) return NULL;
+    if (!ReadProcessMemory(process, basic.PebBaseAddress, &peb, sizeof(peb), &bytes) ||
+            bytes != sizeof(peb) || !peb.ProcessParameters) return NULL;
+    if (!ReadProcessMemory(process, peb.ProcessParameters, &parameters, sizeof(parameters), &bytes) ||
+            bytes != sizeof(parameters)) return NULL;
+    length = parameters.CommandLine.Length;
+    if (length % sizeof(WCHAR) || (length && !parameters.CommandLine.Buffer)) return NULL;
+    line = calloc(length / sizeof(WCHAR) + 1, sizeof(WCHAR));
+    if (!line) return NULL;
+    if (length && (!ReadProcessMemory(process, parameters.CommandLine.Buffer, line, length, &bytes) ||
+            bytes != length))
+    {
+        free(line);
+        return NULL;
+    }
+    return line;
+}
+
+/* Stop the first redirect candidate whose arguments allow it, and mark the
+ * session as redirecting. This deliberately ends a resumed watched process:
+ * the host asked for exactly this file to be replaced by its play session.
+ * Anything unreadable leaves the process running and supervised as before. */
+static int redirect_scan(Session *s)
+{
+    size_t i;
+    for (i = 0; i < s->count; ++i)
+    {
+        Process *p = &s->processes[i];
+        FILETIME created, ended, kernel, user;
+        WCHAR *line = NULL;
+        HANDLE handle;
+        DWORD wait;
+        if (!p->redirect_candidate || p->redirect_checked || p->exited) continue;
+        /* The retained handle keeps this PID from being reused; the creation
+         * time proves the new handle names the same process. */
+        handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_TERMINATE | SYNCHRONIZE,
+                FALSE, p->pid);
+        if (handle && GetProcessTimes(handle, &created, &ended, &kernel, &user) &&
+                !CompareFileTime(&created, &p->created))
+            line = process_command_line(handle);
+        if (!line)
+        {
+            if (++p->redirect_reads >= REDIRECT_READS)
+            {
+                p->redirect_checked = 1;
+                fprintf(stderr, "session: pid=%lu command line unreadable; not redirected winerror=%lu\n",
+                        p->pid, GetLastError());
+            }
+            if (handle) CloseHandle(handle);
+            continue;
+        }
+        p->redirect_checked = 1;
+        if (!redirect_allowed(line, s->redirect_except, s->redirect_except_count))
+        {
+            fprintf(stderr, "session: pid=%lu has an excepted argument; not redirected\n", p->pid);
+            free(line);
+            CloseHandle(handle);
+            continue;
+        }
+        free(line);
+        p->redirected = 1;
+        fprintf(stderr, "session: pid=%lu redirecting to the play session\n", p->pid);
+        /* A process that exited on its own meanwhile is equally gone. */
+        TerminateProcess(handle, ERROR_PROCESS_ABORTED);
+        wait = WaitForSingleObject(handle, SETTLE_MS);
+        CloseHandle(handle);
+        if (wait != WAIT_OBJECT_0) return problem(s, "redirect_stop_failed");
+        s->redirecting = 1;
+        return 1;
+    }
+    return 1;
+}
+
 int wmain(int argc, WCHAR **argv)
 {
     Session s = {0};
     WCHAR *result = NULL, *executable = NULL, *command = NULL, *explorer = NULL;
-    WCHAR *raw_watch[WATCH_CAP], *raw_result = NULL;
+    WCHAR *raw_watch[WATCH_CAP], *raw_result = NULL, *raw_redirect = NULL;
     WCHAR desktop_arg[160], dimensions[32];
     STARTUPINFOW startup = {0};
     PROCESS_INFORMATION child = {0};
     JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting;
     DWORD startup_ms = 0, width = 0, height = 0;
-    ULONGLONG begin, idle_since = 0, close_since = 0;
+    ULONGLONG begin, idle_since = 0, close_since = 0, redirect_since = 0;
     size_t used = 0, i;
     unsigned int watch_count = 0;
     int arg, target = 0, have_startup = 0, desktop = 0, resumed = 0, created = 0;
@@ -587,6 +730,10 @@ int wmain(int argc, WCHAR **argv)
             have_startup = 1;
         }
         else if (!wcscmp(option, L"--watch") && watch_count < WATCH_CAP) raw_watch[watch_count++] = argv[arg];
+        else if (!wcscmp(option, L"--redirect") && !raw_redirect) raw_redirect = argv[arg];
+        else if (!wcscmp(option, L"--redirect-except") && argv[arg][0] &&
+                s.redirect_except_count < EXCEPT_CAP)
+            s.redirect_except[s.redirect_except_count++] = argv[arg];
         else if (!wcscmp(option, L"--desktop") && !desktop)
         {
             WCHAR *separator;
@@ -616,6 +763,17 @@ int wmain(int argc, WCHAR **argv)
         }
         ++s.watch_count;
     }
+    if (raw_redirect)
+    {
+        WCHAR *redirect = path_name(raw_redirect, 1, &s.redirect_file);
+        if (!redirect)
+        {
+            s.reason = GetLastError() == ERROR_NOT_SUPPORTED ? "file_identity_unavailable" : "redirect_path_invalid";
+            goto done;
+        }
+        free(redirect);
+        s.has_redirect = 1;
+    }
     command = calloc(PATH_CAP, sizeof(*command));
     if (!command) { s.reason = "out_of_memory"; goto done; }
     if (desktop)
@@ -636,7 +794,8 @@ int wmain(int argc, WCHAR **argv)
         if (!quote(command, &used, argv[arg])) goto long_command;
 
     if (!service_ready(&s) || !native_reference(&s, L"conhost.exe", &s.conhost) ||
-            !native_reference(&s, L"explorer.exe", &s.desktop)) goto done;
+            !native_reference(&s, L"explorer.exe", &s.desktop) ||
+            !native_reference(&s, L"services.exe", &s.services)) goto done;
     s.job = CreateJobObjectW(NULL, NULL);
     if (!s.job) { s.reason = "job_setup_failed"; goto done; }
     if (!prefix_snapshot(&s, 1)) goto done;
@@ -679,28 +838,52 @@ int wmain(int argc, WCHAR **argv)
             running = 1;
             fputs("session: watched target observed; state=running\n", stderr);
         }
+        if (s.has_redirect && !s.redirecting)
+        {
+            if (!redirect_scan(&s)) goto done;
+            if (s.redirecting)
+            {
+                /* Count again only after the next full reconcile. */
+                redirect_since = GetTickCount64();
+                Sleep(POLL_MS);
+                continue;
+            }
+        }
         for (i = 0; i < s.count; ++i)
         {
             Process *p = &s.processes[i];
             if (p->root) root = p;
             if (p->in_job) ++known_job;
             if ((p->console_candidate && !p->console_verified && p->exited && !p->exit_code) ||
-                    (p->desktop_candidate && !p->desktop_verified))
+                    (p->desktop_candidate && !p->desktop_verified) ||
+                    (p->service_candidate && !p->service_verified))
             {
                 size_t j;
                 if (!p->parent_known) goto unverified;
                 for (j = 0; j < s.count; ++j)
                 {
                     const Process *parent = &s.processes[j];
-                    if (parent == p || parent->pid != p->parent_pid || !parent->in_job ||
-                            !(parent->root || parent->watched) ||
-                            CompareFileTime(&parent->created, &p->created) > 0) continue;
+                    ParentFacts facts = {0};
+                    if (parent == p || parent->pid != p->parent_pid) continue;
+                    facts.in_job = parent->in_job;
+                    facts.root = parent->root;
+                    facts.watched = parent->watched;
+                    facts.baseline = parent->baseline;
+                    facts.service_manager = parent->service_manager;
+                    facts.created_first = CompareFileTime(&parent->created, &p->created) <= 0;
+                    if (!infrastructure_parent(p->service_candidate, &facts)) continue;
                     /* Retained process handles prevent PID reuse. Both images
-                     * were registered in this job, not inferred from a name. */
+                     * were registered here, not inferred from a name. */
                     if (p->console_candidate)
                     {
                         p->console_verified = 1;
                         fprintf(stderr, "session: pid=%lu verified console infrastructure parent=%lu exit=0\n",
+                                p->pid, parent->pid);
+                    }
+                    else if (p->service_candidate)
+                    {
+                        p->service_verified = 1;
+                        fprintf(stderr, "session: pid=%lu verified service infrastructure parent=%lu\n",
                                 p->pid, parent->pid);
                     }
                     else
@@ -714,11 +897,22 @@ int wmain(int argc, WCHAR **argv)
             }
 unverified:
             /* An unrecognized job descendant remains ambiguous even after exit
-             * zero. The explicit launch root is not an unknown descendant. A
-             * verified desktop stays recognized while alive or after exit zero. */
-            if (!p->watched && !p->baseline && !(p->desktop_verified && (!p->exited || !p->exit_code)) &&
-                    ((!p->root && p->in_job && !p->console_verified) ||
-                     (!p->exited && !(desktop && p->root)))) ++ambiguous;
+             * zero. The explicit launch root is not an unknown descendant.
+             * Rules: session_infrastructure.h. */
+            {
+                ProcessFacts facts = {0};
+                facts.watched = p->watched;
+                facts.baseline = p->baseline;
+                facts.root = p->root;
+                facts.in_job = p->in_job;
+                facts.exited = p->exited;
+                facts.exit_code = p->exit_code;
+                facts.desktop_session = desktop;
+                facts.console_verified = p->console_verified;
+                facts.desktop_verified = p->desktop_verified;
+                facts.service_verified = p->service_verified;
+                if (process_is_unrecognized(&facts)) ++ambiguous;
+            }
             if (p->exited) continue;
             if (p->watched) ++live_targets;
             if (p->in_job) ++live_job;
@@ -726,7 +920,25 @@ unverified:
         }
         now = GetTickCount64();
         accounted = accounting.TotalProcesses == known_job && accounting.ActiveProcesses == live_job;
-        if (!s.seen_target)
+        if (s.redirecting)
+        {
+            /* The launcher normally quits as it starts the game. Give it the
+             * settle window to do so; host cleanup then stops what is left,
+             * but only when everything the job started is still recognized. */
+            int quiet = accounted && !ambiguous;
+            if (quiet && (!root || root->exited || now - redirect_since >= SETTLE_MS))
+            {
+                state = "redirected";
+                status = 0;
+                goto done;
+            }
+            if (now - redirect_since >= SETTLE_MS)
+            {
+                s.reason = accounted ? "ambiguous_process_activity" : "unobserved_job_process";
+                goto done;
+            }
+        }
+        else if (!s.seen_target)
         {
             if (now - begin >= startup_ms)
             {
@@ -842,7 +1054,8 @@ unverified:
 usage:
     s.reason = "invalid_arguments";
     fputs("Usage: session.exe --result RESULT_PATH --startup-ms N [--watch WATCH_PATH ...] "
-            "[--desktop WIDTHxHEIGHT] -- EXECUTABLE [ARGS...]\n", stderr);
+            "[--desktop WIDTHxHEIGHT] [--redirect PATH [--redirect-except ARG ...]] "
+            "-- EXECUTABLE [ARGS...]\n", stderr);
     goto done;
 long_command:
     s.reason = "command_line_too_long";
@@ -867,8 +1080,9 @@ done:
         }
     }
     if (s.reason && !strcmp(s.reason, "file_identity_unavailable")) state = "uncertain";
-    if (!s.reason && strcmp(state, "exited")) s.reason = "internal_error";
+    if (!s.reason && strcmp(state, "exited") && strcmp(state, "redirected")) s.reason = "internal_error";
     if (!strcmp(state, "exited")) fprintf(stderr, "session: exited target_status=%lu cleanup=true\n", s.target_exit);
+    else if (!strcmp(state, "redirected")) fputs("session: redirected cleanup=true\n", stderr);
     else fprintf(stderr, "session: %s reason=%s cleanup=false winerror=%lu\n", state, s.reason, GetLastError());
     if (!result || !result_file(result, state, s.target_exit, s.reason))
     {
@@ -884,6 +1098,8 @@ done:
     free(s.conhost.path);
     if (s.desktop.handle) CloseHandle(s.desktop.handle);
     free(s.desktop.path);
+    if (s.services.handle) CloseHandle(s.services.handle);
+    free(s.services.path);
     for (i = 0; i < s.watch_count; ++i) free(s.watch[i]);
     free(result);
     free(executable);

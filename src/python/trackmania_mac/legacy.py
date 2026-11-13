@@ -56,6 +56,9 @@ MARKERS = {
     "OPENAL": ".tmnf-openal",
     "APP": ".tmnf-app",
     "LAUNCHER": ".tmnf-launcher",
+    # A runtime an earlier release installed; read only when deciding whether
+    # an old runtime may be removed (guard/storage.py).
+    "RUNTIME": ".tmnf-runtime",
 }
 TOMBSTONE_INFIX = ".tmnf-removing"
 RELINK_INFIX = ".tmnf-relink"

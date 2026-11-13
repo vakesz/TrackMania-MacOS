@@ -12,7 +12,9 @@ named after the game. For Nations Forever they are:
 
 - **TrackMania Nations Forever** launches the game with Competition Patch and
   CoreMod.
-- **TrackMania Settings** opens the original settings launcher.
+- **TrackMania Settings** opens the original settings launcher. For a title
+  with Competition Patch, the launcher's Play button starts the game the same
+  way as the Game app (see `docs/runtime.md`).
 
 The hub opens those app wrappers through macOS; it does not replace them.
 For titles that need a serial (`requiresSerial`), the hub replaces the Settings button
@@ -22,9 +24,10 @@ key is registered and the plain Settings button comes back.
 
 A title with `cd_key_in_nadeo_ini` in its registry entry (United Forever)
 also carries a `cdKey` item in `state` once its game files are installed. It is
-ready when the
-`[TmForever]` section of the game folder's `Nadeo.ini` has an `InstallKey` that
-is not empty, `%CDKEY%` or `Ask`; the snapshot never includes the key. While it
+ready when the game launcher has registered a key, which writes a non-empty
+`Config/pkey.dat` in the title's user folder, or when the `[TmForever]` section
+of the game folder's `Nadeo.ini` has an `InstallKey` that is not empty,
+`%CDKEY%` or `Ask` (Steam copies). The snapshot never includes the key. While it
 is not ready, the hub shows Play disabled with "CD key required" and a link to
 [tmuf-cd-key.md](tmuf-cd-key.md), which explains how Steam owners get the key.
 Titles without the item, such as Nations Forever, are never gated. The gate is
@@ -32,12 +35,14 @@ in the hub only; the Game app and `trackmania-mac play` don't check the key.
 
 ## Backend contract
 
-The Swift interface is an adapter over three shell commands:
+The Swift interface is an adapter over four shell commands:
 
 ```sh
 trackmania-mac hub snapshot
 trackmania-mac hub run TITLE ACTION [--source ABSOLUTE_PATH] [--runtime download|build] [--include-saves]
+trackmania-mac hub run TITLE set-defaults [--window-size fullscreen|WxH] [--audio on|off] [--x87 on|off]
 trackmania-mac hub migrate
+trackmania-mac hub clean downloads|runtimes|logs
 ```
 
 `snapshot` is read-only and returns one versioned JSON document describing every
@@ -48,7 +53,14 @@ before title-dependent paths are calculated. This prevents one title from using
 another title's prefix or game path. Only the `install` and `install-platform`
 actions accept `--runtime`; it is the only way `run` sets `TRACKMANIA_MAC_RUNTIME_SOURCE`,
 which is never inherited from the hub's environment. Only the `uninstall`
-action accepts `--include-saves`.
+action accepts `--include-saves`, and only `set-defaults` accepts
+`--window-size`, `--audio` and `--x87` (see [Settings](#settings)). `migrate` and
+`clean` are the commands that are not per title.
+
+`run`, `migrate` and `clean` print plain progress lines on stdout. They exit
+with status 0 when done, 75 while a game or another TrackMania task is running,
+and 1 when they refuse or fail; a refusal ends with one stderr line that starts
+with `error: ` followed by a sentence that says why.
 
 Each title entry carries `icon` (an absolute path or `null`) and `iconSource`
 (`"game"`, `"bundled"` or `null`). The icon is chosen in this order: the `.icns`
@@ -111,7 +123,7 @@ only that folder, and only at its default location; save folder names overlap
 between titles, so a custom or shared folder is never removed.
 
 An uninstall never removes the Wine runtime, the shared downloads (DirectX,
-TMLoader, OpenAL Soft), a title root (`games/<id>`, which holds the title's
+TMLoader, OpenAL Soft; [Settings](#settings) can clear them), a title root (`games/<id>`, which holds the title's
 operation lock), or another title's files. Every title has its own root and
 saves folder, and none holds another's. The action refuses
 while the game is running or another operation holds the prefix, and an app
@@ -197,7 +209,7 @@ is now `local.trackmania-mac.hub`.
 | Title | Install source | Starts with | Status |
 | --- | --- | --- | --- |
 | Nations Forever (`tmnf`) | free Nadeo download | Competition Patch and CoreMod | supported |
-| United Forever (`tmu`) | pinned official retail installer; asks for a serial key | Competition Patch and CoreMod | provisional |
+| United Forever (`tmu`) | pinned official retail installer; asks for a serial key | Competition Patch and CoreMod | supported |
 | Original (`tm-original`) | user-owned retail disk image or setup executable | its own game executable | unsupported |
 | TrackMania 2 Canyon (`tm-canyon`) | pinned official ManiaPlanet trial | its own game executable | unsupported |
 | Turbo (`tm-turbo`) | existing Steam game folder | its own game executable | unsupported |
@@ -273,6 +285,80 @@ be attached to a bug report. It holds:
 
 Every file has the home folder replaced by `~` and the user name by `<user>`
 before it is zipped.
+
+## Settings
+
+The hub's Settings window (the gear at the bottom left of the sidebar, or
+Cmd-comma) shows the space the hub can free and each game's launch defaults.
+
+### Storage
+
+The snapshot carries a top-level `storage` object, or `null` when it cannot be
+computed. Sizes are in bytes; a size is `null` when it could not be measured
+quickly (a large source-build workspace, say).
+
+```json
+"storage": {
+  "downloads": {"bytes": 1982400580, "items": [{"label": "DirectX June 2010 redistributable", "path": "/Users/me/Library/TrackManiaMacOS/cache/directx_Jun2010_redist.exe", "bytes": 100275120}]},
+  "runtimes": {"current": "0.5.0", "items": [{"version": "0.4.3", "path": "/Users/me/Library/TrackManiaMacOS/runtime/0.4.3", "bytes": 639007885}], "inUse": ["0.5.0"], "blocked": null},
+  "logs": {"bytes": 294534, "path": "/Users/me/Library/TrackManiaMacOS/logs"},
+  "error": null
+}
+```
+
+`downloads.items` and `runtimes.items` list exactly what the matching `clean`
+removes. `error` names a part that could not be listed. `trackmania-mac hub
+clean KIND` runs `trackmania-mac clean KIND`, which removes:
+
+- `downloads`: only files the hub knows by name in the downloads folder
+  (`cache`): each game's installer with its unfinished downloads and unpacked
+  copy, the DirectX, TMLoader and OpenAL Soft downloads in any version, runtime
+  archives, runtime source-build workspaces (`cache/build`) and unpacked
+  downloads left for more than an hour. Lock files, the session helper
+  (`game-state-*.exe`), disk images being imported and any file it does not
+  know stay. Everything removed is downloaded again when an install needs it.
+- `runtimes`: folders in `runtime/` that carry a runtime marker and that
+  neither this release nor any installed launcher uses. A launcher uses the
+  runtime its `config/installation.sh` records, else the one of its own release;
+  `inUse` lists them. When a launcher's settings cannot be read, nothing is
+  removed and `blocked` says which launcher to reinstall.
+- `logs`: every launch log and its rotated copies that no game is writing (its
+  `.lock` can be locked), and every diagnostics report. Lock files stay.
+
+Downloads and runtimes are removed holding the app lock and every game's
+prefix lock with Wine inactive, so they wait for no install, update or game:
+while one runs the command exits with status 75 and removes nothing. Removal
+uses the same checks as an uninstall: a folder is renamed to a tombstone and
+deleted only while its device and inode still match, a mount point is never
+entered, and the data folder, the downloads, runtime, launcher and logs
+folders themselves, every game's folders and every runtime in use are never
+removed. No `clean` runs while files of an earlier release wait to move.
+
+### Game defaults
+
+Each title entry carries `launchOptions`, the defaults its installed launcher
+records in `launchers/<id>/config/installation.sh`, or `null` when the title
+has no installed apps:
+
+```json
+"launchOptions": {"windowSize": "fullscreen", "audio": "on", "x87": "on", "renderer": "d9vk", "editable": true, "reason": null}
+```
+
+`windowSize` is `"fullscreen"` or `"<width>x<height>"` with each side from 1 to
+65535; `audio` and `x87` are `"on"` or `"off"`. `renderer` is shown only: the
+hub does not change it. A setting the file does not record reads as its
+default. The file is read without running it, and only lines in the exact form
+the installer writes are accepted; otherwise `editable` is `false` and `reason`
+says to reinstall the apps. A recorded value that is not valid reads as its
+default, with `reason` naming it, and the next change replaces it.
+
+`trackmania-mac hub run TITLE set-defaults` with at least one of the flags runs
+`trackmania-mac defaults` for that title, which checks the values the way
+`play` does and rewrites only those lines. It holds the title's prefix lock and
+the app lock, so it exits with status 75 while the game runs. The change
+applies the next time the game starts. Installing or updating the apps keeps
+the recorded defaults; a `TRACKMANIA_MAC_WINDOW_SIZE`, `_AUDIO`, `_X87` or
+`_RENDERER` set in the environment of that install wins.
 
 ## Packaging and signing
 

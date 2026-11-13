@@ -29,7 +29,7 @@ struct TrackManiaHubApp: App {
             }
         }
         Settings {
-            SettingsView()
+            SettingsView(model: model)
         }
     }
 }

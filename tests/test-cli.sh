@@ -64,7 +64,11 @@ else
     done
     test -n "$result"
     umask 077
-    printf '%s\n' '{"state":"exited","exit_code":0,"cleanup":true}' >"${result}.tmp"
+    if test "${TRACKMANIA_MAC_TEST_REDIRECT:-0}" = 1; then
+      printf '%s\n' '{"state":"redirected","cleanup":true}' >"${result}.tmp"
+    else
+      printf '%s\n' '{"state":"exited","exit_code":0,"cleanup":true}' >"${result}.tmp"
+    fi
     mv "${result}.tmp" "$result"
   fi
 fi
@@ -264,6 +268,17 @@ if grep -Fq 'TMLoader' "$CALL_LOG"; then
   echo 'play for a title without needs_tmloader must not start ModLoader' >&2
   exit 1
 fi
+# Its settings launcher's game start is never redirected to Play.
+touch "${CANYON_GAME}/ManiaPlanetLauncher.exe"
+printf 'tm-canyon:1\n' >"${FAKE_PREFIX}/.trackmania-mac-prefix"
+: >"$CALL_LOG"
+TRACKMANIA_MAC_TITLE=tm-canyon "${PROJECT_DIR}/src/shell/cli/trackmania-mac" configure
+cp "${TEST_ROOT}/trackmania-mac-prefix.saved" "${FAKE_PREFIX}/.trackmania-mac-prefix"
+grep -Fq "<--watch><${CANYON_GAME}/ManiaPlanetLauncher.exe><--watch><${CANYON_GAME}/ManiaPlanet.exe><--><${CANYON_GAME}/ManiaPlanetLauncher.exe>" "$CALL_LOG"
+if grep -Fq -e '--redirect' "$CALL_LOG"; then
+  echo 'configure for a title without needs_tmloader must not redirect its launcher' >&2
+  exit 1
+fi
 
 : >"$CALL_LOG"
 doctor_output="$("${PROJECT_DIR}/src/shell/cli/trackmania-mac" doctor 2>&1)" || true
@@ -273,9 +288,16 @@ printf '%s\n' "$doctor_output" | grep -q 'D9VK: installed in the prefix'
 : >"$CALL_LOG"
 "${PROJECT_DIR}/src/shell/cli/trackmania-mac" configure
 grep -Fq '<reg><add><HKCU\Software\Wine\AppDefaults\TmForeverLauncher.exe\Direct3D>' "$CALL_LOG"
-grep -Fq "<--watch><${FAKE_GAME}/TmForeverLauncher.exe><--watch><${FAKE_GAME}/TmForever.exe><--><${FAKE_GAME}/TmForeverLauncher.exe>" "$CALL_LOG"
+# The launcher's Play is redirected; its benchmark switches are not.
+CONFIGURE_SESSION="<--watch><${FAKE_GAME}/TmForeverLauncher.exe><--watch><${FAKE_GAME}/TmForever.exe><--redirect><${FAKE_GAME}/TmForever.exe><--redirect-except></bench><--redirect-except></list_benchs><--><${FAKE_GAME}/TmForeverLauncher.exe>"
+grep -Fq "$CONFIGURE_SESSION" "$CALL_LOG"
 grep -Fxq "server=<-k> prefix=${FAKE_PREFIX}" "$CALL_LOG"
 grep -Fxq "server=<-w> prefix=${FAKE_PREFIX}" "$CALL_LOG"
+# A settings session that ends without a redirect does not start Play.
+if grep -Fq 'TMLoader' "$CALL_LOG"; then
+  echo 'configure started Play without a redirect' >&2
+  exit 1
+fi
 # The launcher and its benchmark run with the game's renderer and translator.
 grep -Fq 'overrides=d3d9=n;d3dx9_30,d3dx9_31,d3dx9_43,wined3d=b' "$CALL_LOG"
 grep -Fq "sidecar=${FAKE_BIN}/x87sidecar" "$CALL_LOG"
@@ -284,6 +306,19 @@ grep -Fq "dxvk_conf=${PROJECT_DIR}/config/dxvk.conf" "$CALL_LOG"
 grep -qx '\[TmForeverLauncher.exe\]' "${PROJECT_DIR}/config/dxvk.conf"
 grep -Eq '^d3d9.customVendorId *= *10de$' "${PROJECT_DIR}/config/dxvk.conf"
 grep -Eq '^d3d9.customDeviceId *= *0611$' "${PROJECT_DIR}/config/dxvk.conf"
+
+# After a redirect the prefix is shut down and Play runs with its own checks,
+# here failing as Play does because this fixture's Competition Patch is fake.
+: >"$CALL_LOG"
+if redirect_output="$(TRACKMANIA_MAC_TEST_REDIRECT=1 "${PROJECT_DIR}/src/shell/cli/trackmania-mac" configure 2>&1)"; then
+  echo 'configure succeeded although Play could not start' >&2
+  exit 1
+fi
+grep -Fq "$CONFIGURE_SESSION" "$CALL_LOG"
+grep -Fxq "server=<-k> prefix=${FAKE_PREFIX}" "$CALL_LOG"
+grep -Fxq "server=<-w> prefix=${FAKE_PREFIX}" "$CALL_LOG"
+printf '%s\n' "$redirect_output" | grep -Fq 'starting it as Play does'
+printf '%s\n' "$redirect_output" | grep -Fq 'Competition Patch is missing, outdated, or unconfigured'
 
 : >"$CALL_LOG"
 if "${PROJECT_DIR}/src/shell/cli/trackmania-mac" nonsense >/dev/null 2>&1; then
@@ -305,7 +340,7 @@ cp -R "${TRACKMANIA_MAC_SUPPORT}/launchers/tmnf" "${TEST_ROOT}/relocated launche
 env -i PATH="$PATH" HOME="$FAKE_HOME" TRACKMANIA_MAC_TEST_LOG="$CALL_LOG" \
   "${TEST_ROOT}/relocated launcher/src/shell/cli/trackmania-mac" configure
 grep -Fq "args=<${FAKE_HELPER}><--result>" "$CALL_LOG"
-grep -Fq "<--watch><${FAKE_GAME}/TmForeverLauncher.exe><--watch><${FAKE_GAME}/TmForever.exe><--><${FAKE_GAME}/TmForeverLauncher.exe>" "$CALL_LOG"
+grep -Fq "$CONFIGURE_SESSION" "$CALL_LOG"
 grep -Fq "sidecar=${FAKE_BIN}/x87sidecar" "$CALL_LOG"
 grep -Fq "dxvk_conf=${TEST_ROOT}/relocated launcher/config/dxvk.conf" "$CALL_LOG"
 grep -Fxq "server=<-k> prefix=${FAKE_PREFIX}" "$CALL_LOG"

@@ -1,6 +1,16 @@
 #!/bin/bash
 # Game launching and renderer setup. Sourced by trackmania-mac after common.sh.
 
+# trackmania_mac.session.supervisor's exit status after it redirected the
+# settings launcher's game start (REDIRECTED there).
+readonly SESSION_REDIRECTED=3
+# Switches TmForeverLauncher.exe passes to TmForever.exe for its benchmark and
+# benchmark list. Those runs stay in the settings session instead of becoming Play.
+readonly LAUNCHER_BENCHMARK_SWITCHES=(/bench /list_benchs)
+# Set once this shell has started the diagnostics monitor. It follows this
+# shell's PID, which a redirected settings session keeps into Play.
+SESSION_MONITOR_STARTED=''
+
 play_target() {
   local executable="$1"
   shift
@@ -10,6 +20,8 @@ play_target() {
   local overrides
   local renderer_vars=()
   local helper
+  local redirect=false
+  local switch
 
   validate_launch_options
   require_owned_prefix || die "A managed Wine prefix is required."
@@ -55,12 +67,22 @@ play_target() {
     # Settings' Play/benchmark child remains part of the same session even if
     # the settings process exits. Watch exact paths inside this prefix.
     session_args+=(--watch "$GAME_EXE" --settings)
+    if title_has competition-patch; then
+      # The launcher's Play starts the plain game. The helper stops that
+      # start and this shell runs Play instead, so it gets the Competition
+      # Patch and CoreMod as the Game app does (configure_game).
+      redirect=true
+      session_args+=(--redirect "$GAME_EXE")
+      for switch in "${LAUNCHER_BENCHMARK_SWITCHES[@]}"; do
+        session_args+=(--redirect-except "$switch")
+      done
+    fi
   fi
   if test "$TRACKMANIA_MAC_WINDOW_SIZE" != fullscreen; then
     session_args+=(--desktop "$TRACKMANIA_MAC_WINDOW_SIZE")
   fi
   local debug="${WINEDEBUG:--all}"
-  if test "$TRACKMANIA_MAC_DIAG" = on; then
+  if test "$TRACKMANIA_MAC_DIAG" = on && test -z "$SESSION_MONITOR_STARTED"; then
     # Wine's frame rate and timestamps, read with trackmania_mac.session.monitor's lines by
     # trackmania_mac.session.report. The monitor follows this process ID, which the
     # session supervisor keeps after exec.
@@ -68,19 +90,28 @@ play_target() {
     say "trackmania-mac-run: version=$TRACKMANIA_MAC_VERSION title=$TRACKMANIA_MAC_TITLE macos=$(sw_vers -productVersion 2>/dev/null) model=$(sysctl -n hw.model 2>/dev/null) x87=$TRACKMANIA_MAC_X87 audio=$TRACKMANIA_MAC_AUDIO renderer=$TRACKMANIA_MAC_RENDERER target=${watch##*/}"
     without_operation_lock trackmania_mac_python -m trackmania_mac.session.monitor --parent "$$" --prefix "$TRACKMANIA_MAC_PREFIX" \
       --wine "$wine_bin" --cache "$TRACKMANIA_MAC_CACHE" --game-exe "$TRACKMANIA_MAC_TITLE_GAME_EXE" &
+    SESSION_MONITOR_STARTED=true
   fi
   cd "$GAME_DIR" || die "Cannot enter game directory: $GAME_DIR"
+  local supervisor=(/usr/bin/env
+    WINEPREFIX="$TRACKMANIA_MAC_PREFIX"
+    WINEDEBUG="$debug"
+    WINEDLLOVERRIDES="$overrides"
+    "${renderer_vars[@]}"
+    PYTHONPATH="$TRACKMANIA_MAC_PYTHONPATH"
+    "$TRACKMANIA_MAC_PYTHON" -m trackmania_mac.session.supervisor run
+    --prefix "$TRACKMANIA_MAC_PREFIX" --wine "$wine_bin" --helper "$helper"
+    "${session_args[@]}" -- "$executable" "$@")
+  if test "$redirect" = true; then
+    # This shell keeps the operation descriptor while the supervisor runs, so
+    # the prefix stays locked until Play takes over. The supervisor and Wine
+    # still close it for their own children.
+    "${supervisor[@]}"
+    return
+  fi
   # Keep the operation descriptor in the host supervisor. Its child processes
   # close inherited descriptors, so neither Wine nor a detached server owns it.
-  exec /usr/bin/env \
-    WINEPREFIX="$TRACKMANIA_MAC_PREFIX" \
-    WINEDEBUG="$debug" \
-    WINEDLLOVERRIDES="$overrides" \
-    "${renderer_vars[@]}" \
-    PYTHONPATH="$TRACKMANIA_MAC_PYTHONPATH" \
-    "$TRACKMANIA_MAC_PYTHON" -m trackmania_mac.session.supervisor run \
-    --prefix "$TRACKMANIA_MAC_PREFIX" --wine "$wine_bin" --helper "$helper" \
-    "${session_args[@]}" -- "$executable" "$@"
+  exec "${supervisor[@]}"
 }
 
 install_d9vk() {
@@ -99,6 +130,8 @@ install_d9vk() {
   say "Installed D9VK into $PREFIX_D9VK_DLL"
 }
 
+# Game arguments come from `trackmania-mac play`; configure_game passes none.
+# shellcheck disable=SC2120
 play_game() {
   if ! title_has competition-patch; then
     play_vanilla "$@"
@@ -113,7 +146,12 @@ play_vanilla() {
 }
 
 configure_game() {
+  local status=0
   # The host supervisor applies launcher-only GPU defaults under the same
-  # startup deadline as audio setup and process creation.
-  play_target "$LAUNCHER_EXE" "$LAUNCHER_EXE"
+  # startup deadline as audio setup and process creation. play_target returns
+  # only when the launcher's game start can be redirected to Play.
+  play_target "$LAUNCHER_EXE" "$LAUNCHER_EXE" || status=$?
+  test "$status" -eq "$SESSION_REDIRECTED" || exit "$status"
+  say "The settings launcher started the game; starting it as Play does."
+  play_game
 }

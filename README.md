@@ -57,7 +57,7 @@ your Applications folder. For Nations Forever they are:
 | App | What it does |
 | --- | --- |
 | **TrackMania Nations Forever** | Starts the game with Competition Patch. Use this to play. |
-| **TrackMania Settings** | Opens the game's own launcher to change graphics, resolution and audio. Close the game first, then save and close Settings before you play. |
+| **TrackMania Settings** | Opens the game's own launcher to change graphics, resolution and audio. Close the game first. The launcher's Play button starts the game the same way as the Game app, with Competition Patch. |
 
 ### Your first launch on Nations or United Forever
 
@@ -251,7 +251,9 @@ That runs the game inside a separate Wine virtual desktop for this session.
 Each dimension must be between 1 and 65535.
 
 The session supervisor tracks both settings and game executables, so a launcher
-exit alone does not authorize cleanup. Normal quits are quiet; failed or
+exit alone does not authorize cleanup. For Nations and United Forever, a game
+the settings launcher starts for play is stopped at once and started again as
+`play` does, with Competition Patch and CoreMod; its benchmark runs as it is. Normal quits are quiet; failed or
 uncertain sessions show an alert with the log location. Uncertainty does not
 authorize killing a game that may still be running. Use `make stop` when you
 explicitly want to stop the selected prefix.

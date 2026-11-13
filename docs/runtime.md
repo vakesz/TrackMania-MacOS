@@ -131,6 +131,19 @@ exited, the job has no active process, a fresh job accounting read matches every
 process it observed, and nothing is unrecognized. A failed accounting query,
 desktop close, or live job process keeps the full wait.
 
+For a title with the Competition Patch, a settings session also names the
+game's own `TmForever.exe` for redirection. When the launcher starts that file,
+the helper reads the new process's command line from its PEB (Wine has no
+`ProcessCommandLineInformation`). Unless an argument starts with `/bench` or
+`/list_benchs`, the launcher's benchmark switches, it stops the process, gives
+the launcher the two-second window to exit, and reports `redirected` if every
+job process is still recognized. The supervisor then shuts the prefix down as
+after a normal exit, and `configure`, still holding the prefix lock, runs `play`.
+So the launcher's Play gets Competition Patch and CoreMod as the Game app does.
+A command line that cannot be read leaves the game running as before. Wine does
+not honour Image File Execution Options `Debugger`, and ModLoader starts its own
+copy of `TmForever.exe`, a different file, so it is never redirected.
+
 Wine's console host is recognized only by native System32 path/file identity,
 byte equality with the bundled reference, and a retained parent in the same
 job. Only its completed zero-status lifecycle is exempt from unknown-child
@@ -192,7 +205,8 @@ GPU up in `GfxDevicePerfs.txt` by PCI ID. Apple GPUs are not listed, so without
 the spoof it starts `TmForever.exe /bench`, which does not complete under
 Rosetta, and its older adapter probing could crash. The game keeps its actual
 renderer identity. The launcher runs with the same environment as the game, so
-a benchmark or game started from it inherits the D9VK settings and x87sidecar.
+a benchmark started from it inherits the D9VK settings and x87sidecar. Its Play
+button is redirected to Play (see the session section above).
 
 The first launch shows the game's own "Network check" dialog, which confirms the
 peer-to-peer firewall test, followed by the account screen. Both are the

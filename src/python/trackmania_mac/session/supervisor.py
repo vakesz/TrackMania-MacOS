@@ -3,7 +3,9 @@
 
 run requires the operation_guard token and FD. stop deliberately takes no
 operation lock: it is explicit permission to stop the selected owned prefix.
-Only a validated native exit result permits automatic prefix cleanup.
+Only a validated native exit or redirect result permits automatic prefix
+cleanup. run exits with REDIRECTED after a redirect, so the caller can start
+the play session in the same, still locked, prefix.
 """
 
 import argparse
@@ -27,6 +29,11 @@ from trackmania_mac.guard.managed_paths import check_prefix, safe_path
 
 
 POLL_SECONDS = 0.05
+# Exit status of run after the helper stopped a --redirect process and the
+# prefix was shut down. Distinct from target status 0/1, errors (2), timeouts
+# (124) and signals (128+n).
+REDIRECTED = 3
+REDIRECT_EXCEPT = re.compile(r"/[A-Za-z0-9_]{1,64}")
 EXCEPTION_STATUSES = {
     0x80000003,
     0x80000004,
@@ -95,6 +102,8 @@ def read_result(path):
         raise ValueError("Invalid native result schema")
     state = result.get("state")
     if state in ("starting", "running") and set(result) == {"state"}:
+        return result
+    if state == "redirected" and set(result) == {"state", "cleanup"} and result["cleanup"] is True:
         return result
     if (
         state == "exited"
@@ -342,9 +351,14 @@ def run(
     cleanup_timeout=15,
     audio=None,
     settings=False,
+    redirect=None,
+    redirect_except=(),
 ):
     """Return 0/1 for a confirmed target exit; raise on supervision failure.
 
+    With redirect, a process of that executable started inside the session is
+    stopped unless one of its arguments starts with a redirect_except switch;
+    the prefix is then shut down and run returns REDIRECTED.
     Optional audio/settings registry writes share the native startup deadline.
     main() maps failures to CLI dispositions. Call on the main thread because
     run and stop temporarily handle SIGINT, SIGTERM and SIGHUP.
@@ -363,6 +377,15 @@ def run(
         raise ValueError("Settings requires an executable basename")
     if len(watch) > 8:
         raise ValueError("At most eight watch paths are supported")
+    if redirect is not None and not str(redirect):
+        raise ValueError("Redirect requires an executable path")
+    if redirect_except and redirect is None:
+        raise ValueError("Redirect exceptions require a redirect path")
+    if len(redirect_except) > 8:
+        raise ValueError("At most eight redirect exceptions are supported")
+    for switch in redirect_except:
+        if not REDIRECT_EXCEPT.fullmatch(switch):
+            raise ValueError("Redirect exceptions must be /switch names: {!r}".format(switch))
     if desktop is not None:
         if not re.fullmatch(r"[0-9]{1,5}x[0-9]{1,5}", desktop) or not all(
             0 < int(size) <= 65535 for size in desktop.split("x")
@@ -473,6 +496,10 @@ def run(
             ]
             for path in watch:
                 args.extend(["--watch", str(path)])
+            if redirect is not None:
+                args.extend(["--redirect", str(redirect)])
+                for switch in redirect_except:
+                    args.extend(["--redirect-except", switch])
             if desktop is not None:
                 args.extend(["--desktop", desktop])
             args.extend(["--"] + [str(arg) for arg in command])
@@ -498,12 +525,17 @@ def run(
                         running = True
                     elif state == "starting" and running:
                         raise ValueError("Native session regressed to starting")
-                    elif state == "exited":
-                        code = result["exit_code"]
-                        label = (
-                            "exception status" if code in EXCEPTION_STATUSES else "target status"
-                        )
-                        _log("{} 0x{:08x} ({})".format(label, code, code))
+                    elif state in ("exited", "redirected"):
+                        if state == "redirected":
+                            _log("redirected; stopping the prefix for the play session")
+                        else:
+                            code = result["exit_code"]
+                            label = (
+                                "exception status"
+                                if code in EXCEPTION_STATUSES
+                                else "target status"
+                            )
+                            _log("{} 0x{:08x} ({})".format(label, code, code))
                         deadline = time.monotonic() + cleanup_timeout
                         _cleanup(server, env, deadline, interrupted)
                         # Prefix shutdown can change the host exit status. The
@@ -515,6 +547,8 @@ def run(
                         _check_interrupt(interrupted)
                         if time.monotonic() >= deadline:
                             raise TimeoutError("Cleanup deadline expired")
+                        if state == "redirected":
+                            return REDIRECTED
                         return 1 if code else 0
                     elif state in ("failed", "uncertain"):
                         message = "{}: {}; prefix left running; use explicit stop if needed".format(
@@ -591,6 +625,8 @@ def main(argv=None):
     launch.add_argument("--desktop")
     launch.add_argument("--audio", choices=("on", "off"))
     launch.add_argument("--settings", action="store_true")
+    launch.add_argument("--redirect")
+    launch.add_argument("--redirect-except", action="append", default=[])
     launch.add_argument("--startup-timeout", type=float, default=300)
     launch.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
@@ -610,6 +646,8 @@ def main(argv=None):
             args.cleanup_timeout,
             args.audio,
             args.settings,
+            args.redirect,
+            args.redirect_except,
         )
     except InterruptedError as error:
         _log(error.args[1] if len(error.args) > 1 else str(error))

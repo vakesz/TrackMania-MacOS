@@ -12,7 +12,9 @@ named after the game. For Nations Forever they are:
 
 - **TrackMania Nations Forever** launches the game with Competition Patch and
   CoreMod.
-- **TrackMania Settings** opens the original settings launcher.
+- **TrackMania Settings** opens the original settings launcher. For a title
+  with Competition Patch, the launcher's Play button starts the game the same
+  way as the Game app (see `docs/runtime.md`).
 
 The hub opens those app wrappers through macOS; it does not replace them.
 For titles that need a serial (`requiresSerial`), the hub replaces the Settings button

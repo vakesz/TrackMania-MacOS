@@ -5,7 +5,7 @@
 # with `uv lock`, run with `uv run --frozen --group <name> ...`.
 [project]
 name = "trackmania-mac"
-version = "0.4.3"
+version = "0.5.0"
 description = "TrackMania for Apple Silicon"
 requires-python = ">=3.9"
 

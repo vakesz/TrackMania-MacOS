@@ -140,7 +140,8 @@ kbd { padding: 1px 6px; border: 1px solid var(--line); border-radius: 6px; font:
 .pill { flex: none; padding: 3px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; }
 .pill.ok { background: rgba(52, 199, 89, 0.16); color: #1a7f37; }
 .pill.wip { background: rgba(255, 149, 0, 0.16); color: #a35200; }
-@media (prefers-color-scheme: dark) { .pill.ok { color: #30d158; } .pill.wip { color: #ff9f0a; } }
+.pill.no { background: rgba(142, 142, 147, 0.18); color: #5c5c61; }
+@media (prefers-color-scheme: dark) { .pill.ok { color: #30d158; } .pill.wip { color: #ff9f0a; } .pill.no { color: #aeaeb2; } }
 .games-note { margin-top: 24px; color: var(--muted); font-size: 15px; }
 
 /* FAQ */

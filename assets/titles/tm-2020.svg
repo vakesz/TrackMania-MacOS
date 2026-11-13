@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">2020</title>
+  <desc id="description">An original icon of a track ribbon rising through a stylised number gate, in magenta and amber over dark plum.</desc>
+  <defs>
+    <linearGradient id="backdrop" x1="130" y1="80" x2="900" y2="980" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4A1442"/>
+      <stop offset="0.55" stop-color="#2A0B28"/>
+      <stop offset="1" stop-color="#150514"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="200" y1="820" x2="840" y2="220" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFD3F0"/>
+      <stop offset="1" stop-color="#F23BA8"/>
+    </linearGradient>
+    <linearGradient id="spark" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#FFE27A"/>
+      <stop offset="1" stop-color="#FF9A1F"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.05" r="0.95">
+      <stop stop-color="#C42A94" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#C42A94" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+    <clipPath id="tile"><rect x="48" y="48" width="928" height="928" rx="218"/></clipPath>
+  </defs>
+
+  <rect x="48" y="48" width="928" height="928" rx="218" fill="url(#backdrop)"/>
+  <rect x="62" y="62" width="900" height="900" rx="204" fill="none" stroke="#FFD3F0" stroke-opacity="0.22" stroke-width="8"/>
+  <ellipse cx="512" cy="210" rx="425" ry="340" fill="url(#glow)" clip-path="url(#tile)"/>
+  <g filter="url(#shadow)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M240 780 C400 780 440 640 512 560 C600 460 650 380 800 330" stroke="#150514" stroke-width="200"/>
+    <path d="M240 780 C400 780 440 640 512 560 C600 460 650 380 800 330" stroke="url(#accent)" stroke-width="140"/>
+    <path d="M240 780 C400 780 440 640 512 560 C600 460 650 380 800 330" stroke="#3A0E34" stroke-width="76"/>
+    <path d="M240 780 C400 780 440 640 512 560 C600 460 650 380 800 330" stroke="#FFF2FB" stroke-opacity="0.9" stroke-width="12" stroke-dasharray="46 40"/>
+    <path d="M300 460 V240 H500" stroke="url(#spark)" stroke-width="44"/>
+    <path d="M300 240 V460" stroke="url(#spark)" stroke-width="44"/>
+  </g>
+</svg>

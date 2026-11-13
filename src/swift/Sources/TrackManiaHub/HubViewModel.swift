@@ -120,7 +120,7 @@ final class HubViewModel: ObservableObject {
             migrate()
         }
         if selectedTitleID == nil || !snapshot.titles.contains(where: { $0.id == selectedTitleID }) {
-            selectedTitleID = snapshot.titles.sidebarOrder.first?.id
+            selectedTitleID = snapshot.titles.defaultSelection?.id
         }
         if !snapshot.skippedTitles.isEmpty {
             let count = snapshot.skippedTitles.count

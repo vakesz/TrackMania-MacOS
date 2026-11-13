@@ -23,11 +23,66 @@ class TitleRegistryTests(unittest.TestCase):
         registry = load_registry()
         titles = registry.load_all(TITLES)
         self.assertEqual(
-            [title.id for title in titles], [path.stem for path in sorted(TITLES.glob("*.json"))]
+            sorted(title.id for title in titles),
+            sorted(path.stem for path in TITLES.glob("*.json")),
         )
         # The one deliberate inventory: adding or removing a title is a visible change.
         self.assertEqual(
-            {title.id for title in titles}, {"tmnf", "tmu", "tm-original", "tm-canyon", "tm-turbo"}
+            {title.id for title in titles},
+            {
+                "tmnf",
+                "tmu",
+                "tm-original",
+                "tm-canyon",
+                "tm-turbo",
+                "tmn-eswc",
+                "tm-stadium",
+                "tm-valley",
+                "tm-lagoon",
+                "tm-2020",
+            },
+        )
+
+    def test_titles_load_oldest_release_first(self):
+        registry = load_registry()
+        titles = registry.load_all(TITLES)
+        self.assertEqual(
+            [title.id for title in titles],
+            [title.id for title in sorted(titles, key=lambda t: (t.release_date, t.id))],
+        )
+        # tmnf and tmu share a release date, so the id breaks the tie.
+        self.assertEqual(
+            [title.id for title in titles],
+            [
+                "tm-original",
+                "tmn-eswc",
+                "tmnf",
+                "tmu",
+                "tm-canyon",
+                "tm-stadium",
+                "tm-valley",
+                "tm-turbo",
+                "tm-lagoon",
+                "tm-2020",
+            ],
+        )
+
+    def test_status_of_each_shipped_title(self):
+        registry = load_registry()
+        self.assertEqual(
+            {title.id: title.status for title in registry.load_all(TITLES)},
+            {
+                "tmnf": "supported",
+                "tmu": "provisional",
+                "tm-original": "unsupported",
+                "tm-canyon": "unsupported",
+                "tm-turbo": "unsupported",
+                "tmn-eswc": "unsupported",
+                "tm-stadium": "unsupported",
+                "tm-valley": "unsupported",
+                "tm-lagoon": "unsupported",
+                "tm-2020": "unsupported",
+            },
         )
 
     def test_legacy_prefix_subdirs_are_unique(self):
@@ -328,7 +383,7 @@ class TitleRegistryTests(unittest.TestCase):
         )
 
     def test_wrapped_inno_installers_target_the_registry_game_dir(self):
-        """The 7z-wrapped installers (TMU, Canyon) get /DIR equal to GAME_DIR."""
+        """Every online installer kind gets /DIR equal to GAME_DIR."""
         stubs = (
             "download_pinned_installer() { :; }; "
             'unpack_inner_inno() { printf "/stub/setup.exe\\n"; }; '
@@ -338,7 +393,7 @@ class TitleRegistryTests(unittest.TestCase):
         )
         for path in sorted(TITLES.glob("*.json")):
             data = json.loads(path.read_text())
-            if data["installer"] not in ("online-retail", "online-trial"):
+            if data["installer"] not in ("online", "online-retail", "online-trial"):
                 continue
             with self.subTest(title=data["id"]):
                 result = subprocess.run(
@@ -347,7 +402,7 @@ class TitleRegistryTests(unittest.TestCase):
                         "-euc",
                         ". src/shell/lib/common.sh; . src/shell/lib/install/game.sh; "
                         + stubs
-                        + 'install_pinned_inno_game "$TRACKMANIA_MAC_TITLE_INSTALLER"',
+                        + "install_game",
                     ],
                     cwd=ROOT,
                     text=True,
@@ -611,6 +666,52 @@ class RegistryValidationTests(unittest.TestCase):
             {"game_version": "1.0", "game_exe_sha256": "ABC"},
             {"creative_openal_sha256": "x" * 64},
             {"game_version": "1.0; rm"},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(self.registry.RegistryError):
+                self.validate(**changes)
+
+    def test_status_must_be_known(self):
+        for status in ("supported", "provisional", "unsupported"):
+            self.assertEqual(self.validate(status=status).status, status)
+        for status in ("beta", "", "Supported", None):
+            with self.subTest(status=status), self.assertRaises(self.registry.RegistryError):
+                self.validate(status=status)
+
+    def test_release_date_is_a_required_real_iso_date(self):
+        self.assertEqual(self.validate(release_date="2008-02-29").release_date, "2008-02-29")
+        for value in (
+            "2007-02-29",
+            "2008-13-01",
+            "2008-4-16",
+            "16/04/2008",
+            "20080416",
+            "2008-04-16T00:00",
+            " 2008-04-16",
+            "",
+            None,
+            2008,
+        ):
+            with self.subTest(value=value), self.assertRaises(self.registry.RegistryError):
+                self.validate(release_date=value)
+        missing = {key: value for key, value in self.data.items() if key != "release_date"}
+        with self.assertRaisesRegex(self.registry.RegistryError, "missing fields: release_date"):
+            self.registry._validate(missing, Path("/x/tmu.json"))
+
+    def test_link_is_optional_and_needs_both_fields(self):
+        title = self.validate()
+        self.assertEqual((title.link_url, title.link_label), (None, None))
+        url = "https://example.test/port"
+        title = self.validate(link_url=url, link_label="A port")
+        self.assertEqual((title.link_url, title.link_label), (url, "A port"))
+        for changes in (
+            {"link_url": url},
+            {"link_label": "A port"},
+            {"link_url": "http://example.test/port", "link_label": "A port"},
+            {"link_url": "file:///etc/passwd", "link_label": "A port"},
+            {"link_url": url, "link_label": "a\nb"},
+            {"link_url": url, "link_label": " padded"},
+            {"link_url": url, "link_label": "x" * 61},
+            {"link_url": url, "link_label": 5},
         ):
             with self.subTest(changes=changes), self.assertRaises(self.registry.RegistryError):
                 self.validate(**changes)

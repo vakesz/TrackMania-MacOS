@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">Lagoon</title>
+  <desc id="description">An original icon of ocean waves and a palm silhouette with a curving track, in turquoise and coral over deep sea blue.</desc>
+  <defs>
+    <linearGradient id="backdrop" x1="130" y1="80" x2="900" y2="980" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0F4F63"/>
+      <stop offset="0.55" stop-color="#082F42"/>
+      <stop offset="1" stop-color="#041824"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="200" y1="820" x2="840" y2="220" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#C8FFF4"/>
+      <stop offset="1" stop-color="#18C3C9"/>
+    </linearGradient>
+    <linearGradient id="spark" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#FFC09A"/>
+      <stop offset="1" stop-color="#FF6F61"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.05" r="0.95">
+      <stop stop-color="#17A8B5" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#17A8B5" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+    <clipPath id="tile"><rect x="48" y="48" width="928" height="928" rx="218"/></clipPath>
+  </defs>
+
+  <rect x="48" y="48" width="928" height="928" rx="218" fill="url(#backdrop)"/>
+  <rect x="62" y="62" width="900" height="900" rx="204" fill="none" stroke="#C8FFF4" stroke-opacity="0.22" stroke-width="8"/>
+  <ellipse cx="512" cy="210" rx="425" ry="340" fill="url(#glow)" clip-path="url(#tile)"/>
+  <circle cx="720" cy="330" r="90" fill="url(#spark)" opacity="0.95"/>
+  <g filter="url(#shadow)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M110 650 C230 590 330 710 450 650 C570 590 670 710 790 650 C850 620 890 640 914 650" stroke="url(#accent)" stroke-width="56" opacity="0.55"/>
+    <path d="M110 770 C230 710 330 830 450 770 C570 710 670 830 790 770 C850 740 890 760 914 770" stroke="url(#accent)" stroke-width="64" opacity="0.85"/>
+    <path d="M300 640 C310 520 290 420 330 330" stroke="#031620" stroke-width="30"/>
+    <path d="M330 330 C260 300 220 330 190 380 M330 330 C390 290 440 310 470 360 M330 330 C320 270 350 230 390 210" stroke="#031620" stroke-width="26"/>
+  </g>
+</svg>

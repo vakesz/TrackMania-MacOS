@@ -27,6 +27,16 @@ struct TitleDetailView: View {
                 if !title.notes.isEmpty {
                     Callout(text: title.notes, systemImage: "info.circle")
                 }
+                if let link = title.link, let destination = link.destination {
+                    Link(destination: destination) {
+                        Label(link.label, systemImage: "arrow.up.right.square")
+                    }
+                    .font(.callout)
+                    .padding(.horizontal, 14)
+                }
+                if let note = title.contributionNote {
+                    Callout(text: note, systemImage: "hand.raised")
+                }
                 if let error = title.error {
                     Callout(text: error, systemImage: "exclamationmark.triangle.fill", tint: .orange)
                 }

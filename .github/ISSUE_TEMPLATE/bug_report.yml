@@ -9,6 +9,8 @@ body:
         It writes a redacted zip to `~/Library/TrackManiaMacOS/logs`; attach it below.
         From a source checkout, `./src/shell/cli/trackmania-mac diagnostics` does the same.
         For a security problem, use the security policy instead of a public issue.
+        Titles marked unsupported are not expected to run yet: please don't report that one doesn't work.
+        Issues and pull requests that help one run are welcome.
   - type: dropdown
     id: title
     attributes:

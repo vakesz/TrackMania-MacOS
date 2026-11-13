@@ -30,13 +30,14 @@ extension TolerantStringEnum {
 }
 
 enum TitleStatus: TolerantStringEnum {
-    case supported, provisional, unknown(String)
-    static let known: [TitleStatus] = [.supported, .provisional]
+    case supported, provisional, unsupported, unknown(String)
+    static let known: [TitleStatus] = [.supported, .provisional, .unsupported]
     init(unknown raw: String) { self = .unknown(raw) }
     var rawValue: String {
         switch self {
         case .supported: "supported"
         case .provisional: "provisional"
+        case .unsupported: "unsupported"
         case let .unknown(raw): raw
         }
     }
@@ -208,12 +209,27 @@ struct HubSnapshot: Decodable, Equatable {
     }
 }
 
+/// A related page the backend lists under a title's notes.
+struct HubLink: Decodable, Equatable {
+    let label: String
+    let url: String
+
+    /// The page to open; only an https URL is shown.
+    var destination: URL? {
+        guard let url = URL(string: url), url.scheme == "https", url.host != nil else { return nil }
+        return url
+    }
+}
+
 struct HubTitle: Decodable, Equatable, Identifiable {
     let id: String
     let name: String
     let shortName: String?
     let status: TitleStatus
+    /// First release as YYYY-MM-DD; the backend already lists titles oldest first.
+    let releaseDate: String?
     let notes: String
+    let link: HubLink?
     let engine: String?
     let kind: InstallerKind?
     let icon: String?
@@ -230,7 +246,7 @@ struct HubTitle: Decodable, Equatable, Identifiable {
     let actions: [HubAction]
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, shortName, status, notes, engine, kind, icon, iconSource, error
+        case id, name, shortName, status, releaseDate, notes, link, engine, kind, icon, iconSource, error
         case requiresSerial, sourceSize, locations, sessionActive, state, apps, removal, actions
     }
 
@@ -240,7 +256,9 @@ struct HubTitle: Decodable, Equatable, Identifiable {
         name = (try? c.decodeIfPresent(String.self, forKey: .name)) ?? id
         shortName = try? c.decodeIfPresent(String.self, forKey: .shortName)
         status = (try? c.decodeIfPresent(TitleStatus.self, forKey: .status)) ?? .unknown("")
+        releaseDate = try? c.decodeIfPresent(String.self, forKey: .releaseDate)
         notes = (try? c.decodeIfPresent(String.self, forKey: .notes)) ?? ""
+        link = (try? c.decodeIfPresent(HubLink.self, forKey: .link)) ?? nil
         engine = try? c.decodeIfPresent(String.self, forKey: .engine)
         kind = try? c.decodeIfPresent(InstallerKind.self, forKey: .kind)
         icon = try? c.decodeIfPresent(String.self, forKey: .icon)
@@ -257,13 +275,13 @@ struct HubTitle: Decodable, Equatable, Identifiable {
     }
 
     init(id: String, name: String, shortName: String? = nil, status: TitleStatus = .supported,
-         notes: String = "", engine: String? = nil, kind: InstallerKind? = nil, icon: String? = nil,
+         releaseDate: String? = nil, notes: String = "", link: HubLink? = nil, engine: String? = nil, kind: InstallerKind? = nil, icon: String? = nil,
          iconSource: IconSource? = nil, error: String? = nil, requiresSerial: Bool? = nil,
          sourceSize: Int64? = nil, locations: HubLocations? = nil, sessionActive: Bool = false,
          state: HubInstallationState = .empty, apps: HubApps = HubApps(game: "", settings: ""),
          removal: HubRemoval? = nil, actions: [HubAction] = []) {
         self.id = id; self.name = name; self.shortName = shortName; self.status = status
-        self.notes = notes; self.engine = engine; self.kind = kind; self.icon = icon
+        self.releaseDate = releaseDate; self.notes = notes; self.link = link; self.engine = engine; self.kind = kind; self.icon = icon
         self.iconSource = iconSource; self.error = error; self.requiresSerial = requiresSerial
         self.sourceSize = sourceSize; self.locations = locations; self.sessionActive = sessionActive
         self.state = state; self.apps = apps; self.removal = removal; self.actions = actions
@@ -417,7 +435,26 @@ extension HubTitle {
     }
 
     var isSupported: Bool { status == .supported }
-    var supportLabel: String { isSupported ? "Supported" : "Provisional" }
+    /// An unknown status from a newer backend reads as unsupported.
+    var supportLabel: String {
+        switch status {
+        case .supported: String(localized: "Supported")
+        case .provisional: String(localized: "Provisional")
+        case .unsupported, .unknown: String(localized: "Unsupported")
+        }
+    }
+
+    /// Shown on unsupported titles (and unknown statuses) only; never keyed on a title id.
+    var contributionNote: String? {
+        switch status {
+        case .supported, .provisional: nil
+        case .unsupported, .unknown:
+            String(localized: """
+            Please don't open an issue just to say this title doesn't work. \
+            Issues and pull requests that help it run, or that bring in a proper runtime for it, are welcome.
+            """)
+        }
+    }
 
     var availability: String {
         if error != nil { return "Needs attention" }
@@ -543,18 +580,22 @@ extension HubTitle {
 }
 
 extension Array where Element == HubTitle {
-    /// Sidebar sections: installed titles first, then the rest. Within a section,
-    /// supported titles lead; otherwise the backend order is kept.
+    /// Sidebar sections: installed titles first, then the rest. Each keeps the
+    /// backend order (oldest release first).
     var sidebarSections: (installed: [HubTitle], available: [HubTitle]) {
-        func ordered(_ titles: [HubTitle]) -> [HubTitle] {
-            titles.filter(\.isSupported) + titles.filter { !$0.isSupported }
-        }
-        return (ordered(filter(\.isInstalled)), ordered(filter { !$0.isInstalled }))
+        (filter(\.isInstalled), filter { !$0.isInstalled })
     }
 
-    /// Titles in the order the sidebar shows them; the first one is the default selection.
+    /// Titles in the order the sidebar shows them.
     var sidebarOrder: [HubTitle] {
         let sections = sidebarSections
         return sections.installed + sections.available
+    }
+
+    /// The title selected when nothing else is: the first installed one, else the
+    /// first supported one, else the first in sidebar order.
+    var defaultSelection: HubTitle? {
+        let sections = sidebarSections
+        return sections.installed.first ?? sections.available.first(where: \.isSupported) ?? sections.available.first
     }
 }

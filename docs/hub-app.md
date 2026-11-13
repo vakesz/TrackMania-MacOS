@@ -198,14 +198,41 @@ is now `local.trackmania-mac.hub`.
 | --- | --- | --- | --- |
 | Nations Forever (`tmnf`) | free Nadeo download | Competition Patch and CoreMod | supported |
 | United Forever (`tmu`) | pinned official retail installer; asks for a serial key | Competition Patch and CoreMod | provisional |
-| Original (`tm-original`) | user-owned retail disk image or setup executable | its own game executable | provisional |
-| TrackMania 2 Canyon (`tm-canyon`) | pinned official ManiaPlanet trial | its own game executable | provisional |
-| Turbo (`tm-turbo`) | existing Steam game folder | its own game executable | provisional |
+| Original (`tm-original`) | user-owned retail disk image or setup executable | its own game executable | unsupported |
+| TrackMania 2 Canyon (`tm-canyon`) | pinned official ManiaPlanet trial | its own game executable | unsupported |
+| Turbo (`tm-turbo`) | existing Steam game folder | its own game executable | unsupported |
+| Nations ESWC (`tmn-eswc`) | pinned official free installer | its own game executable | unsupported |
+| TrackMania 2 Stadium (`tm-stadium`) | pinned official ManiaPlanet trial | its own game executable | unsupported |
+| TrackMania 2 Valley (`tm-valley`) | pinned official ManiaPlanet trial | its own game executable | unsupported |
+| TrackMania 2 Lagoon (`tm-lagoon`) | pinned official ManiaPlanet trial | its own game executable | unsupported |
+| Trackmania 2020 (`tm-2020`) | existing Trackmania game folder | its own game executable | unsupported |
 
 Nations Forever exposes install and update actions; install also writes the app
-wrappers. The provisional titles remain provisional: installation does not mean
-their renderer, DRM, online services or complete gameplay have been qualified
-under Wine.
+wrappers. Each title entry's `status` is one of:
+
+- `supported`: installs and plays; changes are developed and checked against it.
+- `provisional`: installs, but its renderer, DRM, online services and complete
+  gameplay have not been qualified under Wine.
+- `unsupported`: listed for completeness; not expected to run yet.
+
+Clients treat any other value as `unsupported`, and so does the snapshot for an
+entry it cannot read. On an unsupported title the hub adds a short note: please
+don't open an issue just to say it doesn't work; issues and pull requests that
+help it run are welcome.
+
+Each title entry also carries `link`, a related page shown under its notes, as
+`{"label": "...", "url": "https://..."}`, or `null`. It comes from the
+registry's optional `link_url` (https only) and `link_label` (one line, at most
+60 characters), which are set together or not at all. Trackmania 2020 uses it
+for the separate Trackmania2020-MacOS project. The hub opens only https links.
+
+Each title entry also carries `releaseDate`, the title's first release as
+`YYYY-MM-DD` (the registry's required `release_date`; `null` only for an entry
+that could not be read). The snapshot lists titles oldest release first, ties
+broken by id, followed by entries that could not be read. The hub keeps that
+order inside its "installed" and "available" sidebar sections and does not
+re-sort by status; with nothing selected it selects the first installed title,
+else the first supported one.
 
 `config/titles/*.json` is the sole authority for title paths, app names and
 bundle identifiers; each title's prefix marker is derived from its id. The shell

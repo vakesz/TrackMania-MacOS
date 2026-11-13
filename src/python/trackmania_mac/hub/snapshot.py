@@ -116,6 +116,13 @@ def _locations(paths: hub_paths.TitlePaths) -> dict:
     }
 
 
+def _link(title: registry.Title) -> typing.Optional[dict]:
+    """The title's related page, or None; the registry sets both fields or neither."""
+    if not title.link_url or not title.link_label:
+        return None
+    return {"label": title.link_label, "url": title.link_url}
+
+
 def title_payload(
     title: registry.Title, paths: typing.Optional[hub_paths.TitlePaths] = None
 ) -> dict:
@@ -130,9 +137,11 @@ def title_payload(
         "name": title.name,
         "shortName": title.short_name,
         "status": title.status,
+        "releaseDate": title.release_date,
         "engine": title.engine,
         "kind": title.installer,
         "notes": title.notes,
+        "link": _link(title),
         "requiresSerial": title.requires_serial,
         "sourceSize": title.source_size,
         "locations": _locations(resolved),
@@ -155,10 +164,12 @@ def contained_payload(title: registry.Title) -> dict:
             "id": title.id,
             "name": title.name,
             "shortName": title.short_name,
-            "status": title.status if title.status in registry.STATUSES else "provisional",
+            "status": title.status if title.status in registry.STATUSES else "unsupported",
+            "releaseDate": title.release_date,
             "engine": title.engine,
             "kind": title.installer,
             "notes": title.notes,
+            "link": _link(title),
             "requiresSerial": title.requires_serial,
             "sourceSize": title.source_size,
             "locations": {},
@@ -176,13 +187,15 @@ def contained_payload(title: registry.Title) -> dict:
 def _error_placeholder(title_id: str, message: str) -> dict:
     # Swift decodes id, name, shortName, status and notes as non-optional
     # strings: a placeholder must never emit null for them.
-    payload: dict[str, object] = {key: None for key in ("engine", "kind", "icon", "iconSource")}
+    payload: dict[str, object] = {
+        key: None for key in ("engine", "kind", "icon", "iconSource", "releaseDate", "link")
+    }
     payload.update(
         {
             "id": title_id,
             "name": title_id,
             "shortName": title_id,
-            "status": "provisional",
+            "status": "unsupported",
             "notes": "",
             "requiresSerial": False,
             "sourceSize": None,

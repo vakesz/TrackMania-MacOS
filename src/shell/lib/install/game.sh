@@ -2,7 +2,8 @@
 # Official TrackMania game installers. Sourced by install.sh after common.sh.
 #
 # Two shapes exist:
-#  - Direct Inno Setup installers (TMNF): downloaded, then run silently.
+#  - Direct Inno Setup installers (TMNF, ESWC): downloaded, then run silently
+#    with an explicit /DIR.
 #  - 7z-SFX wrappers around Inno Setup (TMU Forever, ManiaPlanet trial): the
 #    outer .exe only unpacks an inner Inno Setup launcher plus its data blob,
 #    and the SFX config does not forward switches to the inner setup. The two
@@ -194,7 +195,10 @@ install_game() {
 
   download_pinned_installer "$title_id"
   rm -f "$installer_log"
-  run_released_installer "$installer_path" "$TRACKMANIA_MAC_TITLE_NAME"
+  # Pin /DIR so the title installs where GAME_DIR points, whatever the
+  # installer's own default directory is.
+  TRACKMANIA_MAC_INNO_DIR="C:\\Program Files (x86)\\${TRACKMANIA_MAC_TITLE_GAME_DIR_NAME}" \
+    run_released_installer "$installer_path" "$TRACKMANIA_MAC_TITLE_NAME"
   wait_inno_setup "$TRACKMANIA_MAC_INSTALLER_PID" "$installer_log" "$TRACKMANIA_MAC_TITLE_NAME"
   verify_installed_game "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256" "$TRACKMANIA_MAC_TITLE_SHORT_NAME"
   say "Installed $TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION at $GAME_DIR"

@@ -4,8 +4,9 @@
 Mac hub, installs and launches a collection of TrackMania titles and sets up
 what they need: a patched Windows compatibility layer (Wine), DirectX and, for
 Nations and United Forever, the Competition Patch. You don't need Windows, a
-virtual machine or developer tools. Nations Forever is supported today; the
-other games are provisional (see [Which games work?](#which-games-work)).
+virtual machine or developer tools. Nations Forever is supported today, United
+Forever is provisional and the other games are listed but unsupported (see
+[Which games work?](#which-games-work)).
 
 **Website:** <https://vakesz.github.io/TrackMania-MacOS/> ·
 **Download:** [latest release](https://github.com/vakesz/TrackMania-MacOS/releases/latest)
@@ -78,16 +79,27 @@ rate overlay enabled (`DXVK_HUD=fps,frametimes`).
 | --- | --- | --- |
 | Nations Forever (`tmnf`) | free download from Nadeo | supported |
 | United Forever (`tmu`) | official retail installer (needs your serial key); starts with Competition Patch | provisional |
-| Original (`tm-original`) | your own retail disc image or setup file | provisional |
-| TrackMania 2 Canyon (`tm-canyon`) | official ManiaPlanet trial | provisional |
-| Turbo (`tm-turbo`) | your existing Steam game folder | provisional |
+| Original (`tm-original`) | your own retail disc image or setup file | unsupported |
+| TrackMania 2 Canyon (`tm-canyon`) | official ManiaPlanet trial | unsupported |
+| Turbo (`tm-turbo`) | your existing Steam game folder | unsupported |
+| Nations ESWC (`tmn-eswc`) | official free installer | unsupported |
+| TrackMania 2 Stadium (`tm-stadium`) | official ManiaPlanet trial | unsupported |
+| TrackMania 2 Valley (`tm-valley`) | official ManiaPlanet trial | unsupported |
+| TrackMania 2 Lagoon (`tm-lagoon`) | official ManiaPlanet trial | unsupported |
+| Trackmania 2020 (`tm-2020`) | your existing Trackmania game folder | unsupported |
 
 **Supported** means the game installs and plays, and it is the title changes
 are developed and checked against. **Provisional** means the title installs,
 but graphics, copy protection, online play and full gameplay have not been
-tested enough under Wine to call it supported. See [the hub guide](docs/hub-app.md) for details. If you try a
-provisional title, reports of what works and what doesn't are welcome as
+tested enough under Wine to call it supported. **Unsupported** means the title
+is listed for completeness but is not expected to run yet. See [the hub
+guide](docs/hub-app.md) for details. If you try a provisional title, reports of
+what works and what doesn't are welcome as
 [issues](https://github.com/vakesz/TrackMania-MacOS/issues).
+
+For unsupported titles, please don't open an issue just to say the title
+doesn't work. Issues that help make it work or bring in a proper runtime for
+it, and pull requests that add support, are welcome.
 
 ## Common questions
 

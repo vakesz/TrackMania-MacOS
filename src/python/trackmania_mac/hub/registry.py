@@ -16,6 +16,7 @@ its digest differs from source_sha256.
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import pathlib
@@ -29,8 +30,10 @@ from trackmania_mac.install import modloader
 
 ONLINE_INSTALLERS = ("online", "online-retail", "online-trial")
 INSTALLERS = frozenset(ONLINE_INSTALLERS + ("steam-copy", "disk-image"))
-ENGINES = frozenset({"tmf-classic", "maniaplanet", "turbo"})
-STATUSES = frozenset({"supported", "provisional"})
+ENGINES = frozenset({"tmf-classic", "maniaplanet", "turbo", "ubiservices"})
+# supported: developed and checked against. provisional: installs, not yet
+# qualified under Wine. unsupported: listed, not expected to run yet.
+STATUSES = frozenset({"supported", "provisional", "unsupported"})
 # The Forever-engine executable. ModLoader's program and the runtime's
 # Default.SystemConfig.Gbx both belong to it, so it decides those components.
 FOREVER_EXE = "TmForever.exe"
@@ -55,6 +58,8 @@ _FIELDS: typing.Tuple[_Field, ...] = (
     _Field("engine", "text", True),
     _Field("installer", "text", True),
     _Field("status", "text", True),
+    # First release, YYYY-MM-DD. Titles are listed oldest first.
+    _Field("release_date", "date", True),
     # Where releases before the shared data folder kept this title, relative
     # to ~/Games. Only the migration reads it; new paths come from the id.
     _Field("legacy_prefix_subdir", "subpath", False),
@@ -84,11 +89,16 @@ _FIELDS: typing.Tuple[_Field, ...] = (
     # InstallKey (United Forever).
     _Field("cd_key_in_nadeo_ini", "bool", False),
     _Field("notes", "notes", False),
+    # An optional related page the hub shows under the notes; both or neither.
+    _Field("link_url", "url", False),
+    _Field("link_label", "label", False),
 )
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 _BUNDLE_ID = re.compile(r"^[A-Za-z0-9.-]+$")
 _URL = re.compile(r"^https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%\[\]-]+$")
 _PIN_TEXT = re.compile(r"^[A-Za-z0-9._ ()-]+$")
+_LABEL_MAX = 60
 _PIN_SHA_KEYS = (
     "directx_sha256",
     "tmloader_sha256",
@@ -121,6 +131,7 @@ class Title(typing.NamedTuple):
     engine: str
     installer: str
     status: str
+    release_date: str
     legacy_prefix_subdir: typing.Optional[str]
     app_name: str
     settings_app_name: str
@@ -143,6 +154,8 @@ class Title(typing.NamedTuple):
     requires_serial: bool
     cd_key_in_nadeo_ini: typing.Optional[bool]
     notes: str
+    link_url: typing.Optional[str]
+    link_label: typing.Optional[str]
 
     @property
     def prefix_marker(self) -> str:
@@ -192,6 +205,17 @@ def _plain_name(value: str) -> bool:
     )
 
 
+def _iso_date(value: str) -> bool:
+    """True for a real calendar date written as YYYY-MM-DD."""
+    if not _DATE.match(value):
+        return False
+    try:
+        datetime.date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
 def _check_value(field: _Field, value: object, path: pathlib.Path) -> object:
     """The validated value of one present key, or None for an empty optional one."""
     kind, name = field.kind, field.name
@@ -233,6 +257,14 @@ def _check_value(field: _Field, value: object, path: pathlib.Path) -> object:
         raise RegistryError(f"{path}: unsafe {name}")
     if kind == "sha" and not _SHA256.match(value):
         raise RegistryError(f"{path}: {name} must be a lowercase hex SHA-256")
+    if kind == "label" and (
+        len(value) > _LABEL_MAX
+        or value != value.strip()
+        or any(ord(char) < 32 or ord(char) == 127 for char in value)
+    ):
+        raise RegistryError(f"{path}: {name} must be one line of at most {_LABEL_MAX} characters")
+    if kind == "date" and not _iso_date(value):
+        raise RegistryError(f"{path}: {name} must be a real date as YYYY-MM-DD")
     return value
 
 
@@ -286,6 +318,11 @@ def _validate(data: object, path: pathlib.Path) -> Title:
     if values["installer"] == "online" and not values["game_exe_sha256"]:
         raise RegistryError(f"{path}: installer kind online requires game_exe_sha256")
 
+    if bool(values["link_url"]) != bool(values["link_label"]):
+        raise RegistryError(f"{path}: link_url and link_label go together")
+    if values["link_url"] and not str(values["link_url"]).startswith("https://"):
+        raise RegistryError(f"{path}: link_url must be an https URL")
+
     return Title(**values)  # type: ignore[arg-type]  # each value checked by kind above
 
 
@@ -331,9 +368,10 @@ def subdir_conflicts(titles: typing.Sequence[Title]) -> typing.Dict[str, str]:
 def load_registry(titles_dir_path=None):
     """Load every entry with per-title containment.
 
-    Returns (titles, schema_errors, unreadable) where schema_errors maps a
-    file stem to its validation message and unreadable is a list of paths
-    whose content could not even be parsed as JSON.
+    Returns (titles, schema_errors, unreadable) where titles are oldest
+    release first (ties by id), schema_errors maps a file stem to its validation
+    message and unreadable is a list of paths whose content could not even be
+    parsed as JSON.
     """
     directory = titles_dir_path if titles_dir_path is not None else titles_dir()
     titles, schema_errors, unreadable = [], {}, []
@@ -353,6 +391,7 @@ def load_registry(titles_dir_path=None):
         schema_errors[title.id] = f"{directory / (title.id + '.json')}: {conflicts[title.id]}"
     if not titles and not schema_errors and not unreadable:
         raise RegistryError(f"{directory}: the title registry is empty")
+    titles.sort(key=lambda title: (title.release_date, title.id))
     return titles, schema_errors, unreadable
 
 

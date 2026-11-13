@@ -395,23 +395,26 @@ section { padding: 96px 0; }
 .faq details { border-bottom: 1px solid var(--line); }
 .faq summary { position: relative; padding: 20px 36px 20px 0; font-size: 19px; font-weight: 600; cursor: pointer; list-style: none; }
 .faq summary::-webkit-details-marker { display: none; }
+/* Plus and minus drawn as bars so they sit dead centre in the circle. */
 .faq summary::after {
-  content: "+";
+  content: "";
   position: absolute;
   right: 2px;
-  top: 18px;
-  display: grid;
-  place-items: center;
+  top: 50%;
   width: 26px;
   height: 26px;
+  margin-top: -13px;
   border-radius: 50%;
-  background: var(--checkpoint);
-  color: #fff;
-  font-size: 20px;
-  font-weight: 600;
-  line-height: 1;
+  background:
+    linear-gradient(#fff, #fff) center / 12px 2px no-repeat,
+    linear-gradient(#fff, #fff) center / 2px 12px no-repeat,
+    var(--checkpoint);
 }
-.faq details[open] summary::after { content: "\2212"; }
+.faq details[open] summary::after {
+  background:
+    linear-gradient(#fff, #fff) center / 12px 2px no-repeat,
+    var(--checkpoint);
+}
 .faq details p { padding: 0 0 22px; color: var(--muted); }
 code { padding: 1px 5px; border-radius: 5px; background: var(--bg); font: 0.86em var(--mono); }
 

@@ -13,6 +13,7 @@ struct SetupChecklistCard: View {
                 Text("\(ready) of \(items.count) ready").font(.callout).foregroundStyle(.secondary)
             }
             ProgressView(value: Double(ready), total: Double(max(items.count, 1)))
+                .tint(ready == items.count ? Color.green : Color.accentColor)
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(items) { item in
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -28,7 +29,7 @@ struct SetupChecklistCard: View {
                         }
                         Spacer()
                         Image(systemName: item.ready ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(item.ready ? Color.green : Color.secondary)
+                            .foregroundStyle(item.ready ? AnyShapeStyle(Color.green) : AnyShapeStyle(.tertiary))
                     }
                     .font(.callout)
                     .accessibilityElement(children: .combine)

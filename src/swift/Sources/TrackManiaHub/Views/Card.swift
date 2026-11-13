@@ -6,6 +6,20 @@ extension View {
         padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
+            .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(.separator.opacity(0.5)) }
+    }
+}
+
+/// The hub's own icon, as the Dock shows it.
+struct HubIconView: View {
+    let size: CGFloat
+
+    var body: some View {
+        Image(nsImage: NSApplication.shared.applicationIconImage)
+            .resizable()
+            .interpolation(.high)
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
     }
 }
 

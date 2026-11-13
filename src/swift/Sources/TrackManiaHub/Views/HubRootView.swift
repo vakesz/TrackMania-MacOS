@@ -73,8 +73,23 @@ struct HubSidebar: View {
             }
         }
         .listStyle(.sidebar)
+        .safeAreaInset(edge: .bottom, spacing: 0) { footer }
         .navigationTitle("TrackMania")
         .navigationSplitViewColumnWidth(min: 220, ideal: 300, max: 380)
+    }
+
+    private var footer: some View {
+        HStack(spacing: 8) {
+            HubIconView(size: 22)
+            Text("TrackMania Mac").font(.callout.weight(.medium))
+            if let version = UpdateChecker.bundleVersion ?? model.snapshot?.hubVersion {
+                Text(version).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .accessibilityElement(children: .combine)
     }
 
     private func rows(_ titles: [HubTitle]) -> some View {

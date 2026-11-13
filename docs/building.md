@@ -17,7 +17,9 @@ bundled inside the download.
 - `config/titles/*.json` is the title registry; `config/pins.json` pins
   upstream downloads.
 - `assets/titles/*.svg` is hand-authored title artwork, rasterized to PNG only
-  inside the app bundle at package time; `assets/branding/` holds the hub icon.
+  inside the app bundle at package time; `assets/branding/` holds the hub icon,
+  an Icon Composer document that the packager compiles with `actool` (Xcode 26
+  or later).
 - `src/c/` holds the Windows session helper source.
 - `src/python/trackmania_mac/` holds the Python packages: `app` (icon extraction,
   app launcher), `build` (runtime build), `guard` (locks, uninstall and the move
@@ -196,7 +198,8 @@ make zip
 
 `make appbundle` compiles the release `TrackManiaHub` executable, places it in
 `.build/app/TrackMania Mac.app`, embeds the shell launcher payload and ad-hoc
-signs the result. It uses `uv` to stage the exact portable arm64 CPython 3.12.14
+signs the result. It compiles the hub icon with `actool`, which needs Xcode 26
+or later. It uses `uv` to stage the exact portable arm64 CPython 3.12.14
 runtime inside the app, so the hub and later Game/Settings app wrappers do not
 depend on a host Python installation. Set `TRACKMANIA_MAC_BUNDLED_PYTHON_ROOT` to an
 already installed compatible uv-managed Python root for an offline package

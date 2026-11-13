@@ -7,6 +7,7 @@ struct HeroHeaderView: View {
         let tint = FallbackIcon.color(for: title)
         HStack(spacing: 20) {
             GameIconView(title: title, size: 96)
+                .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 10) {
                 Text(title.name)
@@ -32,6 +33,7 @@ struct HeroHeaderView: View {
                 .allowsHitTesting(false)
         }
         .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay { RoundedRectangle(cornerRadius: 16).strokeBorder(tint.opacity(0.25)) }
         .accessibilityElement(children: .contain)
     }
 

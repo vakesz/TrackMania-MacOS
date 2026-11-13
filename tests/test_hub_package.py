@@ -18,17 +18,12 @@ APP = ROOT / ".build/app/TrackMania Mac.app"
 ZIP = ROOT / ".build/dist" / f"TrackMania-Mac-{VERSION}.app.zip"
 PACKAGER = ROOT / "src/shell/tools/package-app.sh"
 RELEASE_ASSETS = ROOT / "config/release-assets.sha256"
+# The flat icon actool writes for systems older than macOS 26.
 ICON_SIZES = {
     "icon_16x16.png": 16,
     "icon_16x16@2x.png": 32,
-    "icon_32x32.png": 32,
-    "icon_32x32@2x.png": 64,
     "icon_128x128.png": 128,
     "icon_128x128@2x.png": 256,
-    "icon_256x256.png": 256,
-    "icon_256x256@2x.png": 512,
-    "icon_512x512.png": 512,
-    "icon_512x512@2x.png": 1024,
 }
 
 
@@ -79,7 +74,16 @@ class HubPackageTests(unittest.TestCase):
         launcher = APP / "Contents/Resources/launcher"
         icon = APP / "Contents/Resources/AppIcon.icns"
         self.assertTrue(executable.is_file())
-        self.assertTrue((ROOT / "assets/branding/trackmania-mac-icon.svg").is_file())
+        # macOS 26 and later read the layered icon from the asset catalog.
+        catalog = subprocess.check_output(
+            ["xcrun", "assetutil", "--info", str(APP / "Contents/Resources/Assets.car")],
+            text=True,
+        )
+        names = {entry.get("Name") for entry in json.loads(catalog)}
+        self.assertIn("AppIcon", names)
+        layers = {p.stem for p in (ROOT / "assets/branding/AppIcon.icon/Assets").glob("*.svg")}
+        self.assertTrue(layers)
+        self.assertLessEqual({f"AppIcon_Assets/{layer}" for layer in layers}, names)
         self.assertGreater(icon.stat().st_size, 1024)
         self.assertEqual(icon.read_bytes()[:4], b"icns")
         self.assertTrue((launcher / "src/shell/cli/trackmania-mac").is_file())
@@ -130,6 +134,8 @@ class HubPackageTests(unittest.TestCase):
             info = plistlib.load(stream)
         self.assertEqual(info["CFBundleExecutable"], "TrackMania Mac")
         self.assertEqual(info["CFBundleIconFile"], "AppIcon")
+        self.assertEqual(info["CFBundleIconName"], "AppIcon")
+        self.assertEqual(info["LSMinimumSystemVersion"], "14.0")
         self.assertEqual(info["LSApplicationCategoryType"], "public.app-category.games")
         self.assertEqual(info["CFBundleShortVersionString"], VERSION)
         self.assertEqual(info["CFBundleVersion"], VERSION)

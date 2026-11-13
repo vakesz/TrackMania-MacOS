@@ -131,6 +131,11 @@ enum HubBackendError: LocalizedError {
     }
 }
 
+/// What `hub clean` can delete.
+enum HubCleanKind: String, Sendable {
+    case downloads, runtimes, logs
+}
+
 final class HubBackend: Sendable {
     static let supportedSchema = 3
     /// Moves files of an earlier release into the data folder; not tied to a title.
@@ -156,8 +161,17 @@ final class HubBackend: Sendable {
         return HubBackend(launcherURL: launcher)
     }
 
+    /// Exit status the backend uses when a game or another operation is running.
+    static let busyStatus: Int32 = 75
+
+    /// Arguments of `hub clean`: what to delete, never which paths.
+    static func cleanArguments(_ kind: HubCleanKind) -> [String] {
+        ["hub", "clean", kind.rawValue]
+    }
+
     static func runArguments(titleID: String, actionID: String, source: URL? = nil,
-                             runtime: RuntimeSource? = nil, includeSaves: Bool = false) -> [String] {
+                             runtime: RuntimeSource? = nil, includeSaves: Bool = false,
+                             windowSize: String? = nil, audio: Bool? = nil, x87: Bool? = nil) -> [String] {
         var arguments = ["hub", "run", titleID, actionID]
         if let source {
             arguments += ["--source", source.path]
@@ -167,6 +181,15 @@ final class HubBackend: Sendable {
         }
         if includeSaves {
             arguments.append("--include-saves")
+        }
+        if let windowSize {
+            arguments += ["--window-size", windowSize]
+        }
+        if let audio {
+            arguments += ["--audio", audio ? "on" : "off"]
+        }
+        if let x87 {
+            arguments += ["--x87", x87 ? "on" : "off"]
         }
         return arguments
     }
@@ -194,12 +217,21 @@ final class HubBackend: Sendable {
 
     func run(titleID: String, actionID: String, source: URL? = nil,
              runtime: RuntimeSource? = nil, includeSaves: Bool = false,
+             windowSize: String? = nil, audio: Bool? = nil, x87: Bool? = nil,
              handle: HubCommandHandle = HubCommandHandle(),
              onOutput: @escaping @Sendable (String) -> Void = { _ in }) async throws -> HubCommandResult {
         let result = try await run(
             arguments: Self.runArguments(titleID: titleID, actionID: actionID, source: source,
-                                         runtime: runtime, includeSaves: includeSaves),
+                                         runtime: runtime, includeSaves: includeSaves,
+                                         windowSize: windowSize, audio: audio, x87: x87),
             handle: handle, onOutput: onOutput)
+        guard result.status == 0 else { throw HubBackendError.commandFailed(result) }
+        return result
+    }
+
+    func clean(_ kind: HubCleanKind, handle: HubCommandHandle = HubCommandHandle(),
+               onOutput: @escaping @Sendable (String) -> Void = { _ in }) async throws -> HubCommandResult {
+        let result = try await run(arguments: Self.cleanArguments(kind), handle: handle, onOutput: onOutput)
         guard result.status == 0 else { throw HubBackendError.commandFailed(result) }
         return result
     }

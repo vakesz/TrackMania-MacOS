@@ -1,3 +1,6 @@
+// The view model owns all run state, including Settings operations, so they stay in one file.
+// swiftlint:disable file_length
+
 import AppKit
 import Combine
 import Foundation
@@ -58,6 +61,8 @@ final class HubViewModel: ObservableObject {
     @Published private(set) var migrating = false
     /// Why the last move did not finish; cleared when a new one starts.
     @Published private(set) var migrationFailure: String?
+    /// How the last Settings operation ended; cleared when the next one starts.
+    @Published private(set) var settingsStatus: SettingsStatus?
 
     /// Not published by the view model: only views that show output observe it.
     let activity = InstallerActivity()
@@ -65,6 +70,8 @@ final class HubViewModel: ObservableObject {
     /// Called when a run ends and the UI is idle again (the quit flow waits on it).
     var onIdle: (() -> Void)?
 
+    /// Names the running Settings operation (not tied to a title) for the quit prompt.
+    private var settingsOperationLabel: String?
     private var activityToken: UUID?
     private var commandHandle: HubCommandHandle?
     private var reloadTask: Task<Void, Never>?
@@ -137,6 +144,8 @@ final class HubViewModel: ObservableObject {
         guard let backend, runningAction == nil else { return }
         if action.kind == .install || action.kind == .import { Notifier.requestAuthorizationOnce() }
         runningAction = action.id
+        settingsOperationLabel = nil
+        settingsStatus = nil
         runningTitleID = title.id
         activityTitleID = title.id
         cancelling = false
@@ -216,7 +225,7 @@ final class HubViewModel: ObservableObject {
     }
 
     var runningActionLabel: String? {
-        runningAction == nil ? nil : lastRun?.actionLabel
+        runningAction == nil ? nil : (settingsOperationLabel ?? lastRun?.actionLabel)
     }
 
     func chooseImportSource(for title: HubTitle, action: HubAction) {
@@ -309,6 +318,81 @@ final class HubViewModel: ObservableObject {
 
     func run(for title: HubTitle) -> RunRecord? {
         lastRun?.titleID == title.id ? lastRun : nil
+    }
+}
+
+// MARK: Settings operations
+
+enum SettingsStatus: Equatable {
+    case done(String)
+    case failed(String)
+}
+
+extension HubViewModel {
+    /// A failed Settings command: exit 75 means a game or another operation is running.
+    static func settingsFailure(_ result: HubCommandResult) -> String {
+        if result.status == HubBackend.busyStatus {
+            return String(localized: "A game or another operation is running. Try again when it has finished.")
+        }
+        return failureReason(in: result.failureText)
+    }
+
+    /// Deletes what the backend lists for `kind`, then reloads the snapshot.
+    func clean(_ kind: HubCleanKind) {
+        let label: String
+        switch kind {
+        case .downloads: label = String(localized: "Clear downloads")
+        case .runtimes: label = String(localized: "Remove old runtimes")
+        case .logs: label = String(localized: "Clear logs")
+        }
+        performSettingsOperation(label: label, done: String(localized: "\(label) finished.")) { backend, handle in
+            try await backend.clean(kind, handle: handle)
+        }
+    }
+
+    /// Sends only the changed defaults through `hub run TITLE set-defaults`.
+    func setDefaults(title: String, windowSize: String? = nil, audio: Bool? = nil, x87: Bool? = nil) {
+        guard windowSize != nil || audio != nil || x87 != nil else { return }
+        let label = String(localized: "Apply game defaults")
+        performSettingsOperation(label: label, done: String(localized: "Game defaults saved.")) { backend, handle in
+            try await backend.run(titleID: title, actionID: "set-defaults", windowSize: windowSize,
+                                  audio: audio, x87: x87, handle: handle)
+        }
+    }
+
+    private func performSettingsOperation(
+        label: String, done: String,
+        _ command: @escaping @Sendable (HubBackend, HubCommandHandle) async throws -> HubCommandResult
+    ) {
+        guard let backend, runningAction == nil else { return }
+        runningAction = "settings"
+        settingsOperationLabel = label
+        runningTitleID = nil
+        cancelling = false
+        settingsStatus = nil
+        message = nil
+        let handle = HubCommandHandle()
+        commandHandle = handle
+        Task { [weak self] in
+            var status = SettingsStatus.done(done)
+            do {
+                _ = try await command(backend, handle)
+            } catch HubBackendError.cancelled {
+                status = .failed(String(localized: "Cancelled."))
+            } catch HubBackendError.commandFailed(let result) {
+                status = .failed(Self.settingsFailure(result))
+            } catch {
+                status = .failed(error.localizedDescription)
+            }
+            guard let self else { return }
+            runningAction = nil
+            settingsOperationLabel = nil
+            commandHandle = nil
+            cancelling = false
+            settingsStatus = status
+            reload(clearMessage: false)
+            onIdle?()
+        }
     }
 }
 

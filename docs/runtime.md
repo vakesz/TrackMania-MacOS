@@ -156,12 +156,13 @@ no system Rosetta files, privileged service or debugger entitlement is needed.
 
 ### OpenAL
 
-Applies to: Nations Forever today. Only a title whose registry entry sets
-`creative_openal_sha256` gets this replacement, and only `tmnf` does.
+Applies to: Nations and United Forever. Only a title whose registry entry sets
+`creative_openal_sha256` gets this replacement.
 
-Nations Forever plays its sound through `OpenAL32.dll` in the game directory. The game ships
+Both games play their sound through `OpenAL32.dll` in the game directory. They ship
 Creative's OpenAL router with its `wrap_oal.dll` software mixer, which on macOS 27
 keeps a real-time thread busy for much of a core and lowers race frame rates.
+Both ship the same Creative `OpenAL32.dll`, so both entries pin the same hash.
 `make install` replaces it with OpenAL Soft's official 32-bit `soft_oal.dll`
 (pinned version and SHA-256), keeps the original as `OpenAL32.creative.dll` and
 puts OpenAL Soft's license beside it as `OpenAL32.COPYING.txt`. OpenAL Soft runs
@@ -175,8 +176,8 @@ the prefix user's `AppData/Roaming/alsoft.ini`.
 `TRACKMANIA_MAC_OPENAL=creative make install` restores Creative's library; later installs
 and updates keep that choice until `TRACKMANIA_MAC_OPENAL=soft make install`. A different
 `OpenAL32.dll` placed there by the user is left unchanged. Only a library
-whose hash the title registry pins (`creative_openal_sha256`, today Nations Forever's) is
-replaced; other titles keep the OpenAL they ship.
+whose hash the title registry pins (`creative_openal_sha256`) is replaced; other
+titles keep the OpenAL they ship.
 
 ### Launcher and first launch
 

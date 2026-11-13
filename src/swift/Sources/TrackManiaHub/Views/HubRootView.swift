@@ -59,7 +59,7 @@ struct HubRootView: View {
 }
 
 struct HubSidebar: View {
-    static let minimumWidth: CGFloat = 220
+    static let minimumWidth: CGFloat = 250
 
     @ObservedObject var model: HubViewModel
     let titles: [HubTitle]

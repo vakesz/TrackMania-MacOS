@@ -160,5 +160,8 @@ final class SettingsTests: XCTestCase {
     func testSidebarFooterOpensSettingsAndFitsTheSidebar() {
         XCTAssertEqual(HubSidebarFooter.settingsSymbol, "gearshape")
         XCTAssertEqual(HubSidebarFooter.settingsLabel, "Settings")
+        // The gear, icon, name and a long version fit the narrowest sidebar.
+        let footer = NSHostingView(rootView: HubSidebarFooter(version: "10.10.10"))
+        XCTAssertLessThanOrEqual(footer.fittingSize.width, HubSidebar.minimumWidth)
     }
 }

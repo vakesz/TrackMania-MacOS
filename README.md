@@ -11,7 +11,10 @@ Forever is provisional and the other games are listed but unsupported (see
 **Website:** <https://vakesz.github.io/TrackMania-MacOS/> ·
 **Download:** [latest release](https://github.com/vakesz/TrackMania-MacOS/releases/latest)
 
-![The TrackMania Mac hub app with Nations Forever selected, showing the Install button and setup checklist](docs/images/hub.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/hub-dark.png">
+  <img src="docs/images/hub.png" alt="The TrackMania Mac hub app with Nations Forever selected, showing the Install button and setup checklist" width="900">
+</picture>
 
 This is an independent community project, not affiliated with Nadeo or Ubisoft.
 Games and Microsoft DirectX are downloaded from their original hosts or supplied

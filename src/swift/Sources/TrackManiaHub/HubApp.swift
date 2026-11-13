@@ -55,6 +55,8 @@ struct HubCommands: Commands {
 
 enum HubLinks {
     static let repository = URL(string: "https://github.com/vakesz/TrackMania-MacOS")!
+    /// docs/tmuf-cd-key.md, rendered by GitHub.
+    static let cdKeyHelp = URL(string: "https://github.com/vakesz/TrackMania-MacOS/blob/main/docs/tmuf-cd-key.md")!
 }
 
 enum HubDefaults {

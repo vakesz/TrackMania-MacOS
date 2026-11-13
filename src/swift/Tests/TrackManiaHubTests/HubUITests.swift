@@ -217,6 +217,49 @@ final class HubUITests: XCTestCase {
         let noGame = HubInstallationState(gameApp: true, settingsApp: true)
         XCTAssertFalse(HubTitle(id: "t", name: "T", requiresSerial: true, state: noGame, apps: apps).showsRegisterKey)
     }
+
+    func testPlayDisabledUntilCDKeyPresent() {
+        var state = HubInstallationState(game: true, gameApp: true, settingsApp: true)
+        state.cdKey = HubProbe(ready: false, note: "CD key required")
+        let locked = HubTitle(id: "tmu", name: "United", requiresSerial: true, state: state)
+        XCTAssertEqual(locked.primaryControl, .play)
+        XCTAssertTrue(locked.needsCDKey)
+        XCTAssertFalse(locked.playEnabled)
+        XCTAssertEqual(locked.availability, "CD key required")
+        XCTAssertEqual(locked.summary.last?.label, "CD key")
+        XCTAssertEqual(HubUIText.cdKeyRequired, "CD key required")
+        XCTAssertEqual(HubLinks.cdKeyHelp.lastPathComponent, "tmuf-cd-key.md")
+
+        state.cdKey = HubProbe(ready: true)
+        let unlocked = HubTitle(id: "tmu", name: "United", requiresSerial: true, state: state)
+        XCTAssertFalse(unlocked.needsCDKey)
+        XCTAssertTrue(unlocked.playEnabled)
+        XCTAssertEqual(unlocked.availability, "Ready to play")
+        // Registered: the register button and its note give way to Settings.
+        XCTAssertTrue(locked.showsRegisterKey)
+        XCTAssertFalse(unlocked.showsRegisterKey)
+        XCTAssertNil(unlocked.registerKeyTarget)
+    }
+
+    func testTitlesWithoutCDKeyProbeAreNeverGated() {
+        let nations = HubTitle(id: "tmnf", name: "Nations", state: playReady)
+        XCTAssertFalse(nations.needsCDKey)
+        XCTAssertTrue(nations.playEnabled)
+        XCTAssertFalse(nations.summary.contains { $0.label == "CD key" })
+    }
+
+    func testDecodesCDKeyProbe() throws {
+        let json = #"""
+        {"schema":3,"titles":[{"id":"tmu","name":"U","state":{"game":{"ready":true},
+         "gameApp":{"ready":true},"cdKey":{"ready":false,"note":"CD key required"}}},
+         {"id":"tmnf","name":"N","state":{"game":{"ready":true},"gameApp":{"ready":true}}}]}
+        """#
+        let titles = try HubBackend.decodeSnapshot(Data(json.utf8)).titles
+        XCTAssertEqual(titles[0].state.cdKey, HubProbe(ready: false, note: "CD key required"))
+        XCTAssertFalse(titles[0].playEnabled)
+        XCTAssertNil(titles[1].state.cdKey)
+        XCTAssertTrue(titles[1].playEnabled)
+    }
 }
 
 extension HubInstallationState {

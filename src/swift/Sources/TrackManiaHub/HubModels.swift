@@ -347,13 +347,15 @@ struct HubInstallationState: Decodable, Equatable {
     var game: HubProbe?
     var gameApp: HubProbe?
     var settingsApp: HubProbe?
+    /// Present only for titles that need a CD key in Nadeo.ini (United Forever).
+    var cdKey: HubProbe?
 
     static let empty = HubInstallationState()
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case runtime, prefix, directx, renderer, game, gameApp, settingsApp
+        case runtime, prefix, directx, renderer, game, gameApp, settingsApp, cdKey
     }
 
     init(from decoder: Decoder) throws {
@@ -365,6 +367,7 @@ struct HubInstallationState: Decodable, Equatable {
         game = try? c.decodeIfPresent(HubProbe.self, forKey: .game)
         gameApp = try? c.decodeIfPresent(HubProbe.self, forKey: .gameApp)
         settingsApp = try? c.decodeIfPresent(HubProbe.self, forKey: .settingsApp)
+        cdKey = try? c.decodeIfPresent(HubProbe.self, forKey: .cdKey)
     }
 }
 
@@ -388,7 +391,7 @@ extension HubTitle {
     }
 
     var summary: [InstallationItem] {
-        [
+        var items = [
             item("Runtime", "shippingbox", state.runtime),
             item("Wine prefix", "folder", state.prefix),
             item("DirectX", "cube", state.directx),
@@ -397,6 +400,8 @@ extension HubTitle {
             item("Game app", "play.rectangle", state.gameApp),
             item("Settings app", "gearshape", state.settingsApp)
         ]
+        if let cdKey = state.cdKey { items.append(item("CD key", "key", cdKey)) }
+        return items
     }
 
     private func item(_ label: String, _ symbol: String, _ probe: HubProbe?) -> InstallationItem {
@@ -416,7 +421,9 @@ extension HubTitle {
 
     var availability: String {
         if error != nil { return "Needs attention" }
-        if state.gameApp?.ready == true, state.game?.ready == true { return "Ready to play" }
+        if state.gameApp?.ready == true, state.game?.ready == true {
+            return needsCDKey ? String(localized: "CD key required") : "Ready to play"
+        }
         if state.game?.ready == true { return "Game files installed" }
         if state.prefix?.ready == true { return "Platform ready" }
         return "Not installed"
@@ -482,12 +489,20 @@ extension HubTitle {
 
     /// Titles that ask for a player key show a register button and a note. The key can only be
     /// entered in the game's own launcher, which the Settings app opens; Play cannot ask for it.
+    /// Once the backend reports the key as present, the plain Settings button returns.
     var showsRegisterKey: Bool {
-        requiresSerial == true && isInstalled && state.settingsApp?.ready == true
+        requiresSerial == true && isInstalled && state.settingsApp?.ready == true && state.cdKey?.ready != true
     }
 
     /// The app the register button opens: the Settings app, or nil when the button is hidden.
     var registerKeyTarget: String? { showsRegisterKey ? apps.settings : nil }
+
+    /// True when the backend reports a CD key probe that is not ready. Titles without the
+    /// probe (every title but United Forever) are never gated.
+    var needsCDKey: Bool { state.cdKey.map { !$0.ready } ?? false }
+
+    /// Play is shown but disabled until the CD key is present.
+    var playEnabled: Bool { primaryControl == .play && !needsCDKey }
 
     /// Play when the game app and the game files are both ready (the wrappers outlive an
     /// uninstall); otherwise the backend's primary (or first) action.

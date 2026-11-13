@@ -17,7 +17,18 @@ named after the game. For Nations Forever they are:
 The hub opens those app wrappers through macOS; it does not replace them.
 For titles that need a serial (`requiresSerial`), the hub replaces the Settings button
 with "Register player key", which opens the same Settings app, and notes that the key is
-entered there before pressing Play.
+entered there before pressing Play. Once a title's `cdKey` item (below) is ready, the
+key is registered and the plain Settings button comes back.
+
+A title with `cd_key_in_nadeo_ini` in its registry entry (United Forever)
+also carries a `cdKey` item in `state` once its game files are installed. It is
+ready when the
+`[TmForever]` section of the game folder's `Nadeo.ini` has an `InstallKey` that
+is not empty, `%CDKEY%` or `Ask`; the snapshot never includes the key. While it
+is not ready, the hub shows Play disabled with "CD key required" and a link to
+[tmuf-cd-key.md](tmuf-cd-key.md), which explains how Steam owners get the key.
+Titles without the item, such as Nations Forever, are never gated. The gate is
+in the hub only; the Game app and `trackmania-mac play` don't check the key.
 
 ## Backend contract
 

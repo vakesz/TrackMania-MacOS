@@ -8,7 +8,9 @@ struct ActionBar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             controls
-            if title.showsRegisterKey {
+            if title.needsCDKey {
+                cdKeyNotice
+            } else if title.showsRegisterKey {
                 Text(HubUIText.registerKeyNote).font(.callout).foregroundStyle(.secondary)
             }
         }
@@ -28,7 +30,8 @@ struct ActionBar: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .keyboardShortcut(.return, modifiers: .command)
-                .disabled(busy)
+                .disabled(busy || !title.playEnabled)
+                .help(title.needsCDKey ? HubUIText.cdKeyRequired : "")
             case let .action(action):
                 Button {
                     perform(action)
@@ -56,6 +59,15 @@ struct ActionBar: View {
             moreMenu(busy: busy)
             Spacer()
         }
+    }
+
+    private var cdKeyNotice: some View {
+        HStack(spacing: 6) {
+            Label(HubUIText.cdKeyRequired, systemImage: "key.fill")
+                .foregroundStyle(.orange)
+            Link(HubUIText.cdKeyHelpLink, destination: HubLinks.cdKeyHelp)
+        }
+        .font(.callout)
     }
 
     private func moreMenu(busy: Bool) -> some View {

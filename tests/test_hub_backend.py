@@ -109,6 +109,75 @@ class HubBackendTests(unittest.TestCase):
             # TMU's retail installer keeps the serial-key note surfaced.
             self.assertEqual(titles["tmu"]["requiresSerial"], True)
 
+    def test_cd_key_gate_reads_install_key_for_united_forever_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            games = home / "Library/TrackManiaMacOS/games"
+            program_files = "prefix/drive_c/Program Files (x86)"
+            tmu = games / "tmu" / program_files / "TmUnitedForever"
+            tmnf = games / "tmnf" / program_files / "TmNationsForever"
+            for folder in (tmu, tmnf):
+                folder.mkdir(parents=True)
+                (folder / "TmForever.exe").touch()
+            ini = tmu / "Nadeo.ini"
+
+            def titles():
+                result = self.run_hub("snapshot", home=home)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                return {t["id"]: t for t in json.loads(result.stdout)["titles"]}
+
+            # Not installed yet: no CD key item, so the hub shows no notice.
+            (tmu / "TmForever.exe").unlink()
+            self.assertNotIn("cdKey", titles()["tmu"]["state"])
+            (tmu / "TmForever.exe").touch()
+
+            found = titles()
+            self.assertEqual(found["tmu"]["state"]["cdKey"]["ready"], False)
+            self.assertIn("Nadeo.ini", found["tmu"]["state"]["cdKey"]["note"])
+            for other in ("tmnf", "tm-original", "tm-canyon", "tm-turbo"):
+                self.assertNotIn("cdKey", found[other]["state"])
+
+            header = (
+                ";;;;;;;;;;;\n; WARNING ;\n;;;;;;;;;;;\n"
+                "; In order to avoid any misfunctioning do no edit this file !\n \n"
+                "[TmForever]\nVersion=2.11.25\nUserSubDir=TrackMania\n"
+                "Key=Ask\nDistro=TAHOR\nLanguage=en\n"
+            )
+            for line in ("", "InstallKey=\n", "InstallKey=%CDKEY%\n", "InstallKey=Ask\n"):
+                ini.write_text(header + line)
+                cd_key = titles()["tmu"]["state"]["cdKey"]
+                self.assertEqual(cd_key, {"ready": False, "note": "CD key required"}, line)
+
+            # A key in another section does not count.
+            ini.write_text(header + "[Other]\nInstallKey=PLACEHOLDER-KEY\n")
+            self.assertFalse(titles()["tmu"]["state"]["cdKey"]["ready"])
+
+            # A header with a trailing comment still opens the section.
+            ini.write_text(header.replace("[TmForever]", "[TmForever] ; game") + "InstallKey=K-1\n")
+            self.assertTrue(titles()["tmu"]["state"]["cdKey"]["ready"])
+
+            placeholder = "TEST-PLACEHOLDER-0000"
+            ini.write_text(header + f"InstallKey={placeholder}\r\n")
+            result = self.run_hub("snapshot", home=home)
+            cd_key = {t["id"]: t for t in json.loads(result.stdout)["titles"]}["tmu"]["state"][
+                "cdKey"
+            ]
+            self.assertEqual(cd_key, {"ready": True, "note": "CD key present"})
+            # The snapshot reports only whether a key exists, never the key.
+            self.assertNotIn(placeholder, result.stdout)
+
+    def test_install_key_parses_the_tmforever_section(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ini = Path(directory) / "Nadeo.ini"
+            self.assertIsNone(state.install_key(ini))
+            ini.write_bytes(b"[TmForever]\r\nKey=Ask\r\n installkey = ABC-123 \r\n")
+            self.assertEqual(state.install_key(ini), "ABC-123")
+            # The last InstallKey in the section wins.
+            ini.write_bytes(b"[TmForever]\nInstallKey=%CDKEY%\nInstallKey=ABC-456\n")
+            self.assertEqual(state.install_key(ini), "ABC-456")
+            ini.write_bytes(b"[TmForever]\nKey=Ask\n")
+            self.assertIsNone(state.install_key(ini))
+
     def test_snapshot_icon_prefers_game_icon_then_bundled_artwork(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)

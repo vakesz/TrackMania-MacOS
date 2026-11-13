@@ -524,6 +524,14 @@ extension HubTitle {
     /// Installed titles are those whose game files are in place.
     var isInstalled: Bool { state.game?.ready == true }
 
+    /// Unsupported titles (and unknown statuses) lead with their notes, so the warning is read
+    /// before the install button is used.
+    var showsNotesFirst: Bool { contributionNote != nil }
+
+    /// The setup checklist can be folded away once the game is installed. It starts folded
+    /// only when every step is ready, so a broken step is never hidden.
+    var setupStartsCollapsed: Bool { isInstalled && summary.allSatisfy(\.ready) }
+
     /// Titles that ask for a player key show a register button and a note. The key can only be
     /// entered in the game's own launcher, which the Settings app opens; Play cannot ask for it.
     /// Once the backend reports the key as present, the plain Settings button returns.

@@ -155,8 +155,29 @@ remove_legacy_launcher() {
   rm -rf -- "$legacy" || warn "Could not remove the old launcher: $legacy"
 }
 
+# launch_setting_value SETTING PREVIOUS — the value install_app records for
+# SETTING: the one this command has, unless SETTING is a launch option the
+# user did not give and PREVIOUS (the replaced launcher's config) records a
+# valid one, which is kept.
+launch_setting_value() {
+  local setting="$1" previous="$2" kept
+  case " ${TRACKMANIA_MAC_LAUNCH_SETTINGS[*]} " in
+    *" ${setting} "*) ;;
+    *) printf '%s\n' "${!setting}"; return 0 ;;
+  esac
+  case "$TRACKMANIA_MAC_EXPLICIT_LAUNCH_OPTIONS" in
+    *" ${setting} "*) printf '%s\n' "${!setting}"; return 0 ;;
+  esac
+  if test -n "$previous" && kept="$(launcher_config_value "$previous" "${setting#TRACKMANIA_MAC_}")" \
+    && launch_option_valid "$setting" "$kept"; then
+    printf '%s\n' "$kept"
+  else
+    printf '%s\n' "${!setting}"
+  fi
+}
+
 install_app() {
-  local staging setting cleanup
+  local staging setting value cleanup previous=""
   local game_name settings_name game_id settings_id app_icon
   if test "${TRACKMANIA_MAC_APP_OPERATION_FD+x}" != x; then
     trackmania_mac_python -m trackmania_mac.guard.operation_guard app-run "$TRACKMANIA_MAC_PREFIX" \
@@ -174,6 +195,10 @@ install_app() {
   # Refresh the cached game icon before anything is replaced.
   ensure_title_icon || warn "Could not extract the game icon for $TRACKMANIA_MAC_TITLE; using the bundled artwork."
   is_safe_managed_path "$TRACKMANIA_MAC_LAUNCHER" || die "Unsafe launcher path: $TRACKMANIA_MAC_LAUNCHER"
+  if test -d "$TRACKMANIA_MAC_LAUNCHER" && test ! -L "$TRACKMANIA_MAC_LAUNCHER" \
+    && has_marker "$TRACKMANIA_MAC_LAUNCHER" "$LAUNCHER_MARKER" "$LEGACY_LAUNCHER_MARKER"; then
+    previous="${TRACKMANIA_MAC_LAUNCHER}/config/installation.sh"
+  fi
   mkdir -p "$(dirname "$TRACKMANIA_MAC_LAUNCHER")"
   staging="$(mktemp -d "$(dirname "$TRACKMANIA_MAC_LAUNCHER")/.launcher-install.XXXXXX")"
   (
@@ -183,8 +208,9 @@ install_app() {
     stage_launcher_payload "$TRACKMANIA_MAC_PROJECT_DIR" "$staging"
     # printf %q keeps spaces, apostrophes and shell metacharacters literal.
     for setting in "${LAUNCHER_SETTINGS[@]}"; do
+      value="$(launch_setting_value "$setting" "$previous")"
       # shellcheck disable=SC2016 # This text executes later, in the installed launcher.
-      printf 'if test -z "${%s:-}"; then export %s=%q; fi\n' "$setting" "$setting" "${!setting}"
+      printf 'if test -z "${%s:-}"; then export %s=%q; fi\n' "$setting" "$setting" "$value"
     done >"${staging}/config/installation.sh"
     touch "${staging}/${LAUNCHER_MARKER}"
     if test -e "$TRACKMANIA_MAC_LAUNCHER"; then
@@ -324,6 +350,95 @@ shell_word_value() {
   done
   [[ "$out" != *[[:cntrl:]]* ]] || return 1
   printf '%s\n' "$out"
+}
+
+# The form of one setting line install_app writes; group 3 is one %q word.
+readonly LAUNCHER_SETTING_LINE='^if test -z "\$\{([A-Z0-9_]+):-\}"; then export ([A-Z0-9_]+)=(.+); fi$'
+
+# launcher_config_settings FILE — print the settings of an installed launcher's
+# config/installation.sh as NAME<tab>VALUE lines, values decoded and never run.
+# Fails unless FILE is a plain file whose every line is blank, a comment or a
+# setting exactly as install_app writes it.
+launcher_config_settings() {
+  local file="$1" line value
+  test -f "$file" && test ! -L "$file" || return 1
+  while IFS= read -r line || test -n "$line"; do
+    case "$line" in ''|'#'*) continue ;; esac
+    [[ "$line" =~ $LAUNCHER_SETTING_LINE ]] && test "${BASH_REMATCH[1]}" = "${BASH_REMATCH[2]}" || return 1
+    value="$(shell_word_value "${BASH_REMATCH[3]}")" || return 1
+    printf '%s\t%s\n' "${BASH_REMATCH[1]}" "$value"
+  done <"$file"
+}
+
+# launcher_config_dialect SETTINGS — the prefix the launcher's release names its
+# settings with (this release's or an earlier one's), from its *TITLE line.
+launcher_config_dialect() {
+  local name value
+  while IFS=$'\t' read -r name value; do
+    case "$name" in
+      TRACKMANIA_MAC_TITLE) printf 'TRACKMANIA_MAC_\n'; return 0 ;;
+      "${LEGACY_ENV_PREFIX}TITLE") printf '%s\n' "$LEGACY_ENV_PREFIX"; return 0 ;;
+    esac
+  done <<<"$1"
+  return 1
+}
+
+# launcher_config_value FILE KEY — the value FILE records for KEY (a setting
+# name without its prefix, such as AUDIO); fails when it records none or the
+# file is not in the expected form.
+launcher_config_value() {
+  local settings dialect name value
+  settings="$(launcher_config_settings "$1")" || return 1
+  dialect="$(launcher_config_dialect "$settings")" || return 1
+  while IFS=$'\t' read -r name value; do
+    if test "$name" = "${dialect}$2"; then
+      printf '%s\n' "$value"
+      return 0
+    fi
+  done <<<"$settings"
+  return 1
+}
+
+# update_launcher_config FILE KEY VALUE [KEY VALUE ...] — record each KEY (a
+# setting name without its prefix) as VALUE in an installed launcher's config,
+# in the launcher's own dialect: its line is replaced, or added when missing.
+# Every other line stays as it is. Fails, changing nothing, unless the file is
+# in the form launcher_config_settings accepts.
+update_launcher_config() {
+  local file="$1" settings dialect line name tmp index
+  local -a keys=() values=() written=()
+  shift
+  while test "$#" -ge 2; do
+    keys+=("$1")
+    values+=("$2")
+    written+=("")
+    shift 2
+  done
+  settings="$(launcher_config_settings "$file")" || return 1
+  dialect="$(launcher_config_dialect "$settings")" || return 1
+  tmp="$(mktemp "$(dirname "$file")/.installation.XXXXXX")" || die "Cannot stage $file"
+  # shellcheck disable=SC2094 # $tmp is a new file beside $file, published afterwards.
+  while IFS= read -r line || test -n "$line"; do
+    if [[ "$line" =~ $LAUNCHER_SETTING_LINE ]]; then
+      name="${BASH_REMATCH[1]}"
+      for ((index = 0; index < ${#keys[@]}; index++)); do
+        if test "$name" = "${dialect}${keys[index]}"; then
+          # shellcheck disable=SC2016 # This text executes later, in the installed launcher.
+          printf 'if test -z "${%s:-}"; then export %s=%q; fi\n' "$name" "$name" "${values[index]}"
+          written[index]=1
+          continue 2
+        fi
+      done
+    fi
+    printf '%s\n' "$line"
+  done <"$file" >"$tmp"
+  for ((index = 0; index < ${#keys[@]}; index++)); do
+    test -z "${written[index]}" || continue
+    name="${dialect}${keys[index]}"
+    # shellcheck disable=SC2016 # This text executes later, in the installed launcher.
+    printf 'if test -z "${%s:-}"; then export %s=%q; fi\n' "$name" "$name" "${values[index]}" >>"$tmp"
+  done
+  publish_file "$tmp" "$file"
 }
 
 # relink_launcher_config FILE — rewrite the recorded paths that moved. Every line
@@ -475,4 +590,66 @@ relink_apps() {
     "$TRACKMANIA_MAC_TITLE_LEGACY_BUNDLE_ID_GAME"
   relink_wrapper "$TRACKMANIA_MAC_SETTINGS_APP" configure "$TRACKMANIA_MAC_TITLE_BUNDLE_ID_SETTINGS" "$module" "$cli" \
     "$TRACKMANIA_MAC_TITLE_LEGACY_BUNDLE_ID_SETTINGS"
+}
+
+# --- Game defaults -------------------------------------------------------------
+# trackmania-mac defaults [--window-size fullscreen|WxH] [--audio on|off] [--x87 on|off]
+# records new launch options in this title's installed launcher. The hub's
+# Settings window runs it through `hub run TITLE set-defaults`.
+
+# parse_launcher_defaults ARGS — set the launch options the arguments name and
+# list them in LAUNCHER_DEFAULTS as "KEY VALUE" pairs (KEY without its prefix).
+LAUNCHER_DEFAULTS=()
+parse_launcher_defaults() {
+  local flag key seen=" "
+  LAUNCHER_DEFAULTS=()
+  while test "$#" -gt 0; do
+    flag="$1"
+    case "$flag" in
+      --window-size) key=WINDOW_SIZE ;;
+      --audio) key=AUDIO ;;
+      --x87) key=X87 ;;
+      *) die "Unknown option: $flag (use --window-size, --audio and --x87)" ;;
+    esac
+    test "$#" -ge 2 || die "$flag needs a value."
+    case "$seen" in *" $key "*) die "Give $flag only once." ;; esac
+    seen="${seen}${key} "
+    printf -v "TRACKMANIA_MAC_${key}" '%s' "$2"
+    LAUNCHER_DEFAULTS+=("$key" "$2")
+    shift 2
+  done
+  test "${#LAUNCHER_DEFAULTS[@]}" -gt 0 || die "Choose at least one of --window-size, --audio and --x87."
+}
+
+# launcher_defaults ARGS — the defaults command, holding the prefix lock (so a
+# running game blocks it) and the app lock install_app takes.
+launcher_defaults() {
+  local config="${TRACKMANIA_MAC_LAUNCHER}/config/installation.sh" index label
+  if test "${TRACKMANIA_MAC_APP_OPERATION_FD+x}" != x; then
+    trackmania_mac_python -m trackmania_mac.guard.operation_guard app-run "$TRACKMANIA_MAC_PREFIX" \
+      /bin/bash "${TRACKMANIA_MAC_PROJECT_DIR}/src/shell/cli/trackmania-mac" defaults "$@"
+    return $?
+  fi
+  trackmania_mac_python -m trackmania_mac.guard.operation_guard app-held "$TRACKMANIA_MAC_PREFIX" \
+    || die "Invalid app operation lock."
+  parse_launcher_defaults "$@"
+  validate_launch_options
+  if test -L "$TRACKMANIA_MAC_LAUNCHER" || ! test -d "$TRACKMANIA_MAC_LAUNCHER" \
+    || ! has_marker "$TRACKMANIA_MAC_LAUNCHER" "$LAUNCHER_MARKER" "$LEGACY_LAUNCHER_MARKER" \
+    || ! test -f "$config"; then
+    die "The $TRACKMANIA_MAC_TITLE_NAME apps are not installed. Install them from the hub first."
+  fi
+  test ! -L "${TRACKMANIA_MAC_LAUNCHER}/config" \
+    || die "The launcher settings folder is a symlink: ${TRACKMANIA_MAC_LAUNCHER}/config"
+  update_launcher_config "$config" "${LAUNCHER_DEFAULTS[@]}" \
+    || die "The $TRACKMANIA_MAC_TITLE_NAME launch settings are not in the expected form. Reinstall the apps from the hub."
+  for ((index = 0; index < ${#LAUNCHER_DEFAULTS[@]}; index += 2)); do
+    case "${LAUNCHER_DEFAULTS[index]}" in
+      WINDOW_SIZE) label=Display ;;
+      AUDIO) label=Sound ;;
+      *) label="x87 acceleration" ;;
+    esac
+    say "$label for $TRACKMANIA_MAC_TITLE_NAME: ${LAUNCHER_DEFAULTS[index + 1]}"
+  done
+  say "The new settings apply the next time the game starts."
 }

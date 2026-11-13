@@ -788,12 +788,7 @@ def _locks(prefixes: typing.Sequence[Path], home: Path) -> typing.List[int]:
     """
     fds: typing.List[int] = []
     try:
-        for prefix in prefixes:
-            operation_guard.check_inactive(prefix)
-        for prefix in prefixes:
-            fds.append(operation_guard.acquire_legacy(prefix))
-            fds.append(operation_guard.acquire(prefix))
-            operation_guard.check_inactive(prefix)
+        fds = operation_guard.acquire_prefixes(prefixes)
         legacy = home.joinpath(*LEGACY_CACHE) / LEGACY_APP_LOCK
         if legacy.is_file() and not legacy.is_symlink():
             fds.append(operation_guard._acquire(legacy, BUSY))

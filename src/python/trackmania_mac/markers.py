@@ -17,8 +17,8 @@ OPENAL = ".trackmania-mac-openal"
 # In an app wrapper's Contents and in a launcher folder.
 APP = ".trackmania-mac-app"
 LAUNCHER = ".trackmania-mac-launcher"
-# In a runtime built by this release (no earlier name is read: a release only
-# ever checks a runtime of its own version).
+# In a runtime built by this release. A release only ever runs a runtime of its
+# own version; the earlier name is read only to remove an old runtime.
 RUNTIME = ".trackmania-mac-runtime"
 SESSION_EXE = "trackmania-mac-session.exe"
 LICENSE = "trackmania-mac.txt"

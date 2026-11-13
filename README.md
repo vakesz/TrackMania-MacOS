@@ -135,6 +135,18 @@ installer and its logs. Choose **Remove game, keep saves** to keep your saves,
 or **Remove everything including saves** to also delete the game's saves
 folder. The runtime and the downloads other games share are always kept.
 
+**How do I free disk space?** Open the hub's Settings (the gear at the bottom
+left of the sidebar, or **TrackMania Mac > Settings**). **Clear downloads**
+removes the downloaded installers and archives, which are downloaded again
+when needed. **Remove old runtimes** removes Wine runtimes of earlier releases
+that no installed game uses. **Clear logs** removes the logs no game is
+writing. They wait until no game or install is running.
+
+**How do I play in a window or without sound?** In the hub's Settings, choose
+the game under **Game defaults**, then its display mode (full screen or a
+window size), sound and x87 acceleration. Quit the game first; the change
+applies the next time it starts and stays when you update the apps.
+
 **Something went wrong.** In the hub, select the game, click **⋯ > Create
 diagnostics report** and attach the zip, which is written to the logs folder
 (**⋯ > Open Logs Folder**), when you
@@ -245,10 +257,15 @@ example, `TRACKMANIA_MAC_TITLE=tmu make doctor` checks United Forever.
 | `./src/shell/cli/trackmania-mac play-vanilla` | Run the official game without Competition Patch |
 | `./src/shell/cli/trackmania-mac migrate` | Move an install from an earlier release into the data folder (see [moving from an earlier release](#moving-from-an-earlier-release)) |
 | `./src/shell/cli/trackmania-mac uninstall` | Remove this game's prefix, apps, launcher, installer and logs after confirmation; add `--include-saves` to remove its saves too |
+| `./src/shell/cli/trackmania-mac defaults --window-size 1280x720 --audio off --x87 on` | Change the launch defaults this game's installed apps use (any of the three options) |
+| `./src/shell/cli/trackmania-mac clean downloads` | Remove cached downloads; `clean runtimes` removes runtimes no installed game uses, `clean logs` logs no game is writing |
 
 To force a fixed windowed size, set `TRACKMANIA_MAC_WINDOW_SIZE=1280x720` (any `WxH`).
 That runs the game inside a separate Wine virtual desktop for this session.
-Each dimension must be between 1 and 65535.
+Each dimension must be between 1 and 65535. To make it the default of the
+installed apps, use `trackmania-mac defaults --window-size 1280x720` or the
+hub's Settings. `make install` keeps the defaults the apps record unless you
+set one of these variables for it.
 
 The session supervisor tracks both settings and game executables, so a launcher
 exit alone does not authorize cleanup. For Nations and United Forever, a game
@@ -323,9 +340,9 @@ output goes directly to a file, not a pipe that could interrupt a surviving game
 ### Diagnostic overrides
 
 `TRACKMANIA_MAC_X87=off make play` uses stock Rosetta math for a comparison.
-`TRACKMANIA_MAC_AUDIO=off make play` disables sound. Normal installs enable both audio
-and the patched translator. These temporary overrides do not change saved game
-settings. `make install` replaces the game's Creative OpenAL with OpenAL Soft;
+`TRACKMANIA_MAC_AUDIO=off make play` disables sound. A new install enables both audio
+and the patched translator. These temporary overrides change neither saved game
+settings nor the defaults of the installed apps. `make install` replaces the game's Creative OpenAL with OpenAL Soft;
 `TRACKMANIA_MAC_OPENAL=creative make install` puts the original back and keeps it on
 later installs.
 

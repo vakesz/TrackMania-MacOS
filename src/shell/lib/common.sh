@@ -46,6 +46,19 @@ for _trackmania_mac_name in "${TRACKMANIA_MAC_LOCATION_SETTINGS[@]}"; do
 done
 unset _trackmania_mac_name
 readonly TRACKMANIA_MAC_EXPLICIT_PATHS
+# Launch options an installed launcher records (install_app). One given by the
+# environment (or this launcher's own config) is the user's choice; for the others
+# install_app keeps what the launcher it replaces recorded, so reinstalling the
+# apps never resets the game defaults chosen in the hub.
+readonly TRACKMANIA_MAC_LAUNCH_SETTINGS=(TRACKMANIA_MAC_WINDOW_SIZE TRACKMANIA_MAC_AUDIO TRACKMANIA_MAC_X87 TRACKMANIA_MAC_RENDERER)
+TRACKMANIA_MAC_EXPLICIT_LAUNCH_OPTIONS=" "
+for _trackmania_mac_name in "${TRACKMANIA_MAC_LAUNCH_SETTINGS[@]}"; do
+  if test -n "${!_trackmania_mac_name:-}"; then
+    TRACKMANIA_MAC_EXPLICIT_LAUNCH_OPTIONS="${TRACKMANIA_MAC_EXPLICIT_LAUNCH_OPTIONS}${_trackmania_mac_name} "
+  fi
+done
+unset _trackmania_mac_name
+readonly TRACKMANIA_MAC_EXPLICIT_LAUNCH_OPTIONS
 # A custom TRACKMANIA_MAC_ROOT keeps its saves beside the prefix, as it always has.
 if test -n "${TRACKMANIA_MAC_ROOT+x}"; then _trackmania_mac_userdata_default=root; else _trackmania_mac_userdata_default=data; fi
 
@@ -378,24 +391,32 @@ competition_patch_is_ready() {
     && test -s "$TMLOADER_PROFILE_FILE"
 }
 
+# launch_option_valid NAME VALUE — VALUE is one NAME accepts, for the launch
+# options an installed launcher records (TRACKMANIA_MAC_LAUNCH_SETTINGS).
+# src/python/trackmania_mac/app/launcher_config.py repeats this for the hub's view.
+launch_option_valid() {
+  case "$1" in
+    TRACKMANIA_MAC_AUDIO|TRACKMANIA_MAC_X87) case "$2" in on|off) return 0 ;; esac ;;
+    TRACKMANIA_MAC_RENDERER) case "$2" in d9vk|wined3d-vulkan|wined3d-gl) return 0 ;; esac ;;
+    TRACKMANIA_MAC_WINDOW_SIZE)
+      test "$2" = fullscreen && return 0
+      [[ "$2" =~ ^[1-9][0-9]{0,4}x[1-9][0-9]{0,4}$ ]] && test "${2%x*}" -le 65535 && test "${2#*x}" -le 65535 && return 0
+      ;;
+  esac
+  return 1
+}
+
 validate_launch_options() {
   trackmania_mac_title_is_known "$TRACKMANIA_MAC_TITLE" \
     || die "Unknown TRACKMANIA_MAC_TITLE: $TRACKMANIA_MAC_TITLE (see ${TRACKMANIA_MAC_TITLES_DIR}/*.json)"
-  case "$TRACKMANIA_MAC_AUDIO" in on|off) ;; *) die "Unknown TRACKMANIA_MAC_AUDIO: $TRACKMANIA_MAC_AUDIO (use on or off)" ;; esac
-  case "$TRACKMANIA_MAC_X87" in on|off) ;; *) die "Unknown TRACKMANIA_MAC_X87: $TRACKMANIA_MAC_X87 (use on or off)" ;; esac
+  launch_option_valid TRACKMANIA_MAC_AUDIO "$TRACKMANIA_MAC_AUDIO" || die "Unknown TRACKMANIA_MAC_AUDIO: $TRACKMANIA_MAC_AUDIO (use on or off)"
+  launch_option_valid TRACKMANIA_MAC_X87 "$TRACKMANIA_MAC_X87" || die "Unknown TRACKMANIA_MAC_X87: $TRACKMANIA_MAC_X87 (use on or off)"
   case "$TRACKMANIA_MAC_OPENAL" in soft|creative) ;; *) die "Unknown TRACKMANIA_MAC_OPENAL: $TRACKMANIA_MAC_OPENAL (use soft or creative)" ;; esac
   case "$TRACKMANIA_MAC_DIAG" in on|off) ;; *) die "Unknown TRACKMANIA_MAC_DIAG: $TRACKMANIA_MAC_DIAG (use on or off)" ;; esac
-  case "$TRACKMANIA_MAC_RENDERER" in
-    d9vk|wined3d-vulkan|wined3d-gl) ;;
-    *) die "Unknown TRACKMANIA_MAC_RENDERER: $TRACKMANIA_MAC_RENDERER (use d9vk, wined3d-vulkan or wined3d-gl)" ;;
-  esac
-  if test "$TRACKMANIA_MAC_WINDOW_SIZE" != fullscreen; then
-    if ! [[ "$TRACKMANIA_MAC_WINDOW_SIZE" =~ ^[1-9][0-9]{0,4}x[1-9][0-9]{0,4}$ ]] \
-      || test "${TRACKMANIA_MAC_WINDOW_SIZE%x*}" -gt 65535 \
-      || test "${TRACKMANIA_MAC_WINDOW_SIZE#*x}" -gt 65535; then
-      die "Invalid TRACKMANIA_MAC_WINDOW_SIZE: use fullscreen or WIDTHxHEIGHT, with dimensions 1..65535."
-    fi
-  fi
+  launch_option_valid TRACKMANIA_MAC_RENDERER "$TRACKMANIA_MAC_RENDERER" \
+    || die "Unknown TRACKMANIA_MAC_RENDERER: $TRACKMANIA_MAC_RENDERER (use d9vk, wined3d-vulkan or wined3d-gl)"
+  launch_option_valid TRACKMANIA_MAC_WINDOW_SIZE "$TRACKMANIA_MAC_WINDOW_SIZE" \
+    || die "Invalid TRACKMANIA_MAC_WINDOW_SIZE: use fullscreen or WIDTHxHEIGHT, with dimensions 1..65535."
 }
 
 download_verified() (

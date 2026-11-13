@@ -230,6 +230,28 @@ def acquire(prefix, waiter=None):
     return _acquire(path, busy)
 
 
+def acquire_prefixes(prefixes):
+    """Every PREFIX's locks (the earlier releases' one first) with Wine inactive.
+
+    Wine is probed for every prefix before any lock is taken, which changes
+    nothing, and again once each is held. Returns the FDs, owned by the
+    caller; raises Busy (or anything else) with none of them left open.
+    """
+    fds = []
+    try:
+        for prefix in prefixes:
+            check_inactive(prefix)
+        for prefix in prefixes:
+            fds.append(acquire_legacy(prefix))
+            fds.append(acquire(prefix))
+            check_inactive(prefix)
+    except BaseException:
+        for fd in fds:
+            os.close(fd)
+        raise
+    return fds
+
+
 def _acquire(path, busy):
     parent = _open_directory(path.parent)
     try:

@@ -5,23 +5,29 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex">
     <meta name="color-scheme" content="light dark">
-    <title>Page Not Found - TrackMania Mac</title>
-    <!-- Self-contained on purpose: a 404 can be served from any path, so relative URLs would break. -->
+    <title>Wrong way - TrackMania Mac</title>
+    <!-- Self-contained on purpose: a 404 can be served from any path, so URLs are absolute. -->
     <style>
-      :root { color-scheme: light dark; --bg: #fff; --text: #1d1d1f; --muted: #6e6e73; --accent: #0066cc; }
-      @media (prefers-color-scheme: dark) { :root { --bg: #000; --text: #f5f5f7; --muted: #a1a1a6; --accent: #2997ff; } }
-      body { margin: 0; padding: 18vh 24px; background: var(--bg); color: var(--text); font: 17px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }
-      main { width: min(52ch, 100%); margin-inline: auto; }
-      h1 { margin: 0 0 12px; font-size: clamp(32px, 7vw, 56px); line-height: 1.05; letter-spacing: -0.03em; }
+      @font-face { font-family: "Saira"; font-style: italic; font-weight: 100 900; font-stretch: 50% 125%; font-display: swap; src: url("/TrackMania-MacOS/assets/fonts/saira-latin-italic.woff2") format("woff2"); }
+      @font-face { font-family: "Saira"; font-style: normal; font-weight: 100 900; font-stretch: 50% 125%; font-display: swap; src: url("/TrackMania-MacOS/assets/fonts/saira-latin.woff2") format("woff2"); }
+      :root { color-scheme: light dark; --bg: #2a2e35; --text: #fff; --muted: #c9cfd8; --gold: #ffd21f; }
+      @media (prefers-color-scheme: dark) { :root { --bg: #1d2026; } }
+      body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); font: 17px/1.55 "Saira", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+      body::before { content: ""; display: block; height: 18px; background: repeating-linear-gradient(-60deg, #e1342b 0 22px, #fff 22px 44px); }
+      main { width: min(52ch, calc(100% - 32px)); margin-inline: auto; padding: 16vh 0; }
+      .sign { display: inline-block; margin-bottom: 28px; padding: 6px 18px; border-radius: 6px; background: #e1342b; font-style: italic; font-weight: 800; font-stretch: 112%; transform: skewX(-12deg); }
+      h1 { margin: 0 0 12px; font-size: clamp(36px, 8vw, 64px); line-height: 1; font-style: italic; font-stretch: 118%; font-weight: 800; }
       p { margin: 0 0 12px; color: var(--muted); }
-      a { color: var(--accent); }
+      a { color: var(--gold); font-weight: 600; }
+      :focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; border-radius: 4px; }
     </style>
   </head>
   <body>
     <main>
-      <h1>Page Not Found</h1>
-      <p>That address does not exist on this site.</p>
-      <p><a href="/TrackMania-MacOS/">Return to TrackMania Mac</a></p>
+      <p class="sign" aria-hidden="true">Wrong way</p>
+      <h1>Page not found</h1>
+      <p>That address is not on this track.</p>
+      <p><a href="/TrackMania-MacOS/">Back to the start</a></p>
     </main>
   </body>
 </html>

@@ -10,7 +10,7 @@ description = "TrackMania for Apple Silicon"
 requires-python = ">=3.9"
 
 [dependency-groups]
-test = ["pytest>=8"]
+test = ["pytest>=8", "pytest-xdist>=3.6"]
 lint = ["ruff>=0.17"]
 typecheck = ["mypy>=1.14"]
 

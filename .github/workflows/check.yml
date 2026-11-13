@@ -49,7 +49,8 @@ jobs:
           fi
           printf '%s\n' "$changed"
           printf '%s\n' "$changed" | .github/scripts/ci-areas.sh | tee -a "$GITHUB_OUTPUT"
-  # Shell, Python and the CLI integration test (make check-scripts).
+  # Shell, Python (pytest under xdist) and the CLI integration test
+  # (make check-scripts).
   check:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.scripts == 'true') }}
@@ -81,7 +82,8 @@ jobs:
           echo "${RUNNER_TEMP}/shellcheck" >>"$GITHUB_PATH"
           "${RUNNER_TEMP}/shellcheck/shellcheck" --version
       - name: Validate
-        run: make check-scripts
+        # The tests mostly wait on subprocesses, so run two workers per vCPU.
+        run: make check-scripts PYTEST_WORKERS=6
   # SwiftLint and the hub's Swift tests (make check-swift).
   swift:
     needs: changes
@@ -121,22 +123,33 @@ jobs:
             swift-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift.outputs.toolchain }}-
       - name: Validate
         run: make check-swift
+      - name: HubProcessTests under ThreadSanitizer
+        # The hub's process runner shares state between a waiter thread, a poll
+        # loop and the cancel handle; make check does not run it under
+        # ThreadSanitizer. The sanitized build goes outside src/swift/.build so
+        # the cache step saves only the plain build. It runs after Validate so
+        # lint and test failures show before the slower cold sanitized build.
+        run: swift test --package-path src/swift --sanitize=thread --filter HubProcessTests --scratch-path "${RUNNER_TEMP}/swift-tsan-build"
   # The two MinGW helpers are only built by make build, which CI never runs.
   # Compile them with the flags the build and the session monitor use, so a
-  # warning fails here and not on a user's machine.
+  # warning fails here and not on a user's machine. Linux runners queue far
+  # less than macOS ones and the cross compiler needs nothing from macOS. Ubuntu's
+  # MinGW GCC is older than Homebrew's, so a warning only the newer one raises
+  # is not caught here.
   c-helpers:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.c-helpers == 'true') }}
-    runs-on: macos-15
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, pinned
         with:
           persist-credentials: false
       - name: Install mingw-w64
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: '1'
-          HOMEBREW_NO_INSTALL_CLEANUP: '1'
-        run: brew install mingw-w64
+        # Only the x86_64 target is used, so skip the i686 toolchain.
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64
       - name: Compile session.c
         # Flags of session() in src/python/trackmania_mac/build/runtime_builder.py.
         run: |
@@ -193,17 +206,3 @@ jobs:
             | tee "${RUNNER_TEMP}/x87.log"
           grep -Eq '^1 passed[ ,]' "${RUNNER_TEMP}/x87.log" \
             || { echo 'The native x87 test did not run to a pass (skipped or deselected).' >&2; exit 1; }
-  # The hub's process runner shares state between a waiter thread, a poll loop
-  # and the cancel handle. Run its tests under ThreadSanitizer, which make
-  # check does not. The build is sanitized, so it does not share the cache of
-  # the check job.
-  swift-tsan:
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.swift == 'true') }}
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, pinned
-        with:
-          persist-credentials: false
-      - name: HubProcessTests under ThreadSanitizer
-        run: swift test --package-path src/swift --sanitize=thread --filter HubProcessTests

@@ -62,6 +62,10 @@ report:
 
 check: check-scripts check-swift
 
+# pytest-xdist workers. CI sets more than its core count: the tests mostly wait
+# on subprocesses, so extra workers keep the runner busy.
+PYTEST_WORKERS ?= auto
+
 # CI runs each half as its own job, only when its files change
 # (.github/scripts/ci-areas.sh decides).
 check-scripts:
@@ -72,7 +76,7 @@ check-scripts:
 	uv run --frozen --group lint ruff check src tests
 	uv run --frozen --group lint ruff format --check src tests
 	uv run --frozen --group typecheck mypy
-	uv run --frozen --group test pytest -q
+	uv run --frozen --group test pytest -q -n $(PYTEST_WORKERS) --dist worksteal
 	./tests/test-cli.sh
 
 check-swift:

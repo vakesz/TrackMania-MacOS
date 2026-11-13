@@ -325,7 +325,8 @@ Python runtime, so it needs no developer tools. See
 `make check` runs shell checks, Ruff, mypy, Python tests, the CLI integration
 test, SwiftLint and the Swift hub tests. Build, packaging, signing and release steps are in
 [docs/building.md](docs/building.md); patch details are in
-[docs/runtime.md](docs/runtime.md); contribution rules are in
+[docs/runtime.md](docs/runtime.md); official installer and server links with
+hashes are in [docs/download-links.md](docs/download-links.md); contribution rules are in
 [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md). The project website lives in
 [`website/`](website) and deploys to GitHub Pages on every push to `main` that
 changes it.

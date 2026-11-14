@@ -391,7 +391,7 @@ class TitleRegistryTests(unittest.TestCase):
             "run_wine() { :; }; "
             'run_released_installer() { printf "%s\\n" "$TRACKMANIA_MAC_INNO_DIR"; TRACKMANIA_MAC_INSTALLER_PID=0; }; '
             'run_interactive_installer() { printf "%s\\n" "$TRACKMANIA_MAC_INNO_DIR"; TRACKMANIA_MAC_INSTALLER_PID=0; mkdir -p "${GAME_EXE%/*}"; : >"$GAME_EXE"; }; '
-            "download_title_extras() { :; }; stop_prefix_processes() { :; }; apply_overlay() { :; }; "
+            "download_title_extras() { :; }; stop_prefix_processes() { :; }; apply_overlay() { :; }; apply_nx_compat() { :; }; "
             "verify_file() { :; }; "
             "wait_inno_setup() { :; }; verify_installed_game() { :; }; say() { :; }; "
         )
@@ -457,7 +457,7 @@ class TitleRegistryTests(unittest.TestCase):
         components = {title.id: title.components for title in registry.load_all(TITLES)}
         self.assertEqual(components["tmnf"], ("competition-patch", "openal", "system-config"))
         self.assertEqual(components["tmu"], ("competition-patch", "openal", "system-config"))
-        self.assertEqual(components["tmn-eswc"], ("updates", "overlay"))
+        self.assertEqual(components["tmn-eswc"], ("updates", "overlay", "nx-compat"))
         for title_id in ("tm-canyon", "tm-turbo", "tm-original"):
             self.assertEqual(components[title_id], (), title_id)
 
@@ -470,6 +470,7 @@ class TitleRegistryTests(unittest.TestCase):
             "TRACKMANIA_MAC_TITLE_OVERLAY_SHA256",
             "TRACKMANIA_MAC_TITLE_OVERLAY_SIZE",
             "TRACKMANIA_MAC_TITLE_OVERLAY_REMOVE",
+            "TRACKMANIA_MAC_TITLE_NX_COMPAT",
         )
         for title in registry.load_all(TITLES):
             with self.subTest(title=title.id):
@@ -499,6 +500,7 @@ class TitleRegistryTests(unittest.TestCase):
                     overlay.sha256 if overlay else "",
                     str(overlay.size) if overlay else "",
                     " ".join(overlay.remove) if overlay else "",
+                    " ".join(title.nx_compat),
                 ]
                 for update in title.updates:
                     expected += [update.url, update.sha256, str(update.size)]
@@ -709,6 +711,7 @@ class RegistryValidationTests(unittest.TestCase):
             ("", None, None, None),
         )
         self.assertEqual((title.source_interactive, title.updates, title.overlay), (None, (), None))
+        self.assertEqual(title.nx_compat, ())
 
     def test_release_pins_are_optional_but_consistent(self):
         sha = "0" * 64
@@ -872,6 +875,37 @@ class RegistryValidationTests(unittest.TestCase):
         with self.assertRaises(self.registry.RegistryError):
             self.layered(source_interactive="yes")
 
+    def test_nx_compat_is_a_list_of_plain_file_names(self):
+        title = self.layered(nx_compat=["a.exe", "B.dll"])
+        self.assertEqual(title.nx_compat, ("a.exe", "B.dll"))
+        self.assertEqual(title.components[-1], "nx-compat")
+        self.assertNotIn("nx-compat", self.layered().components)
+        for value in (
+            [],
+            "a.exe",
+            ["a/b.dll"],
+            ["a b.dll"],
+            ["*.dll"],
+            [".hidden"],
+            ["..", "x"],
+            [""],
+            [5],
+            ["a.dll", "A.DLL"],
+            ["a.dll\n"],
+        ):
+            with self.subTest(value=value), self.assertRaises(self.registry.RegistryError):
+                self.layered(nx_compat=value)
+
+    def test_nx_compat_must_not_list_files_the_overlay_removes(self):
+        with self.assertRaisesRegex(self.registry.RegistryError, "overlay removes"):
+            self.layered(nx_compat=["OLD.dat"])
+
+    def test_nx_compat_is_exported_as_one_scalar(self):
+        title = self.layered(nx_compat=["a.exe", "b.dll"])
+        pairs = dict(self.registry.shell_assignments(title))
+        self.assertEqual(pairs["TRACKMANIA_MAC_TITLE_NX_COMPAT"], "a.exe b.dll")
+        self.assertEqual(pairs["TRACKMANIA_MAC_TITLE_COMPONENTS"].split()[-1], "nx-compat")
+
     def test_a_trailing_newline_is_never_accepted(self):
         good = {"url": "https://example.com/u/update.exe", "sha256": "1" * 64, "size": 5}
         overlay = {"url": "https://example.com/o/overlay.tar.gz", "sha256": "2" * 64, "size": 7}
@@ -910,6 +944,7 @@ class RegistryValidationTests(unittest.TestCase):
             ("source_interactive", True),
             ("updates", update),
             ("overlay", overlay),
+            ("nx_compat", ["a.dll"]),
         ):
             with (
                 self.subTest(field=field),

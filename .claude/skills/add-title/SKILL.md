@@ -16,6 +16,7 @@ description: Checklist for adding a game title to the TrackMania Mac hub or chan
    - `source_interactive` (bool, optional; the registry leaves it None when absent) marks a pinned installer that needs a person to click through it. It requires installer kind `online`.
    - `updates` is a list of `{url, sha256, size}`: official Inno Setup updates, run silently in order after the base installer. https only; `size` is required. Requires installer kind `online`.
    - `overlay` is `{url, sha256, size, remove}`: a `.tar.gz` unpacked over the game folder after the updates, after which the plain file names in `remove` are deleted from it. https only; `size` is required. Requires installer kind `online`. No `remove` name may equal `game_exe`.
+   - `nx_compat` is a non-empty list of plain file names in the game folder (no duplicates, case-insensitive) that install marks with the PE `NX_COMPAT` flag, after the overlay, through `trackmania_mac.install.pe_flags`. List a file when it lacks the flag: Wine then makes all memory executable, which is very slow under Rosetta (see `docs/runtime.md`). Requires installer kind `online`, and no name may be one the overlay `remove`s. When it lists `game_exe`, `game_exe_sha256` is the hash after the flag is set. The shell receives it as `TRACKMANIA_MAC_TITLE_NX_COMPAT`.
    - The basenames of `source_url`, every update URL and the overlay URL must be distinct, because they share `cache/games/<id>/`.
    - A download from outside the vendor (an archive.org mirror, a community build) is trusted only through its pinned hash. Say so in `docs/download-links.md`.
    - New titles start with `status` unsupported (listed, not expected to run yet). Move one to provisional once it installs, and to supported only once it is qualified; today `tmnf` and `tmu` are supported.
@@ -27,6 +28,7 @@ description: Checklist for adding a game title to the TrackMania Mac hub or chan
    - `openal` comes from `creative_openal_sha256`;
    - `updates` comes from a non-empty `updates` list;
    - `overlay` comes from `overlay`;
+   - `nx-compat` comes from a non-empty `nx_compat` list;
    - `system-config` (seeding the runtime's Forever-format `Default.SystemConfig.Gbx` into `user_subdir`) comes from `game_exe` `TmForever.exe`.
 
    Never branch on a title id in shell or Python. `tests/test_titles.py::TitleConditionalTests` fails on `TRACKMANIA_MAC_TITLE = ...`, `title.id == ...` and similar checks outside the legacy shims it lists. Add a registry fact or a component instead.

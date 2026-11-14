@@ -286,6 +286,36 @@ new build dropped TLS 1.0, SHA-1 signatures or one of the ciphers, which breaks
 account creation. Check the Wine `secur32` and `schannel` GnuTLS priority string
 and the GnuTLS build options first.
 
+## Memory protection flag
+
+Applies to: titles whose registry entry sets `nx_compat` (TrackMania Nations
+ESWC today).
+
+Wine's PE loader turns on `force_exec_prot` as soon as any loaded module lacks
+the `IMAGE_DLLCHARACTERISTICS_NX_COMPAT` flag (0x0100 in `DllCharacteristics`):
+it then maps all readable memory as executable. Under Rosetta, every write to
+executable memory goes through Rosetta's exception handler, which watches for
+self-modifying code. D9VK rewrites its large mapped vertex buffers every frame,
+so the game crawls.
+
+Nations ESWC has three such files: `TmNationsESWC.exe` (from the community
+build) and `binkw32.dll` and `unicows.dll` (from the official setup). In a
+scratch install the menu ran at about 12 fps. With the flag set on all three it
+ran at about 200 fps, with no crashes in the menu and short races.
+
+The registry's `nx_compat` field lists the file names. After the overlay,
+install runs `python -m trackmania_mac.install.pe_flags nx-compat GAME_DIR NAME...`,
+which sets that one bit in each 32-bit PE file and changes nothing else. It skips
+files that already have the flag, and refuses symlinks and anything that is not a
+32-bit x86 PE. The title's `game_exe_sha256` is the hash after this step. A title
+needs the field only when a file it ships lacks the flag.
+
+An install made before this step existed has the pinned executable without the
+flag. Running install again then sets the flag and nothing else: it does not
+run the official updates or the overlay again. The updates that did finish are
+recorded by checksum in `drive_c/trackmania-mac-updates.done` in the prefix, so
+a repeated install never runs an official updater twice.
+
 ## Troubleshooting
 
 Start with `make doctor`, which checks the title in `TRACKMANIA_MAC_TITLE` (default

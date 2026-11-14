@@ -6,7 +6,12 @@
 #    explicit /DIR. Silently, unless the registry marks the setup interactive
 #    (source_interactive): then the user clicks through its wizard. Pinned
 #    official updates may follow, run silently, and then an overlay archive
-#    unpacked over the game folder (trackmania_mac.install.overlay).
+#    unpacked over the game folder (trackmania_mac.install.overlay), and
+#    the NX_COMPAT flag set on the registry's nx_compat files
+#    (trackmania_mac.install.pe_flags). Each finished update is recorded in
+#    drive_c/trackmania-mac-updates.done and not run again, because an official
+#    updater refuses to run twice; an install that only lacks the NX_COMPAT
+#    flag gets just that step.
 #  - 7z-SFX wrappers around Inno Setup (TMU Forever, ManiaPlanet trial): the
 #    outer .exe only unpacks an inner Inno Setup launcher plus its data blob,
 #    and the SFX config does not forward switches to the inner setup. The two
@@ -218,19 +223,28 @@ download_title_extras() {
 }
 
 # apply_official_updates — run each pinned update installer silently, in order.
+# An update that finished is recorded by its SHA-256 in trackmania-mac-updates.done
+# and skipped next time: an official updater refuses to run twice.
 apply_official_updates() {
-  local index count="${TRACKMANIA_MAC_TITLE_UPDATE_COUNT:-0}" path label
+  local index count="${TRACKMANIA_MAC_TITLE_UPDATE_COUNT:-0}" path label sha
   local installer_log="${TRACKMANIA_MAC_PREFIX}/drive_c/trackmania-mac-install.log"
+  local done_log="${TRACKMANIA_MAC_PREFIX}/drive_c/trackmania-mac-updates.done"
   for ((index = 1; index <= count; index++)); do
     path="$(_cache_download_path "$TRACKMANIA_MAC_TITLE" "$(_title_update_field "$index" URL)")"
     label="$TRACKMANIA_MAC_TITLE_NAME update ${path##*/}"
+    sha="$(_title_update_field "$index" SHA256)"
+    if test -f "$done_log" && grep -Fxq "$sha" "$done_log"; then
+      say "The $label is already installed"
+      continue
+    fi
     # The download was verified before the setup, which may have taken an hour.
-    verify_file "$path" "$(_title_update_field "$index" SHA256)" \
+    verify_file "$path" "$sha" \
       || die "The downloaded $label no longer matches its pinned checksum. Run install again to download it again."
     rm -f "$installer_log"
     TRACKMANIA_MAC_INNO_DIR="C:\\Program Files (x86)\\${TRACKMANIA_MAC_TITLE_GAME_DIR_NAME}" \
       run_released_installer "$path" "$label"
     wait_inno_setup "$TRACKMANIA_MAC_INSTALLER_PID" "$installer_log" "$label"
+    printf '%s\n' "$sha" >>"$done_log"
   done
 }
 
@@ -249,6 +263,18 @@ apply_overlay() {
     "$TRACKMANIA_MAC_TITLE_OVERLAY_SHA256" "$GAME_DIR" --last "$TRACKMANIA_MAC_TITLE_GAME_EXE" \
     ${remove[@]+"${remove[@]}"} \
     || die "Could not add the $TRACKMANIA_MAC_TITLE_NAME game files."
+}
+
+# apply_nx_compat — set the NX_COMPAT flag on the registry's nx_compat files, so
+# Wine does not treat the game as needing executable memory everywhere.
+apply_nx_compat() {
+  local names=()
+  # The registry allows only plain file names here, so splitting on spaces is exact.
+  read -r -a names <<<"${TRACKMANIA_MAC_TITLE_NX_COMPAT:-}"
+  say "Marking the game files as compatible with memory protection"
+  trackmania_mac_python -m trackmania_mac.install.pe_flags nx-compat "$GAME_DIR" \
+    ${names[@]+"${names[@]}"} \
+    || die "Could not update the $TRACKMANIA_MAC_TITLE_NAME game files."
 }
 
 verify_installed_game() {
@@ -276,7 +302,16 @@ install_game() {
     && { test ! -f "$installer_log" || grep -Fq 'Installation process succeeded.' "$installer_log"; }; then
     if verify_file "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256"; then
       say "$TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION is already installed at $GAME_DIR"
-    elif title_has updates || title_has overlay; then
+    elif title_has nx-compat \
+      && trackmania_mac_python -m trackmania_mac.install.pe_flags pending-nx \
+        "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256" "$GAME_EXE"; then
+      # Installed before the NX_COMPAT step existed: the executable is the
+      # pinned build without the flag, so setting it finishes the install.
+      say "Finishing the $TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION installation at $GAME_DIR"
+      apply_nx_compat
+      verify_installed_game "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256" "$TRACKMANIA_MAC_TITLE_SHORT_NAME"
+      say "Installed $TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION at $GAME_DIR"
+    elif title_has updates || title_has overlay || title_has nx-compat; then
       # A layered install stopped after its setup: repeat the steps after it,
       # which are safe to repeat and need no clicks, instead of the setup.
       say "Finishing the $TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION installation at $GAME_DIR"
@@ -286,6 +321,9 @@ install_game() {
       fi
       if title_has overlay; then
         apply_overlay
+      fi
+      if title_has nx-compat; then
+        apply_nx_compat
       fi
       verify_installed_game "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256" "$TRACKMANIA_MAC_TITLE_SHORT_NAME"
       say "Installed $TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION at $GAME_DIR"
@@ -321,6 +359,9 @@ install_game() {
   fi
   if title_has overlay; then
     apply_overlay
+  fi
+  if title_has nx-compat; then
+    apply_nx_compat
   fi
   verify_installed_game "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256" "$TRACKMANIA_MAC_TITLE_SHORT_NAME"
   say "Installed $TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION at $GAME_DIR"

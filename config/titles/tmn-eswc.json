@@ -33,8 +33,9 @@
     "size": 67468269,
     "remove": ["tmn.exe", "tmn.dll", "tmn.dat"]
   },
+  "nx_compat": ["TmNationsESWC.exe", "binkw32.dll", "unicows.dll"],
   "game_version": "1.8.0",
-  "game_exe_sha256": "381213323695ba9e3c3e19beafd6e063f3a155c1034838b317c40187915b2560",
+  "game_exe_sha256": "3d5fe22a4eeff7d0c7b11aafc0ccbf5610adac1da79260feedbf60ab12593764",
   "requires_serial": false,
-  "notes": "Runs the official free setup, where you click through its pages, then adds the official 1.7.9 update and a community 1.8.0 build without StarForce copy protection, which Wine cannot run."
+  "notes": "Runs the official free setup, where you click through its pages, then adds the official 1.7.9 update and a community 1.8.0 build without StarForce copy protection, which Wine cannot run. It also marks three of its files as compatible with memory protection, which Wine needs to run the game at full speed."
 }

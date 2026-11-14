@@ -56,6 +56,11 @@ only.
     and Resource files.
   - The hub unpacks it over the game folder, then removes `tmn.exe`, `tmn.dll`
     and `tmn.dat`.
+  - After unpacking, the hub sets the NX_COMPAT flag on `TmNationsESWC.exe`,
+    `binkw32.dll` and `unicows.dll` (see "Memory protection flag" in
+    `docs/runtime.md`). The installed executable's SHA-256 is therefore
+    `3D5FE22A4EEFF7D0C7B11AAFC0CCBF5610ADAC1DA79260FEEDBF60AB12593764`, not the
+    archive's `381213...2560`.
   - Like every Windows program in a Wine prefix, the game can read and write
     your files through Wine's Z: drive. The pinned hash is the only check on
     this unofficial executable.

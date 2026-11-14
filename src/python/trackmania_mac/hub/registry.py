@@ -38,7 +38,14 @@ STATUSES = frozenset({"supported", "provisional", "unsupported"})
 # Default.SystemConfig.Gbx both belong to it, so it decides those components.
 FOREVER_EXE = "TmForever.exe"
 # Optional install components a title can have; Title.components derives them.
-COMPONENTS = ("competition-patch", "openal", "system-config", "updates", "overlay")
+COMPONENTS = (
+    "competition-patch",
+    "openal",
+    "system-config",
+    "updates",
+    "overlay",
+    "nx-compat",
+)
 
 
 class _Field(typing.NamedTuple):
@@ -87,6 +94,9 @@ _FIELDS: typing.Tuple[_Field, ...] = (
     # One archive unpacked over the game folder after the updates, and the
     # files it makes obsolete.
     _Field("overlay", "overlay", False),
+    # Game-folder files that install marks as compatible with memory protection
+    # (the PE NX_COMPAT flag), so Wine does not make all memory executable.
+    _Field("nx_compat", "file_names", False),
     # Per-title release pins; set only where the exact build is known.
     _Field("game_version", "version", False),
     _Field("game_exe_sha256", "sha", False),
@@ -180,6 +190,7 @@ class Title(typing.NamedTuple):
     source_interactive: typing.Optional[bool]
     updates: typing.Tuple[Download, ...]
     overlay: typing.Optional[Overlay]
+    nx_compat: typing.Tuple[str, ...]
     game_version: typing.Optional[str]
     game_exe_sha256: typing.Optional[str]
     creative_openal_sha256: typing.Optional[str]
@@ -203,6 +214,7 @@ class Title(typing.NamedTuple):
         system-config: it reads the runtime's Forever-format Default.SystemConfig.Gbx.
         updates: official update installers run after the base setup (updates).
         overlay: an archive is unpacked over the game folder (overlay).
+        nx-compat: install sets the NX_COMPAT flag on some game files (nx_compat).
         """
         present = {
             "competition-patch": self.needs_tmloader,
@@ -210,6 +222,7 @@ class Title(typing.NamedTuple):
             "system-config": self.game_exe == FOREVER_EXE,
             "updates": bool(self.updates),
             "overlay": self.overlay is not None,
+            "nx-compat": bool(self.nx_compat),
         }
         return tuple(name for name in COMPONENTS if present[name])
 
@@ -311,6 +324,16 @@ def _check_value(field: _Field, value: object, path: pathlib.Path) -> object:
         if len({entry.casefold() for entry in remove}) != len(remove):
             raise RegistryError(f"{path}: {name} remove lists a file twice")
         return Overlay(item["url"], item["sha256"], item["size"], tuple(remove))
+    if kind == "file_names":
+        if (
+            not isinstance(value, list)
+            or not value
+            or not all(isinstance(item, str) and _FILE_NAME.fullmatch(item) for item in value)
+        ):
+            raise RegistryError(f"{path}: {name} must be a non-empty list of plain file names")
+        if len({item.casefold() for item in value}) != len(value):
+            raise RegistryError(f"{path}: {name} lists a file twice")
+        return tuple(value)
     if kind == "bool":
         if not isinstance(value, bool):
             raise RegistryError(f"{path}: {name} must be true or false")
@@ -373,7 +396,7 @@ def _validate(data: object, path: pathlib.Path) -> Title:
     values: typing.Dict[str, object] = {
         field.name: _check_value(field, data[field.name], path)
         if field.name in data
-        else {"notes": "", "downloads": ()}.get(field.kind)
+        else {"notes": "", "downloads": (), "file_names": ()}.get(field.kind)
         for field in _FIELDS
     }
 
@@ -409,8 +432,9 @@ def _validate(data: object, path: pathlib.Path) -> Title:
     # The direct "online" flow verifies the installed executable against its pin.
     if values["installer"] == "online" and not values["game_exe_sha256"]:
         raise RegistryError(f"{path}: installer kind online requires game_exe_sha256")
-    # Only the direct "online" flow runs an interactive setup, updates or an overlay.
-    for layered in ("source_interactive", "updates", "overlay"):
+    # Only the direct "online" flow runs an interactive setup, updates, an overlay
+    # or the NX_COMPAT step.
+    for layered in ("source_interactive", "updates", "overlay", "nx_compat"):
         if values[layered] and values["installer"] != "online":
             raise RegistryError(f"{path}: {layered} requires installer kind online")
     overlay = typing.cast(typing.Optional[Overlay], values["overlay"])
@@ -418,6 +442,10 @@ def _validate(data: object, path: pathlib.Path) -> Title:
         entry.casefold() for entry in overlay.remove
     }:
         raise RegistryError(f"{path}: overlay remove must not list game_exe")
+    if overlay is not None and {entry.casefold() for entry in overlay.remove} & {
+        entry.casefold() for entry in typing.cast(tuple, values["nx_compat"])
+    }:
+        raise RegistryError(f"{path}: nx_compat must not list a file the overlay removes")
     # Every download shares the title's cache folder, so their names must differ.
     names = [url_file_name(str(url))] if url else []
     names += [url_file_name(extra.url) for extra in typing.cast(tuple, values["updates"])]
@@ -565,7 +593,10 @@ def _shell_value(value: object) -> str:
 
 
 def _layer_assignments(title: Title) -> typing.List[typing.Tuple[str, str]]:
-    """Updates as TRACKMANIA_MAC_TITLE_UPDATE_<n>_*, the overlay as _OVERLAY_*; always defined."""
+    """Updates as TRACKMANIA_MAC_TITLE_UPDATE_<n>_*, the overlay as _OVERLAY_*; always defined.
+
+    nx_compat is exported by the generic loop as one space-separated scalar.
+    """
     pairs = [("TRACKMANIA_MAC_TITLE_UPDATE_COUNT", str(len(title.updates)))]
     for index, update in enumerate(title.updates, start=1):
         pairs += [

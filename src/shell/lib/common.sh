@@ -391,6 +391,24 @@ competition_patch_is_ready() {
     && test -s "$TMLOADER_PROFILE_FILE"
 }
 
+# game_save_links link|check — the game-saves component: the save folders a
+# title writes inside its game folder (registry game_save_dirs) live in the
+# saves folder, and the game folder links to them. trackmania_mac.install.game_saves
+# owns every rule and prints a warning for each folder it leaves as it is.
+# `link` moves files, so its callers hold the prefix operation lock.
+game_save_links() {
+  TRACKMANIA_MAC_TITLE="$TRACKMANIA_MAC_TITLE" TRACKMANIA_MAC_TITLES_DIR="$TRACKMANIA_MAC_TITLES_DIR" \
+    trackmania_mac_python -m trackmania_mac.install.game_saves "$1" "$GAME_DIR" "$TRACKMANIA_MAC_USERDATA"
+}
+
+# sync_game_save_links — link the title's game-folder saves before anything
+# uses them. Returns non-zero after the warnings when a folder stays as it was.
+sync_game_save_links() {
+  title_has game-saves || return 0
+  test -d "$GAME_DIR" || return 0
+  game_save_links link
+}
+
 # launch_option_valid NAME VALUE — VALUE is one NAME accepts, for the launch
 # options an installed launcher records (TRACKMANIA_MAC_LAUNCH_SETTINGS).
 # src/python/trackmania_mac/app/launcher_config.py repeats this for the hub's view.

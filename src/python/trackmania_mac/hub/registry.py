@@ -24,6 +24,7 @@ import re
 import shlex
 import sys
 import typing
+import unicodedata
 
 from trackmania_mac.install import modloader
 
@@ -45,7 +46,13 @@ COMPONENTS = (
     "updates",
     "overlay",
     "nx-compat",
+    "game-saves",
+    "game-system-config",
 )
+# Settings-file formats install can seed into a game folder
+# (trackmania_mac.install.system_config). text-2006: the text GBX that
+# TrackMania Nations ESWC reads as Default.SystemConfig.Gbx.
+SYSTEM_CONFIG_FORMATS = ("text-2006",)
 
 
 class _Field(typing.NamedTuple):
@@ -97,6 +104,13 @@ _FIELDS: typing.Tuple[_Field, ...] = (
     # Game-folder files that install marks as compatible with memory protection
     # (the PE NX_COMPAT flag), so Wine does not make all memory executable.
     _Field("nx_compat", "file_names", False),
+    # Save folders the game writes inside its game folder, relative to it. They
+    # are kept under <user_subdir> in the saves folder and linked back, so an
+    # uninstall that keeps saves keeps them (trackmania_mac.install.game_saves).
+    _Field("game_save_dirs", "subpaths", False),
+    # A default settings file install writes into the game folder when none
+    # exists: {format, file} (trackmania_mac.install.system_config).
+    _Field("game_system_config", "system_config", False),
     # Per-title release pins; set only where the exact build is known.
     _Field("game_version", "version", False),
     _Field("game_exe_sha256", "sha", False),
@@ -163,6 +177,13 @@ class Overlay(typing.NamedTuple):
     remove: typing.Tuple[str, ...]
 
 
+class GameSystemConfig(typing.NamedTuple):
+    """A settings file seeded into the game folder: its format and plain file name."""
+
+    format: str
+    file: str
+
+
 class Title(typing.NamedTuple):
     id: str
     name: str
@@ -191,6 +212,8 @@ class Title(typing.NamedTuple):
     updates: typing.Tuple[Download, ...]
     overlay: typing.Optional[Overlay]
     nx_compat: typing.Tuple[str, ...]
+    game_save_dirs: typing.Tuple[str, ...]
+    game_system_config: typing.Optional[GameSystemConfig]
     game_version: typing.Optional[str]
     game_exe_sha256: typing.Optional[str]
     creative_openal_sha256: typing.Optional[str]
@@ -215,6 +238,8 @@ class Title(typing.NamedTuple):
         updates: official update installers run after the base setup (updates).
         overlay: an archive is unpacked over the game folder (overlay).
         nx-compat: install sets the NX_COMPAT flag on some game files (nx_compat).
+        game-saves: save folders in the game folder live in the saves folder (game_save_dirs).
+        game-system-config: install seeds a settings file in the game folder (game_system_config).
         """
         present = {
             "competition-patch": self.needs_tmloader,
@@ -223,6 +248,8 @@ class Title(typing.NamedTuple):
             "updates": bool(self.updates),
             "overlay": self.overlay is not None,
             "nx-compat": bool(self.nx_compat),
+            "game-saves": bool(self.game_save_dirs),
+            "game-system-config": self.game_system_config is not None,
         }
         return tuple(name for name in COMPONENTS if present[name])
 
@@ -304,6 +331,29 @@ def _check_download(value: object, name: str, path: pathlib.Path, extra=frozense
     return value
 
 
+def _fold_parts(relative: str) -> typing.Tuple[str, ...]:
+    # APFS compares names case- and normalization-insensitively.
+    return tuple(unicodedata.normalize("NFD", part).casefold() for part in relative.split("/"))
+
+
+def _check_subpaths(value: object, name: str, path: pathlib.Path) -> typing.Tuple[str, ...]:
+    """A non-empty list of relative folder paths, none equal to or inside another."""
+    if not isinstance(value, list) or not value:
+        raise RegistryError(f"{path}: {name} must be a non-empty list of relative folder paths")
+    for item in value:
+        if not isinstance(item, str) or not all(
+            _plain_name(part) and part == part.strip() for part in item.split("/")
+        ):
+            raise RegistryError(f"{path}: {name} must be a list of relative folder paths")
+    folded = [_fold_parts(item) for item in value]
+    for index, left in enumerate(folded):
+        for right in folded[index + 1 :]:
+            shorter = min(len(left), len(right))
+            if left[:shorter] == right[:shorter]:
+                raise RegistryError(f"{path}: {name} lists a folder twice or one inside another")
+    return tuple(value)
+
+
 def _check_value(field: _Field, value: object, path: pathlib.Path) -> object:
     """The validated value of one present key, or None for an empty optional one."""
     kind, name = field.kind, field.name
@@ -334,6 +384,19 @@ def _check_value(field: _Field, value: object, path: pathlib.Path) -> object:
         if len({item.casefold() for item in value}) != len(value):
             raise RegistryError(f"{path}: {name} lists a file twice")
         return tuple(value)
+    if kind == "subpaths":
+        return _check_subpaths(value, name, path)
+    if kind == "system_config":
+        if not isinstance(value, dict) or set(value) != {"format", "file"}:
+            raise RegistryError(f"{path}: {name} needs exactly format and file")
+        if value["format"] not in SYSTEM_CONFIG_FORMATS:
+            raise RegistryError(
+                f"{path}: {name} format must be one of {', '.join(SYSTEM_CONFIG_FORMATS)}"
+            )
+        file = value["file"]
+        if not isinstance(file, str) or not _FILE_NAME.fullmatch(file):
+            raise RegistryError(f"{path}: {name} file must be a plain file name")
+        return GameSystemConfig(value["format"], file)
     if kind == "bool":
         if not isinstance(value, bool):
             raise RegistryError(f"{path}: {name} must be true or false")
@@ -396,7 +459,7 @@ def _validate(data: object, path: pathlib.Path) -> Title:
     values: typing.Dict[str, object] = {
         field.name: _check_value(field, data[field.name], path)
         if field.name in data
-        else {"notes": "", "downloads": (), "file_names": ()}.get(field.kind)
+        else {"notes": "", "downloads": (), "file_names": (), "subpaths": ()}.get(field.kind)
         for field in _FIELDS
     }
 
@@ -432,9 +495,9 @@ def _validate(data: object, path: pathlib.Path) -> Title:
     # The direct "online" flow verifies the installed executable against its pin.
     if values["installer"] == "online" and not values["game_exe_sha256"]:
         raise RegistryError(f"{path}: installer kind online requires game_exe_sha256")
-    # Only the direct "online" flow runs an interactive setup, updates, an overlay
-    # or the NX_COMPAT step.
-    for layered in ("source_interactive", "updates", "overlay", "nx_compat"):
+    # Only the direct "online" flow runs an interactive setup, updates, an overlay,
+    # the NX_COMPAT step or the settings seed.
+    for layered in ("source_interactive", "updates", "overlay", "nx_compat", "game_system_config"):
         if values[layered] and values["installer"] != "online":
             raise RegistryError(f"{path}: {layered} requires installer kind online")
     overlay = typing.cast(typing.Optional[Overlay], values["overlay"])
@@ -446,6 +509,23 @@ def _validate(data: object, path: pathlib.Path) -> Title:
         entry.casefold() for entry in typing.cast(tuple, values["nx_compat"])
     }:
         raise RegistryError(f"{path}: nx_compat must not list a file the overlay removes")
+    # A save folder is a folder: never a file the title installs or changes.
+    # The seeded settings file is a file of its own, never one of those either.
+    files = {str(values["game_exe"]), str(values["launcher_exe"])}
+    files.update(typing.cast(tuple, values["nx_compat"]))
+    if overlay is not None:
+        files.update(overlay.remove)
+    folded_files = {_fold_parts(entry)[0] for entry in files}
+    system_config = typing.cast(typing.Optional[GameSystemConfig], values["game_system_config"])
+    if system_config is not None:
+        if _fold_parts(system_config.file)[0] in folded_files:
+            raise RegistryError(
+                f"{path}: game_system_config file must not be a file install changes"
+            )
+        folded_files.add(_fold_parts(system_config.file)[0])
+    for entry in typing.cast(tuple, values["game_save_dirs"]):
+        if _fold_parts(entry)[0] in folded_files:
+            raise RegistryError(f"{path}: game_save_dirs must not lie under a game file: {entry}")
     # Every download shares the title's cache folder, so their names must differ.
     names = [url_file_name(str(url))] if url else []
     names += [url_file_name(extra.url) for extra in typing.cast(tuple, values["updates"])]
@@ -619,13 +699,16 @@ def shell_assignments(title: typing.Optional[Title]) -> typing.List[typing.Tuple
     """(NAME, value) pairs: TRACKMANIA_MAC_TITLE_* for the title, the release pins, the ModLoader layout."""
     pairs = []
     if title is not None:
-        # save_dirs is omitted: names may contain spaces, so a joined string is
-        # ambiguous; the shell only needs user_subdir. updates and overlay are
-        # spelled out below as scalars.
+        # save_dirs and game_save_dirs are omitted: names may contain spaces, so
+        # a joined string is ambiguous; the shell only needs user_subdir, and
+        # trackmania_mac.install.game_saves and .system_config read
+        # game_save_dirs and game_system_config themselves. updates and overlay
+        # are spelled out below as scalars.
         pairs = [
             (f"TRACKMANIA_MAC_TITLE_{field.upper()}", _shell_value(getattr(title, field)))
             for field in Title._fields
-            if field not in ("save_dirs", "updates", "overlay")
+            if field
+            not in ("save_dirs", "game_save_dirs", "game_system_config", "updates", "overlay")
         ]
         pairs.append(("TRACKMANIA_MAC_TITLE_PREFIX_MARKER", title.prefix_marker))
         pairs.append(("TRACKMANIA_MAC_TITLE_COMPONENTS", " ".join(title.components)))

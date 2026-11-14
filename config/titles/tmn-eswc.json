@@ -34,6 +34,21 @@
     "remove": ["tmn.exe", "tmn.dll", "tmn.dat"]
   },
   "nx_compat": ["TmNationsESWC.exe", "binkw32.dll", "unicows.dll"],
+  "game_save_dirs": [
+    "GameData/Profiles",
+    "GameData/Scores",
+    "GameData/Custom",
+    "GameData/Tracks/Challenges/My Challenges",
+    "GameData/Tracks/Challenges/Downloaded",
+    "GameData/Tracks/Campaigns/My Campaigns",
+    "GameData/Tracks/Campaigns/Downloaded",
+    "GameData/Tracks/Replays/My Replays",
+    "GameData/Tracks/Replays/Autosaves",
+    "GameData/Tracks/Replays/CreatedGhosts",
+    "GameData/Tracks/Replays/MediaTrackerGhosts",
+    "GameData/Tracks/Replays/Downloaded"
+  ],
+  "game_system_config": {"format": "text-2006", "file": "Default.SystemConfig.Gbx"},
   "game_version": "1.8.0",
   "game_exe_sha256": "3d5fe22a4eeff7d0c7b11aafc0ccbf5610adac1da79260feedbf60ab12593764",
   "requires_serial": false,

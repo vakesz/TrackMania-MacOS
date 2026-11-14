@@ -711,6 +711,48 @@ elif args and Path(args[0]).name == 'trackmania-mac-session.exe':
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((userdata / "TrackMania/Config/Default.SystemConfig.Gbx").is_file())
 
+    # main up to DirectX, with the platform steps stubbed: install_game leaves
+    # saves in the game folder as the game would, STUB_BLOCKED=1 adds a file
+    # where a save folder goes.
+    INSTALL_UNTIL_DIRECTX = """. ./src/shell/cli/install.sh
+validate_launch_options() { :; }; migrate_legacy_install() { :; }
+guard_prefix_operation() { :; }; require_macos() { :; }; install_rosetta() { :; }
+install_wine_runtime() { :; }; initialize_prefix() { :; }; ensure_title_icon() { :; }
+install_game() {
+  mkdir -p "$GAME_DIR/GameData/Profiles/Player" "$GAME_DIR/GameData/Tracks/Replays"
+  printf profile >"$GAME_DIR/GameData/Profiles/Player/profile.gbx"
+  test -z "${STUB_BLOCKED:-}" || printf x >"$GAME_DIR/GameData/Tracks/Replays/Autosaves"
+}
+install_directx_runtime() { echo reached-directx; exit 0; }
+main"""
+
+    def test_install_links_game_folder_saves_and_never_fails_on_them(self):
+        userdata = self.home / "game/UserData"
+        game = self.prefix / "drive_c/Program Files (x86)/TmNationsESWC"
+        kept = userdata / "TmNationsESWC/GameData"
+        for blocked in ("", "1"):
+            with self.subTest(blocked=blocked):
+                shutil.rmtree(self.home / "game", ignore_errors=True)
+                self.prefix.mkdir(parents=True)
+                (self.prefix / ".trackmania-mac-prefix").write_text("tmn-eswc:1\n")
+                userdata.mkdir()
+                result = self.shell(
+                    self.INSTALL_UNTIL_DIRECTX,
+                    TRACKMANIA_MAC_TITLE="tmn-eswc",
+                    STUB_BLOCKED=blocked,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("reached-directx", result.stdout)
+                self.assertEqual(os.readlink(game / "GameData/Profiles"), str(kept / "Profiles"))
+                self.assertEqual((kept / "Profiles/Player/profile.gbx").read_text(), "profile")
+                if blocked:
+                    self.assertIn("Autosaves is not a folder", result.stderr)
+                    self.assertIn("not linked to the saves folder yet", result.stderr)
+                    self.assertTrue((game / "GameData/Tracks/Replays/Autosaves").is_file())
+                else:
+                    self.assertNotIn("warning", result.stderr)
+                    self.assertTrue((game / "GameData/Tracks/Replays/Autosaves").is_symlink())
+
     # Shell functions replace the network, archive tool and Wine; every call is
     # appended to TEST_LOG as one line. Run with STUB_NO_DXSETUP=1 for an archive
     # without the installer, STUB_DXSETUP_FAIL=1 for an installer that exits non-zero.

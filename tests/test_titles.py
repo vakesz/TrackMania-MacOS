@@ -392,6 +392,7 @@ class TitleRegistryTests(unittest.TestCase):
             'run_released_installer() { printf "%s\\n" "$TRACKMANIA_MAC_INNO_DIR"; TRACKMANIA_MAC_INSTALLER_PID=0; }; '
             'run_interactive_installer() { printf "%s\\n" "$TRACKMANIA_MAC_INNO_DIR"; TRACKMANIA_MAC_INSTALLER_PID=0; mkdir -p "${GAME_EXE%/*}"; : >"$GAME_EXE"; }; '
             "download_title_extras() { :; }; stop_prefix_processes() { :; }; apply_overlay() { :; }; apply_nx_compat() { :; }; "
+            "seed_game_system_config() { :; }; "
             "verify_file() { :; }; "
             "wait_inno_setup() { :; }; verify_installed_game() { :; }; say() { :; }; "
         )
@@ -457,7 +458,10 @@ class TitleRegistryTests(unittest.TestCase):
         components = {title.id: title.components for title in registry.load_all(TITLES)}
         self.assertEqual(components["tmnf"], ("competition-patch", "openal", "system-config"))
         self.assertEqual(components["tmu"], ("competition-patch", "openal", "system-config"))
-        self.assertEqual(components["tmn-eswc"], ("updates", "overlay", "nx-compat"))
+        self.assertEqual(
+            components["tmn-eswc"],
+            ("updates", "overlay", "nx-compat", "game-saves", "game-system-config"),
+        )
         for title_id in ("tm-canyon", "tm-turbo", "tm-original"):
             self.assertEqual(components[title_id], (), title_id)
 
@@ -712,6 +716,8 @@ class RegistryValidationTests(unittest.TestCase):
         )
         self.assertEqual((title.source_interactive, title.updates, title.overlay), (None, (), None))
         self.assertEqual(title.nx_compat, ())
+        self.assertEqual(title.game_save_dirs, ())
+        self.assertIsNone(title.game_system_config)
 
     def test_release_pins_are_optional_but_consistent(self):
         sha = "0" * 64
@@ -895,6 +901,103 @@ class RegistryValidationTests(unittest.TestCase):
         ):
             with self.subTest(value=value), self.assertRaises(self.registry.RegistryError):
                 self.layered(nx_compat=value)
+
+    def test_game_save_dirs_are_relative_folder_paths(self):
+        title = self.validate(game_save_dirs=["GameData/Profiles", "GameData/Tracks/My Replays"])
+        self.assertEqual(title.game_save_dirs, ("GameData/Profiles", "GameData/Tracks/My Replays"))
+        self.assertEqual(title.components[-1], "game-saves")
+        self.assertNotIn("game-saves", self.validate().components)
+        for value in (
+            [],
+            "GameData/Profiles",
+            [5],
+            [""],
+            ["/GameData"],
+            ["GameData/"],
+            ["GameData//Profiles"],
+            ["GameData/../Profiles"],
+            ["./GameData"],
+            ["~/GameData"],
+            ["GameData\\Profiles"],
+            ["GameData/Pro\nfiles"],
+            ["GameData/Profiles\n"],
+            ["GameData/ Profiles"],
+            ["GameData/Profiles", "gamedata/PROFILES"],
+            ["GameData", "GameData/Profiles"],
+            ["GameData/Profiles/Player", "gamedata/profiles"],
+        ):
+            with self.subTest(value=value), self.assertRaises(self.registry.RegistryError):
+                self.validate(game_save_dirs=value)
+
+    def test_game_save_dirs_never_lie_under_a_game_file(self):
+        for name in (self.data["game_exe"], self.data["launcher_exe"].upper()):
+            with (
+                self.subTest(name=name),
+                self.assertRaisesRegex(self.registry.RegistryError, "under a game file"),
+            ):
+                self.validate(game_save_dirs=[name + "/Saves"])
+        with self.assertRaisesRegex(self.registry.RegistryError, "under a game file"):
+            self.layered(game_save_dirs=["old.dat"])
+        with self.assertRaisesRegex(self.registry.RegistryError, "under a game file"):
+            self.layered(nx_compat=["a.dll"], game_save_dirs=["A.DLL/x"])
+
+    def test_game_save_dirs_are_not_exported_to_the_shell(self):
+        title = self.validate(game_save_dirs=["GameData/My Replays"])
+        pairs = dict(self.registry.shell_assignments(title))
+        self.assertNotIn("TRACKMANIA_MAC_TITLE_GAME_SAVE_DIRS", pairs)
+        self.assertEqual(pairs["TRACKMANIA_MAC_TITLE_COMPONENTS"].split()[-1], "game-saves")
+
+    def test_game_system_config_names_a_known_format_and_a_plain_file(self):
+        good = {"format": "text-2006", "file": "Default.SystemConfig.Gbx"}
+        title = self.layered(game_system_config=good)
+        self.assertEqual(
+            title.game_system_config,
+            self.registry.GameSystemConfig("text-2006", "Default.SystemConfig.Gbx"),
+        )
+        self.assertEqual(title.components[-1], "game-system-config")
+        self.assertNotIn("game-system-config", self.layered().components)
+        for value in (
+            "Default.SystemConfig.Gbx",
+            [],
+            {},
+            {"file": "a.Gbx"},
+            {"format": "text-2006"},
+            dict(good, extra=1),
+            dict(good, format="binary-2008"),
+            dict(good, format=None),
+            dict(good, file="Config/a.Gbx"),
+            dict(good, file="../a.Gbx"),
+            dict(good, file=".hidden"),
+            dict(good, file="a b.Gbx"),
+            dict(good, file="a.Gbx\n"),
+            dict(good, file=5),
+        ):
+            with self.subTest(value=value), self.assertRaises(self.registry.RegistryError):
+                self.layered(game_system_config=value)
+
+    def test_game_system_config_is_its_own_file_and_needs_the_online_kind(self):
+        good = {"format": "text-2006", "file": "Default.SystemConfig.Gbx"}
+        with self.assertRaisesRegex(self.registry.RegistryError, "requires installer kind"):
+            self.validate(game_system_config=good)
+        for file, extra in (
+            (self.data["game_exe"].lower(), {}),
+            (self.data["launcher_exe"], {}),
+            ("OLD.DAT", {}),
+            ("a.dll", {"nx_compat": ["A.dll"]}),
+        ):
+            with (
+                self.subTest(file=file),
+                self.assertRaisesRegex(self.registry.RegistryError, "file install changes"),
+            ):
+                self.layered(game_system_config=dict(good, file=file), **extra)
+        with self.assertRaisesRegex(self.registry.RegistryError, "under a game file"):
+            self.layered(game_system_config=good, game_save_dirs=["default.systemconfig.gbx/x"])
+
+    def test_game_system_config_is_not_exported_to_the_shell(self):
+        good = {"format": "text-2006", "file": "Default.SystemConfig.Gbx"}
+        pairs = dict(self.registry.shell_assignments(self.layered(game_system_config=good)))
+        self.assertNotIn("TRACKMANIA_MAC_TITLE_GAME_SYSTEM_CONFIG", pairs)
+        self.assertEqual(pairs["TRACKMANIA_MAC_TITLE_COMPONENTS"].split()[-1], "game-system-config")
 
     def test_nx_compat_must_not_list_files_the_overlay_removes(self):
         with self.assertRaisesRegex(self.registry.RegistryError, "overlay removes"):

@@ -226,7 +226,9 @@ windows if a launch seems silent.
 
 Applies to: every title, except that the initial settings file
 (`config/game-settings.json` and `Default.SystemConfig.Gbx`) is seeded only for
-Nations and United Forever, the titles with `TmForever.exe` as `game_exe`.
+Nations and United Forever, the titles with `TmForever.exe` as `game_exe`, and
+for titles whose registry entry sets `game_system_config` (Nations ESWC, see
+[Nations ESWC settings](#nations-eswc-settings)).
 
 By default the launcher runs the game directly, so it uses the display mode set
 in TrackMania Settings (fullscreen or windowed, at the chosen resolution).
@@ -250,6 +252,36 @@ The generator names documented fields and labels unknown ones; the TMF shader
 quality field is inferred from the later display layout. It validates required
 types, integer encoding limits and preset enum ranges, not every setting the
 game may accept. Offline tests check chunk structure and unchanged default bytes.
+
+### Nations ESWC settings
+
+Applies to: titles whose registry entry sets `game_system_config` (TrackMania
+Nations ESWC today).
+
+Nations ESWC reads its settings from `Default.SystemConfig.Gbx` in its game
+folder, not from Documents. No installer ships the file; the settings launcher
+writes it the first time it runs. It is the 2006 text GBX format, not the
+Forever engine's binary one, so the Forever seed above does not apply.
+
+After the NX_COMPAT step, install runs
+`python -m trackmania_mac.install.system_config seed GAME_DIR config/game-settings.json`,
+which writes a 200-byte file when the game folder has none. It holds only the
+display node: the width and height from `config/game-settings.json` (1280x720),
+windowed, and Cpu/Gpu synchro set to "3 Frames". It never contains the
+per-install key (chunk `b005012`), and the game fills every other setting with
+its own default. An existing file, folder or symlink of that name is left as it
+is, so a file the launcher or the player wrote always wins. The file is written
+to a temporary file and hard-linked into place, so it is complete or absent. A
+seed that fails only warns: the game then starts with its own defaults.
+
+3 Frames, because it measured faster and smoother than the game's default,
+Immediate, in a scratch install: about 55 fps with stalls under Immediate,
+against about 68 fps and smooth play under 3 Frames, with the worst frame at
+31 ms. Windowed,
+because fullscreen changes the display mode, which blanked a second monitor in
+testing; TrackMania Settings can still switch to fullscreen. This is the game's
+own windowed mode, not the explorer virtual desktop that
+`TRACKMANIA_MAC_WINDOW_SIZE` selects.
 
 ## Account creation over TLS 1.0
 
@@ -315,6 +347,42 @@ flag. Running install again then sets the flag and nothing else: it does not
 run the official updates or the overlay again. The updates that did finish are
 recorded by checksum in `drive_c/trackmania-mac-updates.done` in the prefix, so
 a repeated install never runs an official updater twice.
+
+## Saves in the game folder
+
+Applies to: titles whose registry entry sets `game_save_dirs` (TrackMania
+Nations ESWC today).
+
+Nations ESWC keeps profiles, scores, its own tracks and replays under
+`GameData` in its game folder, inside the Wine prefix, not in Windows
+Documents. An uninstall that keeps saves removes the prefix, so these folders
+would go with it. `game_save_dirs` lists them relative to the game folder. Each
+one is kept at the same path in the title's saves folder, under its
+`user_subdir`, and the game folder holds an absolute symlink to it. For
+example, `GameData/Profiles` is kept in
+`saves/tmn-eswc/TmNationsESWC/GameData/Profiles`.
+
+Install (after the game is installed), Play (before Wine starts) and an
+uninstall that keeps saves (once it is confirmed, before it removes anything) run
+`python -m trackmania_mac.install.game_saves link GAME_DIR USERDATA`. A missing
+folder is created in the saves folder and linked. Files the game folder
+already holds there are moved into the saves folder, one entry at a time, with
+a rename that never replaces anything. When the saves folder already has an
+entry of the same name, it stays, and the game folder's copy moves to
+`<user_subdir>/Recovered from game folder/<path>`, numbered when that name is
+taken. A run that stops halfway is finished by the next one. Names are matched
+ignoring case; a folder holding two entries whose names differ only in case
+(possible on a case-sensitive volume) is left alone with a warning.
+
+A folder is left as it is, with a warning, when it is a file, when it links
+somewhere else that still exists, when a symlink sits on the way to it in
+either folder, or when the saves folder is on another volume (the move would
+have to copy). Install and Play still finish. Doctor runs the same tool with
+`check`, which only reads, and warns about each folder that is not linked yet,
+including a link whose saves folder is missing or reached through a symlink.
+An uninstall that keeps saves refuses to remove a prefix whose game folder
+still holds files in one of these folders, under any spelling of its name,
+including through a symlink that leads elsewhere inside the prefix.
 
 ## Troubleshooting
 

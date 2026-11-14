@@ -122,6 +122,18 @@ folder, which is the prefix's Windows Documents folder. `--include-saves` remove
 only that folder, and only at its default location; save folder names overlap
 between titles, so a custom or shared folder is never removed.
 
+A title whose game writes saves inside its game folder lists those folders in
+its registry `game_save_dirs` (Nations ESWC). They are kept in the saves folder
+and linked from the game folder (see
+[Saves in the game folder](runtime.md#saves-in-the-game-folder)), so removing
+the prefix removes only the links. An uninstall that keeps saves lists any
+files still in those folders as moved to the saves folder first, moves them
+only once the removal is confirmed (`--yes` counts), and then refuses ("Saves
+are still in the game folder") while files remain there. Files the prefix would
+take with it count wherever a symlink inside the prefix leads, and in every
+case-spelling of a folder name. `--include-saves` removes them with the prefix.
+The snapshot does not change.
+
 An uninstall never removes the Wine runtime, the shared downloads (DirectX,
 TMLoader, OpenAL Soft; [Settings](#settings) can clear them), a title root (`games/<id>`, which holds the title's
 operation lock), or another title's files. Every title has its own root and

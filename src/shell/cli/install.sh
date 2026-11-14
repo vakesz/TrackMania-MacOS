@@ -85,6 +85,8 @@ main() {
     case "$TRACKMANIA_MAC_TITLE_INSTALLER" in
       online|online-retail|online-trial)
         install_game
+        # A finished install stays installed; Play links what is left.
+        sync_game_save_links || warn "Some save folders in the game folder are not linked to the saves folder yet."
         ensure_title_icon || warn "Could not extract the game icon for the hub."
         install_directx_runtime
         if title_has competition-patch; then

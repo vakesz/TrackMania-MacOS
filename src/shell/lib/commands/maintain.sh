@@ -151,6 +151,10 @@ doctor() {
       say "$title_short: installed (hash pin not available for this title)"
     fi
     say "Game: $GAME_EXE"
+    # Not a failure: the game runs, and Play links or moves these folders.
+    if title_has game-saves && game_save_links check; then
+      say "Game-folder saves: kept in $TRACKMANIA_MAC_USERDATA"
+    fi
   else
     warn "$title_short is not installed at $GAME_EXE"
     failures=$((failures + 1))
@@ -202,12 +206,12 @@ stop_game() {
 }
 
 uninstall_game() {
-  local answer="" option status=0 assume_yes=false
-  local -a plan_options=() locations
+  local answer="" option status=0 assume_yes=false include_saves=false
+  local -a plan_options=() confirm_options=() locations
   for option in "$@"; do
     case "$option" in
       --yes) assume_yes=true ;;
-      --include-saves) plan_options=(--include-saves) ;;
+      --include-saves) plan_options=(--include-saves); include_saves=true ;;
       *) die "Unknown uninstall option: $option (use --yes and --include-saves)" ;;
     esac
   done
@@ -222,10 +226,16 @@ uninstall_game() {
   validate_managed_layout || die "Unsafe installation layout; userdata must be outside the prefix."
   locations=("$TRACKMANIA_MAC_PREFIX" "$TRACKMANIA_MAC_USERDATA" "$TRACKMANIA_MAC_APP" "$TRACKMANIA_MAC_SETTINGS_APP" "$TRACKMANIA_MAC_LAUNCHER" \
     "$TRACKMANIA_MAC_SUPPORT" "$TRACKMANIA_MAC_CACHE")
+  # Keeping saves of a title with game-folder saves: the confirmation lists the
+  # ones still in the game folder as moved first, and they move only after a yes.
+  if test "$include_saves" = false && title_has game-saves; then
+    confirm_options=(--move-game-saves)
+  fi
   # The guard plans and removes in one process; this shell only asks and never
   # reads the plan back, so nothing in a path or an app can become a command.
   if test "$assume_yes" != true; then
-    trackmania_mac_python -m trackmania_mac.guard.uninstall plan ${plan_options[@]+"${plan_options[@]}"} "${locations[@]}" \
+    trackmania_mac_python -m trackmania_mac.guard.uninstall plan ${plan_options[@]+"${plan_options[@]}"} \
+      ${confirm_options[@]+"${confirm_options[@]}"} "${locations[@]}" \
       || status=$?
     case "$status" in
       0) ;;
@@ -238,6 +248,11 @@ uninstall_game() {
       y|Y|yes|YES) ;;
       *) say "Cancelled."; return 0 ;;
     esac
+  fi
+  # Move saves still in the game folder to the saves folder. `remove` plans
+  # again and refuses the prefix while any are left there.
+  if test "$include_saves" = false; then
+    sync_game_save_links || warn "Some saves could not be moved out of the game folder."
   fi
   trackmania_mac_python -m trackmania_mac.guard.uninstall remove ${plan_options[@]+"${plan_options[@]}"} "${locations[@]}" \
     || die "The uninstall did not finish. Run it again to remove what is left."

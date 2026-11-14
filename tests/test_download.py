@@ -346,6 +346,7 @@ class LayeredInstall(unittest.TestCase):
                     cache / "Win10Patch.tar.gz", game_dir
                 ),
                 "overlay nx-compat {} TmNationsESWC.exe binkw32.dll unicows.dll".format(game_dir),
+                "overlay seed {} {}".format(game_dir, ROOT / "config/game-settings.json"),
                 "verify 3d5fe22a4eeff7d0c7b11aafc0ccbf5610adac1da79260feedbf60ab12593764",
             ],
         )
@@ -353,6 +354,15 @@ class LayeredInstall(unittest.TestCase):
         self.assertEqual(done.read_text(), UPDATE_SHA + "\n")
         self.assertIn("Adding the TrackMania Nations ESWC 1.8.0 game files", result.stdout)
         self.assertIn("Marking the game files as compatible with memory protection", result.stdout)
+
+    def test_a_settings_seed_that_fails_only_warns(self):
+        result, steps, _ = self.run_install(
+            'trackmania_mac_python() { step overlay "${@:3}"; '
+            'test "$3" != pending-nx && test "$3" != seed; }; '
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Could not write the default settings", result.stderr)
+        self.assertEqual(steps[-1].split(" ", 1)[0], "verify")
 
     def test_a_setup_that_installed_elsewhere_stops_before_the_updates(self):
         result, steps, _ = self.run_install(
@@ -394,9 +404,11 @@ class LayeredInstall(unittest.TestCase):
                 "wait",
                 "overlay",
                 "overlay",
+                "overlay",
                 "verify",
             ],
         )
+        self.assertEqual(steps[-2].split(" ", 2)[:2], ["overlay", "seed"])
         self.assertNotIn("download-installer", steps)
         self.assertFalse(any(step.startswith("interactive") for step in steps))
 
@@ -415,6 +427,7 @@ class LayeredInstall(unittest.TestCase):
                 ["verify-file", "TmNationsESWC.exe"],
                 ["overlay", "pending-nx"],
                 ["overlay", "nx-compat"],
+                ["overlay", "seed"],
                 ["verify", "3d5fe22a4eeff7d0c7b11aafc0ccbf5610adac1da79260feedbf60ab12593764"],
             ],
         )

@@ -98,6 +98,9 @@ play_target() {
     SESSION_MONITOR_STARTED=true
   fi
   test -d "$GAME_DIR" || die "Cannot enter game directory: $GAME_DIR"
+  # Saves the game writes in its game folder go to the saves folder. A folder
+  # that cannot be linked only warns: the game still runs.
+  sync_game_save_links || warn "Some save folders in the game folder are not linked to the saves folder; saves there stay in the game folder."
   local supervisor=(/usr/bin/env
     WINEPREFIX="$TRACKMANIA_MAC_PREFIX"
     WINEDEBUG="$debug"

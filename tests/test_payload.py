@@ -70,6 +70,13 @@ class BuildRevisionRecord(unittest.TestCase):
         (self.project / "pyproject.toml").write_text('[project]\nversion = "9.9.9"\n')
         self.assertEqual(self.stage(name="dirty").read_text(), revision + "\ndirty\n")
 
+    def test_game_settings_are_staged_for_settings_seeding(self):
+        # install seeds title settings (game_profile, system_config) from it.
+        self.commit()
+        staged = self.stage().parent / "game-settings.json"
+        source = self.project / "config/game-settings.json"
+        self.assertEqual(staged.read_bytes(), source.read_bytes())
+
     def test_a_staged_payload_passes_its_record_on(self):
         self.commit()
         first = self.stage()

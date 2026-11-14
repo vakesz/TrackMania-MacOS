@@ -8,7 +8,9 @@
 #    official updates may follow, run silently, and then an overlay archive
 #    unpacked over the game folder (trackmania_mac.install.overlay), and
 #    the NX_COMPAT flag set on the registry's nx_compat files
-#    (trackmania_mac.install.pe_flags). Each finished update is recorded in
+#    (trackmania_mac.install.pe_flags), then the registry's default settings
+#    file written into the game folder when none exists
+#    (trackmania_mac.install.system_config). Each finished update is recorded in
 #    drive_c/trackmania-mac-updates.done and not run again, because an official
 #    updater refuses to run twice; an install that only lacks the NX_COMPAT
 #    flag gets just that step.
@@ -277,6 +279,18 @@ apply_nx_compat() {
     || die "Could not update the $TRACKMANIA_MAC_TITLE_NAME game files."
 }
 
+# seed_game_system_config — the game-system-config component: write the
+# registry's default settings file into the game folder unless one exists
+# (trackmania_mac.install.system_config). Not fatal: without it the game starts
+# with its own defaults.
+seed_game_system_config() {
+  title_has game-system-config || return 0
+  TRACKMANIA_MAC_TITLE="$TRACKMANIA_MAC_TITLE" TRACKMANIA_MAC_TITLES_DIR="$TRACKMANIA_MAC_TITLES_DIR" \
+    trackmania_mac_python -m trackmania_mac.install.system_config seed "$GAME_DIR" \
+    "${TRACKMANIA_MAC_PROJECT_DIR}/config/game-settings.json" \
+    || warn "Could not write the default settings for $TRACKMANIA_MAC_TITLE_NAME; the game starts with its own."
+}
+
 verify_installed_game() {
   local exe="$1" expected="$2" label="$3"
   test -f "$exe" || die "$label installation finished without creating $exe"
@@ -309,6 +323,7 @@ install_game() {
       # pinned build without the flag, so setting it finishes the install.
       say "Finishing the $TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION installation at $GAME_DIR"
       apply_nx_compat
+      seed_game_system_config
       verify_installed_game "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256" "$TRACKMANIA_MAC_TITLE_SHORT_NAME"
       say "Installed $TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION at $GAME_DIR"
     elif title_has updates || title_has overlay || title_has nx-compat; then
@@ -325,6 +340,7 @@ install_game() {
       if title_has nx-compat; then
         apply_nx_compat
       fi
+      seed_game_system_config
       verify_installed_game "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256" "$TRACKMANIA_MAC_TITLE_SHORT_NAME"
       say "Installed $TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION at $GAME_DIR"
     else
@@ -363,6 +379,7 @@ install_game() {
   if title_has nx-compat; then
     apply_nx_compat
   fi
+  seed_game_system_config
   verify_installed_game "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256" "$TRACKMANIA_MAC_TITLE_SHORT_NAME"
   say "Installed $TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION at $GAME_DIR"
 }

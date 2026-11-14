@@ -127,6 +127,19 @@ class StorageTests(unittest.TestCase):
         with mock.patch.object(storage, "SIZE_BUDGET", 2):
             self.assertIsNone(storage.preview()["downloads"]["bytes"])
 
+    def test_sizes_never_follow_a_game_folders_links_to_its_saves(self):
+        # trackmania_mac.install.game_saves links save folders in the game folder
+        # to the saves folder; a prefix's size must not count them a second time.
+        saves = self.data / "saves/tmn-eswc/TmNationsESWC/GameData/Profiles"
+        self.file(saves / "Player/profile.gbx", "1234567890")
+        game = self.data / "games/tmn-eswc/prefix/drive_c/Program Files (x86)/TmNationsESWC"
+        self.file(game / "TmNationsESWC.exe", "123")
+        (game / "GameData").mkdir()
+        (game / "GameData/Profiles").symlink_to(saves, target_is_directory=True)
+        link_size = os.lstat(game / "GameData/Profiles").st_size
+        prefix = self.data / "games/tmn-eswc/prefix"
+        self.assertEqual(storage._Sizer().size(prefix), 3 + link_size)
+
     def test_preview_labels_every_pinned_download_of_a_title(self):
         eswc = self.cache / "games/tmn-eswc"
         self.file(eswc / "TmNationsESWC_Setup.exe", "1234")

@@ -35,7 +35,8 @@ stage_launcher_payload() {
   done
   # Bytecode never ships: the launcher must run installed sources as-is.
   find "${destination}/src" \( -name '__pycache__' -o -name '*.pyc' \) -prune -exec rm -rf {} +
-  cp "${project}/config/dxvk.conf" "${project}/config/pins.json" "${destination}/config/"
+  cp "${project}/config/dxvk.conf" "${project}/config/pins.json" "${project}/config/game-settings.json" \
+    "${destination}/config/"
   mkdir -p "${destination}/config/titles"
   cp "${project}/config/titles/"*.json "${destination}/config/titles/"
   # The release version is read from pyproject.toml (src/shell/lib/version.sh).

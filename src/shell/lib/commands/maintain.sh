@@ -33,7 +33,9 @@ update_game() {
     return
   fi
 
-  if verify_file "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256"; then
+  # The pinned build, or the pinned build up to its last install steps: install
+  # finishes it without running the setup again.
+  if verify_file "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256" || game_exe_finish_pending; then
     exec "${TRACKMANIA_MAC_PROJECT_DIR}/src/shell/cli/install.sh"
   fi
   if test "$needs_patch" = true; then

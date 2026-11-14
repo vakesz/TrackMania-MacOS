@@ -285,6 +285,7 @@ class InteractiveSetup(unittest.TestCase):
 
 UPDATES_DONE = "trackmania-mac-updates.done"
 UPDATE_SHA = "8f42e6b0f9058360ce497363cbcbc022fd9d4385a84606db9b0d65a2abcdb5f7"
+FINAL_SHA = "822def6627f020035ef0819cf9f85493e952a2efb450d23770b330311ad8109d"
 
 
 class LayeredInstall(unittest.TestCase):
@@ -306,7 +307,7 @@ class LayeredInstall(unittest.TestCase):
             "stop_prefix_wine() { step stop-installer-tree; }; "
             "stop_prefix_processes() { step stop; }; "
             'verify_file() { step verify-file "${1##*/}"; }; '
-            'trackmania_mac_python() { step overlay "${@:3}"; test "$3" != pending-nx; }; '
+            'trackmania_mac_python() { step overlay "${@:3}"; test "$3" != stage; }; '
             'verify_installed_game() { step verify "$2"; }; ' + extra_stubs + "install_game"
         )
         result = subprocess.run(
@@ -346,19 +347,21 @@ class LayeredInstall(unittest.TestCase):
                     cache / "Win10Patch.tar.gz", game_dir
                 ),
                 "overlay nx-compat {} TmNationsESWC.exe binkw32.dll unicows.dll".format(game_dir),
+                "overlay apply {}".format(game_dir),
                 "overlay seed {} {}".format(game_dir, ROOT / "config/game-settings.json"),
-                "verify 3d5fe22a4eeff7d0c7b11aafc0ccbf5610adac1da79260feedbf60ab12593764",
+                "verify " + FINAL_SHA,
             ],
         )
         done = home / "Library/TrackManiaMacOS/games/tmn-eswc/prefix/drive_c" / UPDATES_DONE
         self.assertEqual(done.read_text(), UPDATE_SHA + "\n")
         self.assertIn("Adding the TrackMania Nations ESWC 1.8.0 game files", result.stdout)
         self.assertIn("Marking the game files as compatible with memory protection", result.stdout)
+        self.assertIn("Adding the faster particle code to the game", result.stdout)
 
     def test_a_settings_seed_that_fails_only_warns(self):
         result, steps, _ = self.run_install(
             'trackmania_mac_python() { step overlay "${@:3}"; '
-            'test "$3" != pending-nx && test "$3" != seed; }; '
+            'test "$3" != stage && test "$3" != seed; }; '
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Could not write the default settings", result.stderr)
@@ -405,6 +408,7 @@ class LayeredInstall(unittest.TestCase):
                 "overlay",
                 "overlay",
                 "overlay",
+                "overlay",
                 "verify",
             ],
         )
@@ -412,27 +416,42 @@ class LayeredInstall(unittest.TestCase):
         self.assertNotIn("download-installer", steps)
         self.assertFalse(any(step.startswith("interactive") for step in steps))
 
-    def test_an_install_that_only_lacks_the_flag_gets_just_that_step(self):
+    def finish(self, stage):
+        """An install whose executable is at STAGE (exe_patch stage prints it)."""
         prepare = 'mkdir -p "${GAME_EXE%/*}"; : >"$GAME_EXE"; '
-        result, steps, _ = self.run_install(
+        return self.run_install(
             prepare
-            + 'verify_file() { step verify-file "${1##*/}"; return 1; }; '
-            + 'trackmania_mac_python() { step overlay "${@:3}"; }; '
+            + 'verify_file() { step verify-file "${1##*/}"; test "$1" != "$GAME_EXE"; }; '
+            + 'trackmania_mac_python() { step overlay "${@:3}"; '
+            + 'if test "$3" = stage; then echo '
+            + stage
+            + "; fi; }; "
         )
+
+    def test_an_install_without_the_flag_or_the_patch_gets_the_last_steps(self):
+        for stage in ("nx", "patch"):
+            with self.subTest(stage=stage):
+                result, steps, _ = self.finish(stage)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("Finishing the TMN 1.8.0 installation at", result.stdout)
+                self.assertEqual(
+                    [step.split(" ", 2)[:2] for step in steps],
+                    [
+                        ["verify-file", "TmNationsESWC.exe"],
+                        ["overlay", "stage"],
+                        ["overlay", "nx-compat"],
+                        ["overlay", "apply"],
+                        ["overlay", "seed"],
+                        ["verify", FINAL_SHA],
+                    ],
+                )
+
+    def test_an_unknown_executable_gets_every_step_after_the_setup(self):
+        result, steps, _ = self.finish("unknown")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Finishing the TMN 1.8.0 installation at", result.stdout)
-        self.assertEqual(
-            [step.split(" ", 2)[:2] for step in steps],
-            [
-                ["verify-file", "TmNationsESWC.exe"],
-                ["overlay", "pending-nx"],
-                ["overlay", "nx-compat"],
-                ["overlay", "seed"],
-                ["verify", "3d5fe22a4eeff7d0c7b11aafc0ccbf5610adac1da79260feedbf60ab12593764"],
-            ],
-        )
-        self.assertIn(
-            "pending-nx 3d5fe22a4eeff7d0c7b11aafc0ccbf5610adac1da79260feedbf60ab12593764 ", steps[1]
+        self.assertIn("silent tmnationseswc_175_to_179_setup.exe", steps)
+        self.assertTrue(
+            any(step.startswith("overlay apply /") and "--last" in step for step in steps)
         )
 
     def test_an_update_already_recorded_is_not_run_again(self):
@@ -495,3 +514,57 @@ class LayeredInstall(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FinishPending(unittest.TestCase):
+    def test_a_missing_executable_is_not_pending_and_asks_nothing(self):
+        with tempfile.TemporaryDirectory(prefix="trackmania-mac-pending-") as home:
+            result = subprocess.run(
+                [
+                    "/bin/bash",
+                    "-euc",
+                    ". src/shell/lib/common.sh; "
+                    'trackmania_mac_python() { echo "asked $*" >&2; return 1; }; '
+                    "if game_exe_finish_pending; then echo pending; else echo not pending; fi",
+                ],
+                cwd=ROOT,
+                env={"PATH": "/usr/bin:/bin", "HOME": home, "TRACKMANIA_MAC_TITLE": "tmn-eswc"},
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((result.stdout, result.stderr), ("not pending\n", ""))
+
+
+class UpdateStages(unittest.TestCase):
+    """update: a pinned build that only lacks its last install steps is finished, not reinstalled."""
+
+    def run_update(self, pending):
+        with tempfile.TemporaryDirectory(prefix="trackmania-mac-update-") as home:
+            script = (
+                ". src/shell/lib/common.sh; . src/shell/lib/commands/maintain.sh; "
+                "ensure_title_icon() { :; }; verify_file() { return 1; }; "
+                "directx_is_current() { :; }; openal_is_current() { :; }; "
+                f"game_exe_finish_pending() {{ return {0 if pending else 1}; }}; "
+                'exec() { printf "install reinstall=%s\\n" "${TRACKMANIA_MAC_REINSTALL:-0}"; exit 0; }; '
+                'mkdir -p "${GAME_EXE%/*}"; : >"$GAME_EXE"; update_game'
+            )
+            return subprocess.run(
+                ["/bin/bash", "-euc", script],
+                cwd=ROOT,
+                env={"PATH": "/usr/bin:/bin", "HOME": home, "TRACKMANIA_MAC_TITLE": "tmn-eswc"},
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+
+    def test_a_pending_build_is_finished_by_install(self):
+        result = self.run_update(pending=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["install reinstall=0"])
+
+    def test_any_other_executable_is_reinstalled(self):
+        result = self.run_update(pending=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines()[-1], "install reinstall=1")

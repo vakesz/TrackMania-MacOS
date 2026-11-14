@@ -46,6 +46,7 @@ COMPONENTS = (
     "updates",
     "overlay",
     "nx-compat",
+    "game-exe-patch",
     "game-saves",
     "game-system-config",
 )
@@ -104,6 +105,10 @@ _FIELDS: typing.Tuple[_Field, ...] = (
     # Game-folder files that install marks as compatible with memory protection
     # (the PE NX_COMPAT flag), so Wine does not make all memory executable.
     _Field("nx_compat", "file_names", False),
+    # A patch for game_exe applied after the NX_COMPAT step: {file, sha256_before},
+    # file relative to config/exe-patches; game_exe_sha256 is the hash after it
+    # (trackmania_mac.install.exe_patch).
+    _Field("game_exe_patch", "exe_patch", False),
     # Save folders the game writes inside its game folder, relative to it. They
     # are kept under <user_subdir> in the saves folder and linked back, so an
     # uninstall that keeps saves keeps them (trackmania_mac.install.game_saves).
@@ -133,6 +138,8 @@ _PIN_TEXT = re.compile(r"^[A-Za-z0-9._ ()-]+$")
 # A cached download's file name or a file the overlay removes: no spaces or
 # glob characters, so the shell can split a list of them on spaces.
 _FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+# A patch file under config/exe-patches: <title id>/<name>.json.
+_EXE_PATCH_FILE = re.compile(r"^[a-z0-9-]+/[a-z0-9][a-z0-9-]*\.json$")
 _DOWNLOAD_KEYS = frozenset({"url", "sha256", "size"})
 _LABEL_MAX = 60
 _PIN_SHA_KEYS = (
@@ -184,6 +191,13 @@ class GameSystemConfig(typing.NamedTuple):
     file: str
 
 
+class GameExePatch(typing.NamedTuple):
+    """A patch file for the game executable and the executable's SHA-256 before it."""
+
+    file: str
+    sha256_before: str
+
+
 class Title(typing.NamedTuple):
     id: str
     name: str
@@ -212,6 +226,7 @@ class Title(typing.NamedTuple):
     updates: typing.Tuple[Download, ...]
     overlay: typing.Optional[Overlay]
     nx_compat: typing.Tuple[str, ...]
+    game_exe_patch: typing.Optional[GameExePatch]
     game_save_dirs: typing.Tuple[str, ...]
     game_system_config: typing.Optional[GameSystemConfig]
     game_version: typing.Optional[str]
@@ -238,6 +253,7 @@ class Title(typing.NamedTuple):
         updates: official update installers run after the base setup (updates).
         overlay: an archive is unpacked over the game folder (overlay).
         nx-compat: install sets the NX_COMPAT flag on some game files (nx_compat).
+        game-exe-patch: install patches the game executable (game_exe_patch).
         game-saves: save folders in the game folder live in the saves folder (game_save_dirs).
         game-system-config: install seeds a settings file in the game folder (game_system_config).
         """
@@ -248,6 +264,7 @@ class Title(typing.NamedTuple):
             "updates": bool(self.updates),
             "overlay": self.overlay is not None,
             "nx-compat": bool(self.nx_compat),
+            "game-exe-patch": self.game_exe_patch is not None,
             "game-saves": bool(self.game_save_dirs),
             "game-system-config": self.game_system_config is not None,
         }
@@ -284,6 +301,12 @@ def titles_dir() -> pathlib.Path:
     """The registry directory; TRACKMANIA_MAC_TITLES_DIR overrides it for every consumer."""
     override = os.environ.get("TRACKMANIA_MAC_TITLES_DIR")
     return pathlib.Path(override) if override else project_dir() / "config" / "titles"
+
+
+def exe_patches_dir() -> pathlib.Path:
+    """Where game_exe_patch files live. Never follows TRACKMANIA_MAC_TITLES_DIR, so a
+    registry override cannot point install at patch files elsewhere."""
+    return project_dir() / "config" / "exe-patches"
 
 
 def _plain_name(value: str) -> bool:
@@ -397,6 +420,15 @@ def _check_value(field: _Field, value: object, path: pathlib.Path) -> object:
         if not isinstance(file, str) or not _FILE_NAME.fullmatch(file):
             raise RegistryError(f"{path}: {name} file must be a plain file name")
         return GameSystemConfig(value["format"], file)
+    if kind == "exe_patch":
+        if not isinstance(value, dict) or set(value) != {"file", "sha256_before"}:
+            raise RegistryError(f"{path}: {name} needs exactly file and sha256_before")
+        file, sha = value["file"], value["sha256_before"]
+        if not isinstance(file, str) or not _EXE_PATCH_FILE.fullmatch(file):
+            raise RegistryError(f"{path}: {name} file must be <title id>/<name>.json")
+        if not isinstance(sha, str) or not _SHA256.fullmatch(sha):
+            raise RegistryError(f"{path}: {name} sha256_before must be a lowercase hex SHA-256")
+        return GameExePatch(file, sha)
     if kind == "bool":
         if not isinstance(value, bool):
             raise RegistryError(f"{path}: {name} must be true or false")
@@ -496,10 +528,25 @@ def _validate(data: object, path: pathlib.Path) -> Title:
     if values["installer"] == "online" and not values["game_exe_sha256"]:
         raise RegistryError(f"{path}: installer kind online requires game_exe_sha256")
     # Only the direct "online" flow runs an interactive setup, updates, an overlay,
-    # the NX_COMPAT step or the settings seed.
-    for layered in ("source_interactive", "updates", "overlay", "nx_compat", "game_system_config"):
+    # the NX_COMPAT step, the executable patch or the settings seed.
+    for layered in (
+        "source_interactive",
+        "updates",
+        "overlay",
+        "nx_compat",
+        "game_exe_patch",
+        "game_system_config",
+    ):
         if values[layered] and values["installer"] != "online":
             raise RegistryError(f"{path}: {layered} requires installer kind online")
+    exe_patch = typing.cast(typing.Optional[GameExePatch], values["game_exe_patch"])
+    if exe_patch is not None:
+        if exe_patch.file.split("/", 1)[0] != values["id"]:
+            raise RegistryError(f"{path}: game_exe_patch file must be in the folder {values['id']}")
+        if exe_patch.sha256_before == values["game_exe_sha256"]:
+            raise RegistryError(
+                f"{path}: game_exe_patch sha256_before must differ from game_exe_sha256"
+            )
     overlay = typing.cast(typing.Optional[Overlay], values["overlay"])
     if overlay is not None and str(values["game_exe"]).casefold() in {
         entry.casefold() for entry in overlay.remove
@@ -701,14 +748,21 @@ def shell_assignments(title: typing.Optional[Title]) -> typing.List[typing.Tuple
     if title is not None:
         # save_dirs and game_save_dirs are omitted: names may contain spaces, so
         # a joined string is ambiguous; the shell only needs user_subdir, and
-        # trackmania_mac.install.game_saves and .system_config read
-        # game_save_dirs and game_system_config themselves. updates and overlay
-        # are spelled out below as scalars.
+        # trackmania_mac.install.game_saves, .system_config and .exe_patch read
+        # game_save_dirs, game_system_config and game_exe_patch themselves.
+        # updates and overlay are spelled out below as scalars.
         pairs = [
             (f"TRACKMANIA_MAC_TITLE_{field.upper()}", _shell_value(getattr(title, field)))
             for field in Title._fields
             if field
-            not in ("save_dirs", "game_save_dirs", "game_system_config", "updates", "overlay")
+            not in (
+                "save_dirs",
+                "game_save_dirs",
+                "game_system_config",
+                "game_exe_patch",
+                "updates",
+                "overlay",
+            )
         ]
         pairs.append(("TRACKMANIA_MAC_TITLE_PREFIX_MARKER", title.prefix_marker))
         pairs.append(("TRACKMANIA_MAC_TITLE_COMPONENTS", " ".join(title.components)))

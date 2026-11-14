@@ -391,6 +391,18 @@ competition_patch_is_ready() {
     && test -s "$TMLOADER_PROFILE_FILE"
 }
 
+# game_exe_finish_pending — true when the installed game executable is the pinned
+# build up to the NX_COMPAT flag or the executable patch, so running the steps after
+# the overlay is all that is left (trackmania_mac.install.exe_patch stage).
+game_exe_finish_pending() {
+  local stage
+  title_has nx-compat || title_has game-exe-patch || return 1
+  test -f "$GAME_EXE" || return 1
+  stage="$(TRACKMANIA_MAC_TITLE="$TRACKMANIA_MAC_TITLE" TRACKMANIA_MAC_TITLES_DIR="$TRACKMANIA_MAC_TITLES_DIR" \
+    trackmania_mac_python -m trackmania_mac.install.exe_patch stage "$GAME_DIR")" || return 1
+  test "$stage" = nx || test "$stage" = patch
+}
+
 # game_save_links link|check — the game-saves component: the save folders a
 # title writes inside its game folder (registry game_save_dirs) live in the
 # saves folder, and the game folder links to them. trackmania_mac.install.game_saves

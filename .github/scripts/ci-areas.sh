@@ -21,8 +21,10 @@ while IFS= read -r path; do
     src/swift/*)
       swift=true ;;
     # The MinGW flags in check.yml mirror these two files, and the Python
-    # tests read src/c too.
-    src/c/* | src/python/trackmania_mac/build/runtime_builder.py | src/python/trackmania_mac/session/monitor.py)
+    # tests read src/c too. The c-helpers job also checks that the executable
+    # patches still match the code they are built from.
+    src/c/* | src/python/trackmania_mac/build/runtime_builder.py | src/python/trackmania_mac/session/monitor.py \
+      | src/python/trackmania_mac/build/sse_particles_builder.py | config/exe-patches/*)
       scripts=true c_helpers=true ;;
     # What the native x87sidecar test reads or runs under.
     tests/test_x87_patch.py | patches/x87sidecar/* | config/sources.json | pyproject.toml | uv.lock)

@@ -392,6 +392,7 @@ class TitleRegistryTests(unittest.TestCase):
             'run_released_installer() { printf "%s\\n" "$TRACKMANIA_MAC_INNO_DIR"; TRACKMANIA_MAC_INSTALLER_PID=0; }; '
             'run_interactive_installer() { printf "%s\\n" "$TRACKMANIA_MAC_INNO_DIR"; TRACKMANIA_MAC_INSTALLER_PID=0; mkdir -p "${GAME_EXE%/*}"; : >"$GAME_EXE"; }; '
             "download_title_extras() { :; }; stop_prefix_processes() { :; }; apply_overlay() { :; }; apply_nx_compat() { :; }; "
+            "apply_game_exe_patch() { :; }; "
             "seed_game_system_config() { :; }; "
             "verify_file() { :; }; "
             "wait_inno_setup() { :; }; verify_installed_game() { :; }; say() { :; }; "
@@ -460,7 +461,14 @@ class TitleRegistryTests(unittest.TestCase):
         self.assertEqual(components["tmu"], ("competition-patch", "openal", "system-config"))
         self.assertEqual(
             components["tmn-eswc"],
-            ("updates", "overlay", "nx-compat", "game-saves", "game-system-config"),
+            (
+                "updates",
+                "overlay",
+                "nx-compat",
+                "game-exe-patch",
+                "game-saves",
+                "game-system-config",
+            ),
         )
         for title_id in ("tm-canyon", "tm-turbo", "tm-original"):
             self.assertEqual(components[title_id], (), title_id)
@@ -998,6 +1006,58 @@ class RegistryValidationTests(unittest.TestCase):
         pairs = dict(self.registry.shell_assignments(self.layered(game_system_config=good)))
         self.assertNotIn("TRACKMANIA_MAC_TITLE_GAME_SYSTEM_CONFIG", pairs)
         self.assertEqual(pairs["TRACKMANIA_MAC_TITLE_COMPONENTS"].split()[-1], "game-system-config")
+
+    def test_game_exe_patch_names_a_patch_file_and_the_hash_before_it(self):
+        good = {"file": "tmu/fast.json", "sha256_before": "3" * 64}
+        title = self.layered(game_exe_patch=good)
+        self.assertEqual(
+            title.game_exe_patch, self.registry.GameExePatch("tmu/fast.json", "3" * 64)
+        )
+        self.assertEqual(title.components[-1], "game-exe-patch")
+        self.assertNotIn("game-exe-patch", self.layered().components)
+        for value in (
+            "tmu/fast.json",
+            {},
+            {"file": "tmu/fast.json"},
+            dict(good, extra=1),
+            dict(good, file="fast.json"),
+            dict(good, file="tmu/fast.patch"),
+            dict(good, file="tmu/../fast.json"),
+            dict(good, file="/tmu/fast.json"),
+            dict(good, file="tmu/sub/fast.json"),
+            dict(good, file="TMU/fast.json"),
+            dict(good, file="tmu/fast.json\n"),
+            dict(good, file=5),
+            dict(good, sha256_before="3" * 63),
+            dict(good, sha256_before="A" * 64),
+            dict(good, sha256_before=None),
+        ):
+            with self.subTest(value=value), self.assertRaises(self.registry.RegistryError):
+                self.layered(game_exe_patch=value)
+
+    def test_game_exe_patch_belongs_to_its_title_and_changes_the_executable(self):
+        good = {"file": "tmu/fast.json", "sha256_before": "3" * 64}
+        with self.assertRaisesRegex(self.registry.RegistryError, "requires installer kind"):
+            self.validate(game_exe_patch=good)
+        with self.assertRaisesRegex(self.registry.RegistryError, "in the folder tmu"):
+            self.layered(game_exe_patch=dict(good, file="tmnf/fast.json"))
+        with self.assertRaisesRegex(self.registry.RegistryError, "must differ"):
+            self.layered(game_exe_patch=dict(good, sha256_before="0" * 64))
+
+    def test_game_exe_patch_is_not_exported_to_the_shell(self):
+        good = {"file": "tmu/fast.json", "sha256_before": "3" * 64}
+        pairs = dict(self.registry.shell_assignments(self.layered(game_exe_patch=good)))
+        self.assertNotIn("TRACKMANIA_MAC_TITLE_GAME_EXE_PATCH", pairs)
+        self.assertEqual(pairs["TRACKMANIA_MAC_TITLE_COMPONENTS"].split()[-1], "game-exe-patch")
+
+    def test_every_game_exe_patch_file_exists(self):
+        registry = load_registry()
+        for title in registry.load_all(TITLES):
+            if title.game_exe_patch is not None:
+                with self.subTest(title=title.id):
+                    self.assertTrue(
+                        (ROOT / "config/exe-patches" / title.game_exe_patch.file).is_file()
+                    )
 
     def test_nx_compat_must_not_list_files_the_overlay_removes(self):
         with self.assertRaisesRegex(self.registry.RegistryError, "overlay removes"):

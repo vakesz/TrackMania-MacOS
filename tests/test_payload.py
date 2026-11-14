@@ -77,6 +77,29 @@ class BuildRevisionRecord(unittest.TestCase):
         source = self.project / "config/game-settings.json"
         self.assertEqual(staged.read_bytes(), source.read_bytes())
 
+    def test_game_exe_patches_are_staged_for_install(self):
+        outside = self.root / "outside"
+        (outside / "folder").mkdir(parents=True)
+        (outside / "patch.json").write_text("{}")
+        (outside / "folder/patch.json").write_text("{}")
+        patches = self.project / "config/exe-patches"
+        (patches / "tmn-eswc/linked.json").symlink_to(outside / "patch.json")
+        (patches / "linked-folder").symlink_to(outside / "folder")
+        self.commit()
+        staged = self.stage().parent / "exe-patches"
+        self.assertFalse((staged / "tmn-eswc/linked.json").exists())
+        self.assertFalse((staged / "linked-folder").exists())
+        (patches / "tmn-eswc/linked.json").unlink()
+        (patches / "linked-folder").unlink()
+        sources = sorted(
+            path.relative_to(self.project / "config/exe-patches")
+            for path in (self.project / "config/exe-patches").rglob("*.json")
+        )
+        self.assertTrue(sources)
+        for relative in sources:
+            source = self.project / "config/exe-patches" / relative
+            self.assertEqual((staged / relative).read_bytes(), source.read_bytes())
+
     def test_a_staged_payload_passes_its_record_on(self):
         self.commit()
         first = self.stage()

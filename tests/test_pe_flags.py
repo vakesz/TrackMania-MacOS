@@ -172,11 +172,8 @@ class PeFlagsTests(unittest.TestCase):
         self.assertEqual(outside.read_bytes(), b"outside")
         self.assertTrue((self.game / (pe_flags.TEMP_PREFIX + "dir")).is_dir())
 
-    def run_pending(self, sha, name):
-        out, err = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = pe_flags.main(["pending-nx", sha, str(self.game / name)])
-        return code, out.getvalue(), err.getvalue()
+    def pending(self, sha, name):
+        return pe_flags.pending_nx(sha, str(self.game / name))
 
     def test_pending_nx_is_a_pure_check(self):
         data = make_pe(flags=0x8000)
@@ -184,9 +181,9 @@ class PeFlagsTests(unittest.TestCase):
         path = self.put("a.exe", data)
         before = path.stat()
         good = hashlib.sha256(flagged).hexdigest()
-        self.assertEqual(self.run_pending(good, "a.exe"), (0, "", ""))
-        self.assertEqual(self.run_pending(good.upper(), "a.exe")[0], 0)
-        self.assertEqual(self.run_pending("0" * 64, "a.exe"), (1, "", ""))
+        self.assertTrue(self.pending(good, "a.exe"))
+        self.assertTrue(self.pending(good.upper(), "a.exe"))
+        self.assertFalse(self.pending("0" * 64, "a.exe"))
         self.assertEqual(path.read_bytes(), data)
         self.assertEqual(path.stat().st_mtime_ns, before.st_mtime_ns)
         self.assertEqual(os.listdir(self.game), ["a.exe"])
@@ -194,18 +191,14 @@ class PeFlagsTests(unittest.TestCase):
     def test_pending_nx_is_false_when_the_flag_is_already_set(self):
         flagged = make_pe(flags=0x8100)
         self.put("a.exe", flagged)
-        self.assertEqual(
-            self.run_pending(hashlib.sha256(flagged).hexdigest(), "a.exe"), (1, "", "")
-        )
+        self.assertFalse(self.pending(hashlib.sha256(flagged).hexdigest(), "a.exe"))
 
-    def test_pending_nx_reports_files_that_are_not_pe(self):
+    def test_pending_nx_refuses_files_that_are_not_pe(self):
         self.put("a.exe", b"nope" * 64)
-        code, out, err = self.run_pending("0" * 64, "a.exe")
-        self.assertEqual((code, out), (1, ""))
-        self.assertRegex(err, r"^error: Not a PE file")
-        code, _, err = self.run_pending("0" * 64, "missing.exe")
-        self.assertEqual(code, 1)
-        self.assertRegex(err, "^error: Cannot open")
+        with self.assertRaisesRegex(ValueError, "^Not a PE file"):
+            self.pending("0" * 64, "a.exe")
+        with self.assertRaisesRegex(ValueError, "^Cannot open"):
+            self.pending("0" * 64, "missing.exe")
 
     def run_main(self, *names):
         out, err = io.StringIO(), io.StringIO()

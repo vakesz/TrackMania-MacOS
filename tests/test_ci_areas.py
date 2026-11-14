@@ -58,6 +58,9 @@ class CiAreaTests(unittest.TestCase):
             "src/c/session.c",
             "src/python/trackmania_mac/build/runtime_builder.py",
             "src/python/trackmania_mac/session/monitor.py",
+            "src/c/eswc-sse-particles/entry.s",
+            "src/python/trackmania_mac/build/sse_particles_builder.py",
+            "config/exe-patches/tmn-eswc/sse-particles.json",
         ):
             with self.subTest(path=path):
                 self.assertEqual(areas(path), {"scripts", "c-helpers"})

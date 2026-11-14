@@ -14,12 +14,9 @@ the flag is not touched. A file over 64 MiB is refused, only permission bits
 (`0o777`) are kept, and stale temporary files from a killed run are swept first.
 
     python -m trackmania_mac.install.pe_flags nx-compat GAME_DIR NAME [NAME...]
-    python -m trackmania_mac.install.pe_flags pending-nx SHA256 FILE
 
-`pending-nx` only checks: it exits 0 when FILE is a PE32 x86 file without the
-flag whose bytes, with the flag set, hash to SHA256 (so setting the flag is all
-that is left to install it), and 1 otherwise. It prints an error only when FILE
-cannot be read or is not such a PE file, and never writes.
+`pending_nx` tells trackmania_mac.install.exe_patch whether setting the flag is
+all that is left to give a file a pinned hash.
 """
 
 from __future__ import annotations
@@ -48,7 +45,7 @@ _OPTIONAL = 24
 _DLL_CHARACTERISTICS = _OPTIONAL + 70
 
 
-def _plain_name(name: str) -> str:
+def plain_name(name: str) -> str:
     if (
         not name
         or name in (".", "..")
@@ -60,7 +57,7 @@ def _plain_name(name: str) -> str:
     return name
 
 
-def _read(path: pathlib.Path) -> typing.Tuple[bytes, int]:
+def read_file(path: pathlib.Path) -> typing.Tuple[bytes, int]:
     """The file's bytes and mode, from one descriptor on a regular, non-symlink file."""
     try:
         # O_NONBLOCK: opening a FIFO must not wait for a writer; it fails the
@@ -119,18 +116,24 @@ def set_nx_compat(game_dir: str, name: str) -> bool:
     folder = pathlib.Path(game_dir)
     if folder.is_symlink() or not folder.is_dir():
         raise ValueError("Not a game folder: {}".format(folder))
-    path = folder / _plain_name(name)
-    data, mode = _read(path)
+    path = folder / plain_name(name)
+    data, mode = read_file(path)
     offset = _flags_offset(data, path)
     (flags,) = struct.unpack_from("<H", data, offset)
     if flags & NX_COMPAT:
         return False
     patched = bytearray(data)
     struct.pack_into("<H", patched, offset, flags | NX_COMPAT)
-    descriptor, temporary = tempfile.mkstemp(prefix=TEMP_PREFIX, dir=str(folder))
+    replace(path, bytes(patched), mode)
+    return True
+
+
+def replace(path: pathlib.Path, data: bytes, mode: int) -> None:
+    """Replace PATH with DATA atomically, through a temporary file in its folder."""
+    descriptor, temporary = tempfile.mkstemp(prefix=TEMP_PREFIX, dir=str(path.parent))
     try:
         with os.fdopen(descriptor, "wb") as handle:
-            handle.write(patched)
+            handle.write(data)
             handle.flush()
             os.fchmod(handle.fileno(), mode & 0o777)
             os.fsync(handle.fileno())
@@ -139,13 +142,12 @@ def set_nx_compat(game_dir: str, name: str) -> bool:
         with contextlib.suppress(OSError):
             os.unlink(temporary)
         raise
-    return True
 
 
 def pending_nx(sha256: str, file: str) -> bool:
     """True when setting the flag on FILE would give a file with this SHA-256."""
     path = pathlib.Path(file)
-    data, _ = _read(path)
+    data, _ = read_file(path)
     offset = _flags_offset(data, path)
     (flags,) = struct.unpack_from("<H", data, offset)
     if flags & NX_COMPAT:
@@ -161,13 +163,8 @@ def main(argv: typing.Optional[typing.List[str]] = None) -> int:
     command = commands.add_parser("nx-compat")
     command.add_argument("game_dir")
     command.add_argument("names", nargs="+")
-    check = commands.add_parser("pending-nx")
-    check.add_argument("sha256")
-    check.add_argument("file")
     args = parser.parse_args(argv)
     try:
-        if args.command == "pending-nx":
-            return 0 if pending_nx(args.sha256, args.file) else 1
         folder = pathlib.Path(args.game_dir)
         if folder.is_symlink() or not folder.is_dir():
             raise ValueError("Not a game folder: {}".format(folder))

@@ -8,12 +8,13 @@
 #    official updates may follow, run silently, and then an overlay archive
 #    unpacked over the game folder (trackmania_mac.install.overlay), and
 #    the NX_COMPAT flag set on the registry's nx_compat files
-#    (trackmania_mac.install.pe_flags), then the registry's default settings
+#    (trackmania_mac.install.pe_flags), the game executable patched
+#    (trackmania_mac.install.exe_patch), then the registry's default settings
 #    file written into the game folder when none exists
 #    (trackmania_mac.install.system_config). Each finished update is recorded in
 #    drive_c/trackmania-mac-updates.done and not run again, because an official
 #    updater refuses to run twice; an install that only lacks the NX_COMPAT
-#    flag gets just that step.
+#    flag or the patch gets just the steps after the overlay.
 #  - 7z-SFX wrappers around Inno Setup (TMU Forever, ManiaPlanet trial): the
 #    outer .exe only unpacks an inner Inno Setup launcher plus its data blob,
 #    and the SFX config does not forward switches to the inner setup. The two
@@ -279,6 +280,15 @@ apply_nx_compat() {
     || die "Could not update the $TRACKMANIA_MAC_TITLE_NAME game files."
 }
 
+# apply_game_exe_patch — the game-exe-patch component: patch the game executable
+# with the registry's game_exe_patch (trackmania_mac.install.exe_patch).
+apply_game_exe_patch() {
+  say "Adding the faster particle code to the game"
+  TRACKMANIA_MAC_TITLE="$TRACKMANIA_MAC_TITLE" TRACKMANIA_MAC_TITLES_DIR="$TRACKMANIA_MAC_TITLES_DIR" \
+    trackmania_mac_python -m trackmania_mac.install.exe_patch apply "$GAME_DIR" \
+    || die "Could not patch the $TRACKMANIA_MAC_TITLE_NAME game executable."
+}
+
 # seed_game_system_config — the game-system-config component: write the
 # registry's default settings file into the game folder unless one exists
 # (trackmania_mac.install.system_config). Not fatal: without it the game starts
@@ -316,13 +326,19 @@ install_game() {
     && { test ! -f "$installer_log" || grep -Fq 'Installation process succeeded.' "$installer_log"; }; then
     if verify_file "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256"; then
       say "$TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION is already installed at $GAME_DIR"
-    elif title_has nx-compat \
-      && trackmania_mac_python -m trackmania_mac.install.pe_flags pending-nx \
-        "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256" "$GAME_EXE"; then
-      # Installed before the NX_COMPAT step existed: the executable is the
-      # pinned build without the flag, so setting it finishes the install.
+    elif game_exe_finish_pending; then
+      # The executable is the pinned build without the NX_COMPAT flag or the
+      # patch (an install from before those steps, or one that stopped between
+      # them), so the steps after the overlay finish it. The flag step runs
+      # either way: it may have stopped after the executable but before the
+      # other files, and it leaves files that have the flag as they are.
       say "Finishing the $TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION installation at $GAME_DIR"
-      apply_nx_compat
+      if title_has nx-compat; then
+        apply_nx_compat
+      fi
+      if title_has game-exe-patch; then
+        apply_game_exe_patch
+      fi
       seed_game_system_config
       verify_installed_game "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256" "$TRACKMANIA_MAC_TITLE_SHORT_NAME"
       say "Installed $TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION at $GAME_DIR"
@@ -339,6 +355,9 @@ install_game() {
       fi
       if title_has nx-compat; then
         apply_nx_compat
+      fi
+      if title_has game-exe-patch; then
+        apply_game_exe_patch
       fi
       seed_game_system_config
       verify_installed_game "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256" "$TRACKMANIA_MAC_TITLE_SHORT_NAME"
@@ -378,6 +397,9 @@ install_game() {
   fi
   if title_has nx-compat; then
     apply_nx_compat
+  fi
+  if title_has game-exe-patch; then
+    apply_game_exe_patch
   fi
   seed_game_system_config
   verify_installed_game "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256" "$TRACKMANIA_MAC_TITLE_SHORT_NAME"

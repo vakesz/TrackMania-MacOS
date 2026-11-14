@@ -7,12 +7,16 @@ the compiler at hand. entry.s includes it and is assembled without a linker into
 TmNationsESWC.exe (trackmania_mac.install.exe_patch applies it).
 
     python -m trackmania_mac.build.sse_particles_builder           # rebuild .s and the patch
-    python -m trackmania_mac.build.sse_particles_builder --check   # compare, change nothing
+    python -m trackmania_mac.build.sse_particles_builder --check   # check, change nothing
 
-Rebuilding needs the pinned i686-w64-mingw32-gcc. --check needs only
-i686-w64-mingw32-as: it fails when the committed billboards.s and entry.s no longer
-assemble to the patch file, and, when the pinned compiler is installed, when
-billboards.c no longer compiles to the committed billboards.s.
+Rebuilding needs the pinned compiler and assembler; the committed patch is the
+authority. --check needs i686-w64-mingw32-as and -objdump of any version. It checks
+the committed code itself: its sha256, no x87 instruction, no absolute address,
+jumps only inside it or to the three places in the game, and an entry at each hook
+offset. It also assembles billboards.s and entry.s, and with the pinned assembler
+compares the result with the patch byte for byte (other versions encode some
+instructions differently). With the pinned compiler installed, it also checks that
+billboards.c compiles to the committed billboards.s.
 """
 
 from __future__ import annotations
@@ -29,12 +33,16 @@ import sys
 import tempfile
 import typing
 
+from trackmania_mac.install import exe_patch
+
 ROOT = pathlib.Path(__file__).resolve().parents[4]
 SOURCE = ROOT / "src/c/eswc-sse-particles"
 PATCH = ROOT / "config/exe-patches/tmn-eswc/sse-particles.json"
 COMPILER = "i686-w64-mingw32-gcc"
 COMPILER_VERSION = "16.2.0"  # Homebrew mingw-w64 14.0.0
 ASSEMBLER = "i686-w64-mingw32-as"
+ASSEMBLER_VERSION = "2.47"  # binutils, same package
+OBJDUMP = "i686-w64-mingw32-objdump"
 CFLAGS = (
     "-S",
     "-masm=intel",
@@ -66,17 +74,80 @@ SUMMARY = (
     "SSE2 particle billboard loop for TmNationsESWC.exe 1.8.0 "
     "(function 0x80ff40), entered from its two loop heads."
 )
+# Where the code may jump into the game: the function's exit and the two loop bodies.
+GAME_TARGETS = frozenset({0x811B0F, 0x81068D, 0x810D1E})
 _X87 = re.compile(r"^\s*(f[a-z0-9]+|wait)\b", re.IGNORECASE)
 
 
-def compiler_version() -> typing.Optional[str]:
+def tool_version(tool: str) -> typing.Optional[str]:
+    """The last word of TOOL's first --version line, or None when it does not run."""
     try:
         first = subprocess.run(
-            [COMPILER, "--version"], capture_output=True, text=True, check=True
+            [tool, "--version"], capture_output=True, text=True, check=True
         ).stdout.splitlines()[0]
     except (OSError, subprocess.CalledProcessError, IndexError):
         return None
     return first.split()[-1]
+
+
+def compiler_version() -> typing.Optional[str]:
+    return tool_version(COMPILER)
+
+
+def assembler_version() -> typing.Optional[str]:
+    """binutils major.minor, such as 2.47 for 2.47.20260726."""
+    version = tool_version(ASSEMBLER)
+    match = re.match(r"\d+\.\d+", version or "")
+    return match.group() if match else None
+
+
+def check_code(code: bytes) -> None:
+    """The committed code's policy, from GNU objdump's listing of it."""
+    start = IMAGE_BASE + SECTION_RVA
+    with tempfile.TemporaryDirectory(prefix="trackmania-mac-sse-") as directory:
+        path = pathlib.Path(directory) / "code.bin"
+        path.write_bytes(code)
+        listing = subprocess.run(
+            [
+                OBJDUMP,
+                "-D",
+                "-b",
+                "binary",
+                "-m",
+                "i386",
+                "-M",
+                "intel",
+                f"--adjust-vma={start:#x}",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    instructions = {}
+    for line in listing.splitlines():
+        match = re.match(r"^\s*([0-9a-f]+):\t[0-9a-f ]+\t(\S.*)$", line)
+        if match:
+            instructions[int(match.group(1), 16)] = match.group(2)
+    exits = set()
+    for address, text in instructions.items():
+        mnemonic = text.split()[0]
+        if _X87.match(mnemonic):
+            raise SystemExit(f"x87 instruction at {address:#x}: {text}")
+        if re.search(r"ds:0x|\[0x", text):
+            raise SystemExit(f"absolute address at {address:#x}: {text}")
+        target = re.match(r"(j[a-z]+|call)\s+0x([0-9a-f]+)", text)
+        if target:
+            destination = int(target.group(2), 16)
+            if destination in GAME_TARGETS and address < start + 0x40:
+                exits.add(destination)
+            elif not start <= destination < start + len(code):
+                raise SystemExit(f"jump out of the code at {address:#x}: {text}")
+    if exits != GAME_TARGETS:
+        raise SystemExit("the entries do not jump to all of the game's three places")
+    for _, _, offset in HOOKS:
+        if instructions.get(start + offset, "").split() != ["push", "esp"]:
+            raise SystemExit(f"no entry at offset {offset:#x}")
 
 
 def compile_c(output: pathlib.Path) -> None:
@@ -165,37 +236,45 @@ def patch_document(code: bytes) -> str:
 
 def main(argv: typing.Optional[typing.List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--check", action="store_true", help="compare only; change nothing")
+    parser.add_argument("--check", action="store_true", help="check only; change nothing")
     args = parser.parse_args(argv)
-    pinned = compiler_version() == COMPILER_VERSION
+    compiler, assembler = compiler_version(), assembler_version()
     with tempfile.TemporaryDirectory(prefix="trackmania-mac-sse-") as directory:
         work = pathlib.Path(directory)
-        if pinned:
+        if compiler == COMPILER_VERSION:
             compile_c(work / "billboards.s")
-        elif not args.check:
-            raise SystemExit(f"Rebuilding needs {COMPILER} {COMPILER_VERSION}.")
-        if args.check:
-            if (
-                pinned
-                and (work / "billboards.s").read_bytes() != (SOURCE / "billboards.s").read_bytes()
-            ):
-                raise SystemExit("billboards.s does not match billboards.c; rebuild the patch.")
-            code = assemble(work, SOURCE / "billboards.s")
-            if patch_document(code) != PATCH.read_text():
+        if not args.check:
+            if compiler != COMPILER_VERSION or assembler != ASSEMBLER_VERSION:
                 raise SystemExit(
-                    f"{PATCH.relative_to(ROOT)} does not match its source; rebuild it."
+                    f"Rebuilding needs {COMPILER} {COMPILER_VERSION} and binutils {ASSEMBLER_VERSION}."
                 )
-            checked = (
-                "billboards.c, billboards.s and entry.s" if pinned else "billboards.s and entry.s"
-            )
-            print(f"{PATCH.relative_to(ROOT)} matches {checked} ({len(code)} bytes of code)")
+            (SOURCE / "billboards.s").write_bytes((work / "billboards.s").read_bytes())
+            code = assemble(work, work / "billboards.s")
+            check_code(code)
+            PATCH.write_text(patch_document(code))
+            print(f"Wrote {PATCH.relative_to(ROOT)} ({len(code)} bytes of code)")
             return 0
-        (SOURCE / "billboards.s").write_bytes((work / "billboards.s").read_bytes())
-        code = assemble(work, work / "billboards.s")
-    PATCH.parent.mkdir(parents=True, exist_ok=True)
-    PATCH.write_text(patch_document(code))
-    print(f"Wrote {PATCH.relative_to(ROOT)} ({len(code)} bytes of code)")
-    return 0
+        committed = exe_patch.load(PATCH).data
+        if patch_document(committed) != PATCH.read_text():
+            raise SystemExit(f"{PATCH.relative_to(ROOT)} is not what the builder writes.")
+        check_code(committed)
+        if compiler == COMPILER_VERSION and (
+            (work / "billboards.s").read_bytes() != (SOURCE / "billboards.s").read_bytes()
+        ):
+            raise SystemExit("billboards.s does not match billboards.c; rebuild the patch.")
+        code = assemble(work, SOURCE / "billboards.s")
+        name = PATCH.relative_to(ROOT)
+        if assembler != ASSEMBLER_VERSION:
+            print(
+                f"{name}: the code passed its checks; the byte comparison was skipped because "
+                f"{ASSEMBLER} is binutils {assembler}, not the pinned {ASSEMBLER_VERSION}."
+            )
+            return 0
+        if code != committed:
+            raise SystemExit(f"{name} does not match its source; rebuild it.")
+        checked = "billboards.c, billboards.s" if compiler == COMPILER_VERSION else "billboards.s"
+        print(f"{name} matches {checked} and entry.s ({len(code)} bytes of code)")
+        return 0
 
 
 if __name__ == "__main__":

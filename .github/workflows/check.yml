@@ -145,8 +145,8 @@ jobs:
         with:
           persist-credentials: false
       - name: Install mingw-w64
-        # The x86_64 compiler for the helpers; only the i686 assembler for the
-        # executable patch, whose compiler output is committed.
+        # The x86_64 compiler for the helpers; only the i686 binutils (as,
+        # objdump) for the executable patch, whose compiler output is committed.
         run: |
           set -euo pipefail
           sudo apt-get update
@@ -166,6 +166,8 @@ jobs:
           x86_64-w64-mingw32-gcc -O2 -Wall -Wextra -Werror \
             src/c/game-state.c -o "${RUNNER_TEMP}/game-state.exe"
       - name: Check the Nations ESWC particle patch against its source
+        # Checks the committed code and that its sources assemble. The byte
+        # comparison needs the pinned binutils, which Ubuntu does not ship.
         run: |
           set -euo pipefail
           i686-w64-mingw32-as --version | head -1

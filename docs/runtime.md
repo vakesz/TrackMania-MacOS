@@ -407,9 +407,12 @@ the only way back to the unpatched executable.
 The code is `src/c/eswc-sse-particles/billboards.c` and `entry.s`.
 `python -m trackmania_mac.build.sse_particles_builder` compiles the C file to
 `billboards.s` with the pinned compiler (i686-w64-mingw32-gcc 16.2.0) and assembles
-both, without a linker, into the patch file; `billboards.s` is committed, so the
-patch does not depend on the compiler at hand. CI runs the builder with `--check`,
-which needs only the assembler.
+both, without a linker, with the pinned assembler (binutils 2.47) into the patch
+file. The committed patch is the authority; it was reproduced byte for byte locally
+with those versions. CI runs the builder with `--check`: it checks the committed
+code (its hash, no x87 instruction, no absolute address, jumps only within it or to
+the three places in the game) and that the sources still assemble, but CI's older
+binutils encodes some instructions differently, so CI does not compare the bytes.
 
 To check the patch against the game's own loop, run
 `python3 -m trackmania_mac.probes.eswc_sse_gate` with the game installed and closed.

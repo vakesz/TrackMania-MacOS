@@ -82,6 +82,11 @@ play_target() {
     session_args+=(--desktop "$TRACKMANIA_MAC_WINDOW_SIZE")
   fi
   local debug="${WINEDEBUG:--all}"
+  # Python runs from a neutral folder: `python -m` puts its working directory
+  # first on sys.path, and the game folder is writable by the game and by
+  # third-party files laid over it. Only the Wine child starts in the game
+  # folder (the supervisor's --cwd), which becomes its Windows current folder.
+  cd / || die "Cannot leave the current folder."
   if test "$TRACKMANIA_MAC_DIAG" = on && test -z "$SESSION_MONITOR_STARTED"; then
     # Wine's frame rate and timestamps, read with trackmania_mac.session.monitor's lines by
     # trackmania_mac.session.report. The monitor follows this process ID, which the
@@ -92,7 +97,7 @@ play_target() {
       --wine "$wine_bin" --cache "$TRACKMANIA_MAC_CACHE" --game-exe "$TRACKMANIA_MAC_TITLE_GAME_EXE" &
     SESSION_MONITOR_STARTED=true
   fi
-  cd "$GAME_DIR" || die "Cannot enter game directory: $GAME_DIR"
+  test -d "$GAME_DIR" || die "Cannot enter game directory: $GAME_DIR"
   local supervisor=(/usr/bin/env
     WINEPREFIX="$TRACKMANIA_MAC_PREFIX"
     WINEDEBUG="$debug"
@@ -100,7 +105,7 @@ play_target() {
     "${renderer_vars[@]}"
     PYTHONPATH="$TRACKMANIA_MAC_PYTHONPATH"
     "$TRACKMANIA_MAC_PYTHON" -m trackmania_mac.session.supervisor run
-    --prefix "$TRACKMANIA_MAC_PREFIX" --wine "$wine_bin" --helper "$helper"
+    --prefix "$TRACKMANIA_MAC_PREFIX" --wine "$wine_bin" --helper "$helper" --cwd "$GAME_DIR"
     "${session_args[@]}" -- "$executable" "$@")
   if test "$redirect" = true; then
     # This shell keeps the operation descriptor while the supervisor runs, so

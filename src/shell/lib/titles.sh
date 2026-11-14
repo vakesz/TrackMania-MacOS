@@ -18,7 +18,7 @@ trackmania_mac_title_is_known() {
 # The registry derives the list (Title.components); an unknown name is a bug.
 title_has() {
   case "$1" in
-    competition-patch|openal|system-config) ;;
+    competition-patch|openal|system-config|updates|overlay) ;;
     *) die "Unknown title component: $1" ;;
   esac
   case " ${TRACKMANIA_MAC_TITLE_COMPONENTS-} " in
@@ -49,4 +49,14 @@ _cache_installer_path() {
   else
     printf '%s/games/%s/%s\n' "$TRACKMANIA_MAC_CACHE" "$title" "${url##*/}"
   fi
+}
+
+# _cache_download_path TITLE URL — resolved path of one of the title's extra
+# downloads (updates, overlay), always under games/<id>.
+# src/python/trackmania_mac/guard/uninstall.py mirrors it (download_cache_paths); a test keeps them equal.
+_cache_download_path() {
+  local title="$1" url="$2"
+  test "$title" = "$TRACKMANIA_MAC_TITLE" || die "Download cache requested for $title, not $TRACKMANIA_MAC_TITLE."
+  test -n "$url" || die "Title $title has no pinned download URL in config/titles."
+  printf '%s/games/%s/%s\n' "$TRACKMANIA_MAC_CACHE" "$title" "${url##*/}"
 }

@@ -36,7 +36,11 @@ update_game() {
   if verify_file "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256"; then
     exec "${TRACKMANIA_MAC_PROJECT_DIR}/src/shell/cli/install.sh"
   fi
-  say "Installing the official $label $TRACKMANIA_MAC_TITLE_GAME_VERSION release and Competition Patch."
+  if test "$needs_patch" = true; then
+    say "Installing the official $label $TRACKMANIA_MAC_TITLE_GAME_VERSION release and Competition Patch."
+  else
+    say "Reinstalling $label $TRACKMANIA_MAC_TITLE_GAME_VERSION."
+  fi
   TRACKMANIA_MAC_REINSTALL=1 exec "${TRACKMANIA_MAC_PROJECT_DIR}/src/shell/cli/install.sh"
 }
 
@@ -137,9 +141,9 @@ doctor() {
   if test -f "$GAME_EXE"; then
     if test -n "$game_expected_sha"; then
       if verify_file "$GAME_EXE" "$game_expected_sha"; then
-        say "$title_short: verified official release"
+        say "$title_short $TRACKMANIA_MAC_TITLE_GAME_VERSION: verified pinned build"
       else
-        warn "$title_short: installed executable is not the pinned official build; run update"
+        warn "$title_short: installed executable is not the pinned build; run update"
       fi
     else
       # Retail and trial installs carry only presence coverage until a hash

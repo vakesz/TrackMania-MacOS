@@ -10,8 +10,10 @@ archive.org if a link is dead. Hashes were taken from the original files.
 Dates are YYYY-MM-DD.
 
 The `source_url` and `source_sha256` of `config/titles/tmnf.json` and
-`config/titles/tmu.json` match the TMNF and TMUF entries below. The registry is
-the source of truth; this page is background only.
+`config/titles/tmu.json` match the TMNF and TMUF entries below, and
+`config/titles/tmn-eswc.json` matches the ESWC entry, including its update and
+community build. The registry is the source of truth; this page is background
+only.
 
 ## Game installers
 
@@ -29,13 +31,34 @@ the source of truth; this page is background only.
     - MD5 `E850B3C67A72B4FF8EFB1FAB8A655063`
     - SHA-1 `502AE12133C5030817A7DA875349756C3278E3E4`
     - SHA-256 `8F42E6B0F9058360CE497363CBCBC022FD9D4385A84606DB9B0D65A2ABCDB5F7`
+    - Mirror used by the hub:
+      https://archive.org/download/tm-nations-eswc-setup/tmnationseswc_175_to_179_setup.exe
+      (19194902 bytes)
   - `tmnationseswc_179_to_180_setup.exe`
     - MD5 `8169FFCE52C4D75F0A968DF92B6BB489`
     - SHA-1 `67E27F6E06AE312909CA820A04BB2108FA541DA4`
     - SHA-256 `30F5273D7E6C6D50E61169C369E1D8E2A84D8E5AFA1BF8F9A7E9BD40D43C948F`
-- The game is protected by StarForce DRM (3.07.012.005), which does not run on
-  current Windows. The source page lists an unofficial, undocumented unpacked
-  build; it is left out here.
+  - The hub does not use this update, because the community build below
+    replaces everything it ships.
+- The game is protected by StarForce DRM (3.07.012.005), which needs kernel
+  drivers that Wine cannot run. Every official build (0.1.7.5, 1.7.9, 1.8.0) is
+  protected, and the game data is encrypted inside `tmn.dat`. The hub therefore
+  installs the community build below over the official one. It is unofficial,
+  third-party and of unknown origin, and is trusted only through the pinned
+  hashes.
+- Community StarForce-free build:
+  https://archive.org/download/tm-nations-eswc-setup/Win10Patch.tar.gz
+  - Version 1.8.0, 67468269 bytes
+  - SHA-256 `B2EC4F34A0FC1009175792F9F2E3130BDF242379235A1AD4C50019117EBB7460`
+  - Contains an unpacked `TmNationsESWC.exe`, SHA-256
+    `381213323695BA9E3C3E19BEAFD6E063F3A155C1034838B317C40187915B2560`
+    (matches ModTMNF's DownloadLinks.md), and about 1,200 decrypted GameData
+    and Resource files.
+  - The hub unpacks it over the game folder, then removes `tmn.exe`, `tmn.dll`
+    and `tmn.dat`.
+  - Like every Windows program in a Wine prefix, the game can read and write
+    your files through Wine's Z: drive. The pinned hash is the only check on
+    this unofficial executable.
 
 ### TrackMania Nations Forever (TMNF)
 

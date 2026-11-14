@@ -13,6 +13,11 @@ description: Checklist for adding a game title to the TrackMania Mac hub or chan
    - Leave `legacy_prefix_subdir`, `legacy_bundle_id_game` and `legacy_bundle_id_settings` out. They record where releases before the shared data folder kept an existing title and what they called its apps, and only the migration reads them. A new title has no earlier install.
    - The installer's `source_url`, `source_sha256` and `source_size` go here, not in `config/pins.json`, which holds only shared downloads.
    - Optional release pins, only when the exact build is known: `game_version` with `game_exe_sha256` (doctor then verifies the executable; the `online` installer kind requires them), and `creative_openal_sha256` (the Creative `OpenAL32.dll` the release ships, which install replaces with OpenAL Soft). Leave them out otherwise.
+   - `source_interactive` (bool, optional; the registry leaves it None when absent) marks a pinned installer that needs a person to click through it. It requires installer kind `online`.
+   - `updates` is a list of `{url, sha256, size}`: official Inno Setup updates, run silently in order after the base installer. https only; `size` is required. Requires installer kind `online`.
+   - `overlay` is `{url, sha256, size, remove}`: a `.tar.gz` unpacked over the game folder after the updates, after which the plain file names in `remove` are deleted from it. https only; `size` is required. Requires installer kind `online`. No `remove` name may equal `game_exe`.
+   - The basenames of `source_url`, every update URL and the overlay URL must be distinct, because they share `cache/games/<id>/`.
+   - A download from outside the vendor (an archive.org mirror, a community build) is trusted only through its pinned hash. Say so in `docs/download-links.md`.
    - New titles start with `status` unsupported (listed, not expected to run yet). Move one to provisional once it installs, and to supported only once it is qualified; today `tmnf` and `tmu` are supported.
    - `link_url` and `link_label` are optional and go together: a related page (https only, label one line of at most 60 characters) that the hub shows under the notes, such as Trackmania 2020's separate macOS port. Set them in the JSON; never special-case a title in Swift.
    - `release_date` is required: the title's first release as `YYYY-MM-DD`, checked as a real date. The registry and the hub list titles oldest first by it (ties by id), so never reorder titles any other way.
@@ -20,6 +25,8 @@ description: Checklist for adding a game title to the TrackMania Mac hub or chan
 2. **Components are derived, not configured.** `Title.components` decides the optional install steps, and the shell asks `title_has`:
    - `competition-patch` comes from `needs_tmloader`;
    - `openal` comes from `creative_openal_sha256`;
+   - `updates` comes from a non-empty `updates` list;
+   - `overlay` comes from `overlay`;
    - `system-config` (seeding the runtime's Forever-format `Default.SystemConfig.Gbx` into `user_subdir`) comes from `game_exe` `TmForever.exe`.
 
    Never branch on a title id in shell or Python. `tests/test_titles.py::TitleConditionalTests` fails on `TRACKMANIA_MAC_TITLE = ...`, `title.id == ...` and similar checks outside the legacy shims it lists. Add a registry fact or a component instead.

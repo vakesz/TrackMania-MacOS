@@ -4,7 +4,7 @@
   "short_name": "TMN",
   "engine": "tmf-classic",
   "installer": "online",
-  "status": "unsupported",
+  "status": "provisional",
   "release_date": "2006-01-26",
   "app_name": "TrackMania Nations ESWC.app",
   "settings_app_name": "TrackMania Nations ESWC Settings.app",
@@ -19,8 +19,22 @@
   "source_url": "https://download.nvidia.com/downloads_emea/Trackmania_Nations/TmNationsESWC_Setup.exe",
   "source_sha256": "30873ab16e9f81645495002aa4c0416858db91a67f314e26e6533d5fe906095b",
   "source_size": 278695200,
-  "game_version": "0.1.7.5",
-  "game_exe_sha256": "06e7e97c07771811a9f54b44062277e9498f05396baf19b0d70bb62832e6af9f",
+  "source_interactive": true,
+  "updates": [
+    {
+      "url": "https://archive.org/download/tm-nations-eswc-setup/tmnationseswc_175_to_179_setup.exe",
+      "sha256": "8f42e6b0f9058360ce497363cbcbc022fd9d4385a84606db9b0d65a2abcdb5f7",
+      "size": 19194902
+    }
+  ],
+  "overlay": {
+    "url": "https://archive.org/download/tm-nations-eswc-setup/Win10Patch.tar.gz",
+    "sha256": "b2ec4f34a0fc1009175792f9f2e3130bdf242379235a1ad4c50019117ebb7460",
+    "size": 67468269,
+    "remove": ["tmn.exe", "tmn.dll", "tmn.dat"]
+  },
+  "game_version": "1.8.0",
+  "game_exe_sha256": "381213323695ba9e3c3e19beafd6e063f3a155c1034838b317c40187915b2560",
   "requires_serial": false,
-  "notes": "The official free installer. The game uses StarForce copy protection, so it is not expected to run under Wine."
+  "notes": "Runs the official free setup, where you click through its pages, then adds the official 1.7.9 update and a community 1.8.0 build without StarForce copy protection, which Wine cannot run."
 }

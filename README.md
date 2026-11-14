@@ -86,7 +86,7 @@ rate overlay enabled (`DXVK_HUD=fps,frametimes`).
 | Original (`tm-original`) | your own retail disc image or setup file | unsupported |
 | TrackMania 2 Canyon (`tm-canyon`) | official ManiaPlanet trial | unsupported |
 | Turbo (`tm-turbo`) | your existing Steam game folder | unsupported |
-| Nations ESWC (`tmn-eswc`) | official free installer | unsupported |
+| Nations ESWC (`tmn-eswc`) | official free installer, its 1.7.9 update and a community 1.8.0 build without StarForce | provisional |
 | TrackMania 2 Stadium (`tm-stadium`) | official ManiaPlanet trial | unsupported |
 | TrackMania 2 Valley (`tm-valley`) | official ManiaPlanet trial | unsupported |
 | TrackMania 2 Lagoon (`tm-lagoon`) | official ManiaPlanet trial | unsupported |

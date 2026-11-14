@@ -1,6 +1,7 @@
 import json
 import re
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -77,7 +78,7 @@ class TitleRegistryTests(unittest.TestCase):
                 "tm-original": "unsupported",
                 "tm-canyon": "unsupported",
                 "tm-turbo": "unsupported",
-                "tmn-eswc": "unsupported",
+                "tmn-eswc": "provisional",
                 "tm-stadium": "unsupported",
                 "tm-valley": "unsupported",
                 "tm-lagoon": "unsupported",
@@ -383,19 +384,25 @@ class TitleRegistryTests(unittest.TestCase):
         )
 
     def test_wrapped_inno_installers_target_the_registry_game_dir(self):
-        """Every online installer kind gets /DIR equal to GAME_DIR."""
+        """Every online installer kind, and every update it runs, gets /DIR equal to GAME_DIR."""
         stubs = (
             "download_pinned_installer() { :; }; "
             'unpack_inner_inno() { printf "/stub/setup.exe\\n"; }; '
             "run_wine() { :; }; "
             'run_released_installer() { printf "%s\\n" "$TRACKMANIA_MAC_INNO_DIR"; TRACKMANIA_MAC_INSTALLER_PID=0; }; '
+            'run_interactive_installer() { printf "%s\\n" "$TRACKMANIA_MAC_INNO_DIR"; TRACKMANIA_MAC_INSTALLER_PID=0; mkdir -p "${GAME_EXE%/*}"; : >"$GAME_EXE"; }; '
+            "download_title_extras() { :; }; stop_prefix_processes() { :; }; apply_overlay() { :; }; "
+            "verify_file() { :; }; "
             "wait_inno_setup() { :; }; verify_installed_game() { :; }; say() { :; }; "
         )
         for path in sorted(TITLES.glob("*.json")):
             data = json.loads(path.read_text())
             if data["installer"] not in ("online", "online-retail", "online-trial"):
                 continue
-            with self.subTest(title=data["id"]):
+            with (
+                self.subTest(title=data["id"]),
+                tempfile.TemporaryDirectory(prefix="trackmania-mac-dir-") as home,
+            ):
                 result = subprocess.run(
                     [
                         "/bin/bash",
@@ -410,13 +417,15 @@ class TitleRegistryTests(unittest.TestCase):
                     timeout=15,
                     env={
                         "PATH": "/usr/bin:/bin",
-                        "HOME": "/tmp/trackmania-mac-no-home",
+                        "HOME": home,
                         "TRACKMANIA_MAC_TITLE": data["id"],
                     },
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
+                runs = 1 + len(data.get("updates", []))
                 self.assertEqual(
-                    result.stdout.strip(), "C:\\Program Files (x86)\\" + data["game_dir_name"]
+                    result.stdout.splitlines(),
+                    ["C:\\Program Files (x86)\\" + data["game_dir_name"]] * runs,
                 )
 
     def test_prefix_marker_is_derived_and_exported(self):
@@ -448,8 +457,52 @@ class TitleRegistryTests(unittest.TestCase):
         components = {title.id: title.components for title in registry.load_all(TITLES)}
         self.assertEqual(components["tmnf"], ("competition-patch", "openal", "system-config"))
         self.assertEqual(components["tmu"], ("competition-patch", "openal", "system-config"))
+        self.assertEqual(components["tmn-eswc"], ("updates", "overlay"))
         for title_id in ("tm-canyon", "tm-turbo", "tm-original"):
             self.assertEqual(components[title_id], (), title_id)
+
+    def test_layered_downloads_are_exported(self):
+        registry = load_registry()
+        names = (
+            "TRACKMANIA_MAC_TITLE_SOURCE_INTERACTIVE",
+            "TRACKMANIA_MAC_TITLE_UPDATE_COUNT",
+            "TRACKMANIA_MAC_TITLE_OVERLAY_URL",
+            "TRACKMANIA_MAC_TITLE_OVERLAY_SHA256",
+            "TRACKMANIA_MAC_TITLE_OVERLAY_SIZE",
+            "TRACKMANIA_MAC_TITLE_OVERLAY_REMOVE",
+        )
+        for title in registry.load_all(TITLES):
+            with self.subTest(title=title.id):
+                script = (
+                    ". src/shell/lib/common.sh; "
+                    + 'printf "%s\\0" '
+                    + " ".join('"${}"'.format(name) for name in names)
+                )
+                script += "; i=1; while test $i -le $TRACKMANIA_MAC_TITLE_UPDATE_COUNT; do "
+                script += 'for f in URL SHA256 SIZE; do v="TRACKMANIA_MAC_TITLE_UPDATE_${i}_$f"; '
+                script += 'printf "%s\\0" "${!v}"; done; i=$((i + 1)); done'
+                result = subprocess.run(
+                    ["/bin/bash", "-euc", script],
+                    cwd=ROOT,
+                    text=True,
+                    capture_output=True,
+                    timeout=15,
+                    env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TRACKMANIA_MAC_TITLE": title.id},
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                values = result.stdout.split("\0")[:-1]
+                overlay = title.overlay
+                expected = [
+                    "true" if title.source_interactive else "",
+                    str(len(title.updates)),
+                    overlay.url if overlay else "",
+                    overlay.sha256 if overlay else "",
+                    str(overlay.size) if overlay else "",
+                    " ".join(overlay.remove) if overlay else "",
+                ]
+                for update in title.updates:
+                    expected += [update.url, update.sha256, str(update.size)]
+                self.assertEqual(values, expected)
 
     def test_shell_components_match_python(self):
         registry = load_registry()
@@ -655,6 +708,7 @@ class RegistryValidationTests(unittest.TestCase):
             (title.notes, title.source_url, title.source_sha256, title.source_size),
             ("", None, None, None),
         )
+        self.assertEqual((title.source_interactive, title.updates, title.overlay), (None, (), None))
 
     def test_release_pins_are_optional_but_consistent(self):
         sha = "0" * 64
@@ -729,6 +783,140 @@ class RegistryValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(self.registry.RegistryError, "requires game_exe_sha256"):
             self.validate(installer="online")
         self.validate(installer="online", game_version="1.0", game_exe_sha256="0" * 64)
+
+    def layered(self, **changes):
+        """An online title with one update and an overlay, plus CHANGES."""
+        base = dict(
+            installer="online",
+            game_version="1.0",
+            game_exe_sha256="0" * 64,
+            source_interactive=True,
+            updates=[{"url": "https://example.com/u/update.exe", "sha256": "1" * 64, "size": 5}],
+            overlay={
+                "url": "https://example.com/o/overlay.tar.gz",
+                "sha256": "2" * 64,
+                "size": 7,
+                "remove": ["old.exe", "old.dat"],
+            },
+        )
+        base.update(changes)
+        return self.validate(**base)
+
+    def test_layered_install_fields_are_parsed(self):
+        title = self.layered()
+        self.assertTrue(title.source_interactive)
+        self.assertEqual(
+            title.updates,
+            (self.registry.Download("https://example.com/u/update.exe", "1" * 64, 5),),
+        )
+        self.assertEqual(
+            title.overlay,
+            self.registry.Overlay(
+                "https://example.com/o/overlay.tar.gz", "2" * 64, 7, ("old.exe", "old.dat")
+            ),
+        )
+        self.assertEqual(title.components[-2:], ("updates", "overlay"))
+        self.assertEqual(
+            [extra.url for extra in title.extra_downloads],
+            ["https://example.com/u/update.exe", "https://example.com/o/overlay.tar.gz"],
+        )
+        self.assertEqual(title.download_size, (title.source_size or 0) + 12)
+        overlay = dict(url="https://example.com/o/overlay.tar.gz", sha256="2" * 64, size=7)
+        self.assertEqual(self.layered(overlay=overlay).overlay.remove, ())
+        self.assertIsNone(self.layered(source_size=None).download_size)
+
+    def test_layered_install_fields_are_validated(self):
+        good = {"url": "https://example.com/u/update.exe", "sha256": "1" * 64, "size": 5}
+        bad_downloads = (
+            [],
+            "https://example.com/u/update.exe",
+            [dict(good, url="http://example.com/u/update.exe")],
+            [dict(good, url="https://example.com/u/update.exe?x=1")],
+            [dict(good, url="https://example.com/u/")],
+            [dict(good, url="https://example.com/u/a%20b.exe")],
+            [dict(good, sha256="A" * 64)],
+            [dict(good, size=None)],
+            [dict(good, size=True)],
+            [dict(good, size=0)],
+            [{"url": good["url"], "sha256": good["sha256"]}],
+            [dict(good, extra=1)],
+            [dict(good, remove=[])],
+        )
+        for updates in bad_downloads:
+            with (
+                self.subTest(updates=updates),
+                self.assertRaises(self.registry.RegistryError),
+            ):
+                self.layered(updates=updates)
+        overlay = {"url": "https://example.com/o/overlay.tar.gz", "sha256": "2" * 64, "size": 7}
+        for remove in (
+            "old.exe",
+            ["a/b"],
+            ["a b"],
+            ["*.dll"],
+            [".hidden"],
+            ["..", "x"],
+            [""],
+            ["old.exe", "OLD.EXE"],
+            [5],
+        ):
+            with (
+                self.subTest(remove=remove),
+                self.assertRaises(self.registry.RegistryError),
+            ):
+                self.layered(overlay=dict(overlay, remove=remove))
+        with self.assertRaisesRegex(self.registry.RegistryError, "must not list game_exe"):
+            self.layered(overlay=dict(overlay, remove=[self.data["game_exe"].upper()]))
+        with self.assertRaises(self.registry.RegistryError):
+            self.layered(overlay=None)
+        with self.assertRaises(self.registry.RegistryError):
+            self.layered(source_interactive="yes")
+
+    def test_a_trailing_newline_is_never_accepted(self):
+        good = {"url": "https://example.com/u/update.exe", "sha256": "1" * 64, "size": 5}
+        overlay = {"url": "https://example.com/o/overlay.tar.gz", "sha256": "2" * 64, "size": 7}
+        cases = (
+            {"overlay": dict(overlay, remove=["tmn.exe\n"])},
+            {"updates": [dict(good, url=good["url"] + "\n")]},
+            {"updates": [dict(good, sha256=good["sha256"] + "\n")]},
+            {"overlay": dict(overlay, url=overlay["url"] + "\n")},
+            {"source_url": self.data["source_url"] + "\n"},
+            {"source_sha256": "0" * 64 + "\n"},
+            {"game_exe_sha256": "0" * 64 + "\n"},
+            {"game_version": "1.0\n"},
+            {"release_date": "2006-01-26\n"},
+            {"bundle_id_game": "local.trackmania-mac.x.game\n"},
+        )
+        for changes in cases:
+            with (
+                self.subTest(changes=changes),
+                self.assertRaises(self.registry.RegistryError),
+            ):
+                self.layered(**changes)
+
+    def test_layered_downloads_need_distinct_file_names(self):
+        source_name = self.data["source_url"].rsplit("/", 1)[-1]
+        clash = {"url": "https://example.com/other/" + source_name, "sha256": "1" * 64, "size": 5}
+        with self.assertRaisesRegex(self.registry.RegistryError, "distinct file names"):
+            self.layered(updates=[clash])
+        update = {"url": "https://example.com/u/Overlay.tar.gz", "sha256": "1" * 64, "size": 5}
+        with self.assertRaisesRegex(self.registry.RegistryError, "distinct file names"):
+            self.layered(updates=[update])
+
+    def test_layered_install_fields_need_the_online_kind(self):
+        update = [{"url": "https://example.com/u/update.exe", "sha256": "1" * 64, "size": 5}]
+        overlay = {"url": "https://example.com/o/overlay.tar.gz", "sha256": "2" * 64, "size": 7}
+        for field, value in (
+            ("source_interactive", True),
+            ("updates", update),
+            ("overlay", overlay),
+        ):
+            with (
+                self.subTest(field=field),
+                self.assertRaisesRegex(self.registry.RegistryError, "requires installer kind"),
+            ):
+                self.validate(**{field: value})
+        self.assertFalse(self.validate(source_interactive=False).source_interactive)
 
     def test_modloader_titles_must_run_the_forever_exe(self):
         with self.assertRaisesRegex(self.registry.RegistryError, "needs_tmloader requires"):

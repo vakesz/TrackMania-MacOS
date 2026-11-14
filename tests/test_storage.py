@@ -127,6 +127,25 @@ class StorageTests(unittest.TestCase):
         with mock.patch.object(storage, "SIZE_BUDGET", 2):
             self.assertIsNone(storage.preview()["downloads"]["bytes"])
 
+    def test_preview_labels_every_pinned_download_of_a_title(self):
+        eswc = self.cache / "games/tmn-eswc"
+        self.file(eswc / "TmNationsESWC_Setup.exe", "1234")
+        self.file(eswc / "tmnationseswc_175_to_179_setup.exe", "12")
+        self.file(eswc / "Win10Patch.tar.gz", "123")
+        self.file(eswc / "Win10Patch.tar.gz.partial.AbC123", "1")
+        downloads = storage.preview()["downloads"]
+        self.assertEqual(
+            {item["label"]: item["bytes"] for item in downloads["items"]},
+            {
+                "TrackMania Nations ESWC installer": 4,
+                "TrackMania Nations ESWC update": 2,
+                "TrackMania Nations ESWC game files": 3,
+                storage.UNFINISHED: 1,
+            },
+        )
+        self.assertGreater(self.clean("downloads"), 0)
+        self.assertFalse(eswc.exists())
+
     def test_a_running_operation_blocks_downloads_and_runtimes(self):
         installer = self.file(self.cache / "directx_Jun2010_redist.exe")
         stale = self.runtime_folder("0.1.0")

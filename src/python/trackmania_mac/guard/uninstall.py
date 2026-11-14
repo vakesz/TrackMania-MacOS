@@ -194,6 +194,26 @@ def installer_cache_path(title: registry.Title, cache: Path) -> typing.Optional[
     return cache / "games" / title.id / name
 
 
+def download_cache_paths(
+    title: registry.Title, cache: Path
+) -> typing.List[typing.Tuple[Path, str]]:
+    """(path, role) of every pinned download: the installer, then updates and overlay.
+
+    Mirrors _cache_installer_path and _cache_download_path in
+    src/shell/lib/titles.sh (parity-tested). Extra downloads always sit in
+    `games/<id>`; role is installer, update or overlay.
+    """
+    paths: typing.List[typing.Tuple[Path, str]] = []
+    installer = installer_cache_path(title, cache)
+    if installer is not None:
+        paths.append((installer, "installer"))
+    folder = cache / "games" / title.id
+    paths += [(folder / registry.url_file_name(update.url), "update") for update in title.updates]
+    if title.overlay is not None:
+        paths.append((folder / registry.url_file_name(title.overlay.url), "overlay"))
+    return paths
+
+
 def shared_cache_names() -> typing.Set[str]:
     """Files directly in the cache that every title uses (see common.sh)."""
     pins = registry.pins()
@@ -443,40 +463,49 @@ def _installer_files(directory: Path, name: str) -> typing.List[Entry]:
 
 
 def cache_entries(title: registry.Title, cache: Path) -> typing.List[Entry]:
-    """The title's cached installer, its partial downloads and its unpacked staging.
+    """The title's cached downloads, their partial downloads and the unpacked staging.
 
-    tmnf's installer sits directly in the shared cache. Other titles download
-    to `games/<id>`, which carries no ownership marker, so only the known
-    files in it are removed and the folder itself only once it is empty.
+    tmnf's installer sits directly in the shared cache. Other installers, and
+    every title's updates and overlay, download to `games/<id>`, which carries
+    no ownership marker, so only the known files in it are removed and the
+    folder itself only once it is empty.
     """
     target = installer_cache_path(title, cache)
     if target is None or not os.path.lexists(cache) or cache.is_symlink():
         return []
     name = target.name
+    extras = [path.name for path, role in download_cache_paths(title, cache) if role != "installer"]
+    entries: typing.List[Entry] = []
+    names = [name] + extras
     if title.id == "tmnf":
         if not name or name in shared_cache_names():
             raise ValueError("The cached installer name {!r} is shared by every title".format(name))
         resolved_cache = managed_paths.safe_path(str(cache))
-        return _installer_files(resolved_cache, name) if resolved_cache.is_dir() else []
+        entries = _installer_files(resolved_cache, name) if resolved_cache.is_dir() else []
+        if not extras:
+            return entries
+        names = extras
     folder = cache / "games" / title.id
     if not os.path.lexists(folder):
-        return []
+        return entries
     if folder.is_symlink():
-        return [_keep("cache", folder, "a symlink")]
+        return entries + [_keep("cache", folder, "a symlink")]
     resolved = managed_paths.safe_path(str(folder))
     if not resolved.is_dir() or not _same(resolved.parent, cache / "games"):
-        return [_keep("cache", folder, "not this game's cache folder")]
-    entries = _installer_files(resolved, name)
-    # unpack_inner_inno stages `${installer%.exe}.inner` next to the installer.
-    staging = (name[: -len(".exe")] if name.endswith(".exe") else name) + ".inner"
-    inner = resolved / staging
-    if os.path.lexists(inner):
-        info = os.lstat(inner)
-        if stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid():
-            entries.append(_remove("cache", inner))
-        else:
-            entries.append(_keep("cache", inner, "not a folder this hub unpacked"))
-    entries += leftover_entries(resolved, staging, "cache")
+        return entries + [_keep("cache", folder, "not this game's cache folder")]
+    for download in names:
+        entries += _installer_files(resolved, download)
+    if name in names:
+        # unpack_inner_inno stages `${installer%.exe}.inner` next to the installer.
+        staging = (name[: -len(".exe")] if name.endswith(".exe") else name) + ".inner"
+        inner = resolved / staging
+        if os.path.lexists(inner):
+            info = os.lstat(inner)
+            if stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid():
+                entries.append(_remove("cache", inner))
+            else:
+                entries.append(_keep("cache", inner, "not a folder this hub unpacked"))
+        entries += leftover_entries(resolved, staging, "cache")
     if _owned(resolved):
         entries.append(_planned("prune", "cache", resolved))
     return entries

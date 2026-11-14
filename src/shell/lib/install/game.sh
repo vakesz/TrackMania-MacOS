@@ -2,8 +2,11 @@
 # Official TrackMania game installers. Sourced by install.sh after common.sh.
 #
 # Two shapes exist:
-#  - Direct Inno Setup installers (TMNF, ESWC): downloaded, then run silently
-#    with an explicit /DIR.
+#  - Direct Inno Setup installers (TMNF, ESWC): downloaded, then run with an
+#    explicit /DIR. Silently, unless the registry marks the setup interactive
+#    (source_interactive): then the user clicks through its wizard. Pinned
+#    official updates may follow, run silently, and then an overlay archive
+#    unpacked over the game folder (trackmania_mac.install.overlay).
 #  - 7z-SFX wrappers around Inno Setup (TMU Forever, ManiaPlanet trial): the
 #    outer .exe only unpacks an inner Inno Setup launcher plus its data blob,
 #    and the SFX config does not forward switches to the inner setup. The two
@@ -49,42 +52,59 @@ reap_prefix_leftovers() {
   without_operation_lock trackmania_mac_python -m trackmania_mac.guard.operation_guard reap "$TRACKMANIA_MAC_PREFIX" || true
 }
 
-# wait_inno_setup PID LOG LABEL: watch a running Inno Setup in the prefix.
-# The legacy Inno Setup versions used by every title can spin during teardown
-# under WoW64/Rosetta. Only stop them once their own log documents a
-# successful installation and the deinitialization step made it safe.
+# _kill_prefix_server — ask this prefix's wineserver to end every Wine process.
+_kill_prefix_server() {
+  local server_bin
+  server_bin="$(wineserver_binary "$(wine_binary)")" || die "Cannot locate wineserver."
+  without_operation_lock env WINEPREFIX="$TRACKMANIA_MAC_PREFIX" "$server_bin" -k || true
+}
+
+# stop_prefix_wine PID — shut down this prefix's wineserver, then stop the
+# installer tree below PID (still running, not yet reaped) and the Wine
+# processes left behind.
+stop_prefix_wine() {
+  _kill_prefix_server
+  stop_installer_tree "$1"
+  reap_prefix_leftovers
+}
+
+# stop_prefix_processes — the same for the prefix only, once the installer has
+# been reaped: its PID may already belong to another process.
+stop_prefix_processes() {
+  _kill_prefix_server
+  reap_prefix_leftovers
+}
+
+# wait_inno_setup PID LOG LABEL [MAX_WAIT]: watch a running Inno Setup in the
+# prefix. The legacy Inno Setup versions used by every title can spin during
+# teardown under WoW64/Rosetta. Only stop them once their own log documents
+# the end of Setup (deinitialization): after a successful installation the
+# watcher continues, after a cancelled or failed one it reports that.
+# MAX_WAIT defaults to TRACKMANIA_MAC_INSTALL_TIMEOUT (900 seconds).
 wait_inno_setup() {
   local installer_pid="$1" installer_log="$2" label="$3"
-  local elapsed=0 shutdown_wait=0 max_wait="${TRACKMANIA_MAC_INSTALL_TIMEOUT:-900}"
-  local server_bin
+  local elapsed=0 shutdown_wait=0 max_wait="${4:-${TRACKMANIA_MAC_INSTALL_TIMEOUT:-900}}"
 
   while kill -0 "$installer_pid" 2>/dev/null; do
-    if test -f "$installer_log" \
-      && grep -Fq 'Installation process succeeded.' "$installer_log" \
-      && grep -Fq 'Deinitializing Setup.' "$installer_log"; then
+    if test -f "$installer_log" && grep -Fq 'Deinitializing Setup.' "$installer_log"; then
       shutdown_wait=$((shutdown_wait + 2))
       if test "$shutdown_wait" -ge 10; then
+        if ! grep -Fq 'Installation process succeeded.' "$installer_log"; then
+          stop_prefix_wine "$installer_pid"
+          die "$label setup was cancelled or stopped early. See $installer_log."
+        fi
         say "$label installation completed; stopping the legacy installer after its shutdown wait."
-        server_bin="$(wineserver_binary "$(wine_binary)")" || die "Cannot locate wineserver."
-        without_operation_lock env WINEPREFIX="$TRACKMANIA_MAC_PREFIX" "$server_bin" -k || true
-        stop_installer_tree "$installer_pid"
-        reap_prefix_leftovers
+        stop_prefix_wine "$installer_pid"
         break
       fi
     fi
     if test "$elapsed" -ge "$max_wait"; then
       if test -f "$installer_log" && grep -Fq 'Installation process succeeded.' "$installer_log"; then
         warn "The installer completed its file installation but did not exit after ${max_wait}s; stopping this prefix."
-        server_bin="$(wineserver_binary "$(wine_binary)")" || die "Cannot locate wineserver."
-        without_operation_lock env WINEPREFIX="$TRACKMANIA_MAC_PREFIX" "$server_bin" -k || true
-        stop_installer_tree "$installer_pid"
-        reap_prefix_leftovers
+        stop_prefix_wine "$installer_pid"
         break
       fi
-      server_bin="$(wineserver_binary "$(wine_binary)")" || die "Cannot locate wineserver."
-      without_operation_lock env WINEPREFIX="$TRACKMANIA_MAC_PREFIX" "$server_bin" -k || true
-      stop_installer_tree "$installer_pid"
-      reap_prefix_leftovers
+      stop_prefix_wine "$installer_pid"
       die "$label installation timed out. See $installer_log; rerun make install to retry."
     fi
     sleep 2
@@ -111,6 +131,20 @@ run_released_installer() {
   run_wine "$installer" "${flags[@]}" "${@:3}" &
   # The Wine invocation runs inside a backgrounded function; the PID watches
   # the whole pipeline, exactly like the installer process did before.
+  TRACKMANIA_MAC_INSTALLER_PID=$!
+}
+
+# run_interactive_installer PATH LABEL — start an Inno Setup the user clicks
+# through, in the background, like run_released_installer: no silent switches,
+# the same log, and /DIR from TRACKMANIA_MAC_INNO_DIR as the suggested folder.
+run_interactive_installer() {
+  local installer="$1" label="$2" flags=()
+  flags=(/SP- /NORESTART '/LOG=C:\trackmania-mac-install.log')
+  if test -n "${TRACKMANIA_MAC_INNO_DIR:-}"; then
+    flags+=("/DIR=$TRACKMANIA_MAC_INNO_DIR")
+  fi
+  say "The $label setup opens in its own window. Click through its pages and keep the suggested folder. On the last page, don't start the game; the remaining files are installed after setup closes."
+  run_wine "$installer" "${flags[@]}" &
   TRACKMANIA_MAC_INSTALLER_PID=$!
 }
 
@@ -161,6 +195,62 @@ download_pinned_installer() {
     "$TRACKMANIA_MAC_TITLE_SOURCE_SHA256" "${TRACKMANIA_MAC_TITLE_SOURCE_SIZE:-}"
 }
 
+# _title_update_field INDEX FIELD — one exported value of update INDEX (URL, SHA256, SIZE).
+_title_update_field() {
+  local name="TRACKMANIA_MAC_TITLE_UPDATE_${1}_${2}"
+  printf '%s\n' "${!name}"
+}
+
+# download_title_extras — fetch and verify the title's pinned updates and
+# overlay before any setup runs, so a failed download costs no clicks.
+download_title_extras() {
+  local index count="${TRACKMANIA_MAC_TITLE_UPDATE_COUNT:-0}" url
+  for ((index = 1; index <= count; index++)); do
+    url="$(_title_update_field "$index" URL)"
+    download_verified "$url" "$(_cache_download_path "$TRACKMANIA_MAC_TITLE" "$url")" \
+      "$(_title_update_field "$index" SHA256)" "$(_title_update_field "$index" SIZE)"
+  done
+  if title_has overlay; then
+    download_verified "$TRACKMANIA_MAC_TITLE_OVERLAY_URL" \
+      "$(_cache_download_path "$TRACKMANIA_MAC_TITLE" "$TRACKMANIA_MAC_TITLE_OVERLAY_URL")" \
+      "$TRACKMANIA_MAC_TITLE_OVERLAY_SHA256" "$TRACKMANIA_MAC_TITLE_OVERLAY_SIZE"
+  fi
+}
+
+# apply_official_updates — run each pinned update installer silently, in order.
+apply_official_updates() {
+  local index count="${TRACKMANIA_MAC_TITLE_UPDATE_COUNT:-0}" path label
+  local installer_log="${TRACKMANIA_MAC_PREFIX}/drive_c/trackmania-mac-install.log"
+  for ((index = 1; index <= count; index++)); do
+    path="$(_cache_download_path "$TRACKMANIA_MAC_TITLE" "$(_title_update_field "$index" URL)")"
+    label="$TRACKMANIA_MAC_TITLE_NAME update ${path##*/}"
+    # The download was verified before the setup, which may have taken an hour.
+    verify_file "$path" "$(_title_update_field "$index" SHA256)" \
+      || die "The downloaded $label no longer matches its pinned checksum. Run install again to download it again."
+    rm -f "$installer_log"
+    TRACKMANIA_MAC_INNO_DIR="C:\\Program Files (x86)\\${TRACKMANIA_MAC_TITLE_GAME_DIR_NAME}" \
+      run_released_installer "$path" "$label"
+    wait_inno_setup "$TRACKMANIA_MAC_INSTALLER_PID" "$installer_log" "$label"
+  done
+}
+
+# apply_overlay — unpack the pinned overlay over the game folder, remove the
+# files it makes obsolete, and write the game executable last.
+apply_overlay() {
+  local archive remove=() name names=()
+  archive="$(_cache_download_path "$TRACKMANIA_MAC_TITLE" "$TRACKMANIA_MAC_TITLE_OVERLAY_URL")"
+  # The registry allows only plain file names here, so splitting on spaces is exact.
+  read -r -a names <<<"${TRACKMANIA_MAC_TITLE_OVERLAY_REMOVE:-}"
+  for name in ${names[@]+"${names[@]}"}; do
+    remove+=(--remove "$name")
+  done
+  say "Adding the $TRACKMANIA_MAC_TITLE_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION game files"
+  trackmania_mac_python -m trackmania_mac.install.overlay apply "$archive" \
+    "$TRACKMANIA_MAC_TITLE_OVERLAY_SHA256" "$GAME_DIR" --last "$TRACKMANIA_MAC_TITLE_GAME_EXE" \
+    ${remove[@]+"${remove[@]}"} \
+    || die "Could not add the $TRACKMANIA_MAC_TITLE_NAME game files."
+}
+
 verify_installed_game() {
   local exe="$1" expected="$2" label="$3"
   test -f "$exe" || die "$label installation finished without creating $exe"
@@ -186,20 +276,52 @@ install_game() {
     && { test ! -f "$installer_log" || grep -Fq 'Installation process succeeded.' "$installer_log"; }; then
     if verify_file "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256"; then
       say "$TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION is already installed at $GAME_DIR"
+    elif title_has updates || title_has overlay; then
+      # A layered install stopped after its setup: repeat the steps after it,
+      # which are safe to repeat and need no clicks, instead of the setup.
+      say "Finishing the $TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION installation at $GAME_DIR"
+      download_title_extras
+      if title_has updates; then
+        apply_official_updates
+      fi
+      if title_has overlay; then
+        apply_overlay
+      fi
+      verify_installed_game "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256" "$TRACKMANIA_MAC_TITLE_SHORT_NAME"
+      say "Installed $TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION at $GAME_DIR"
     else
       say "$TRACKMANIA_MAC_TITLE_SHORT_NAME is already installed at $GAME_DIR"
-      warn "The executable differs from the official $TRACKMANIA_MAC_TITLE_GAME_VERSION build; run src/shell/cli/trackmania-mac update to replace it."
+      warn "The executable differs from the pinned $TRACKMANIA_MAC_TITLE_GAME_VERSION build; run src/shell/cli/trackmania-mac update to replace it."
     fi
     return
   fi
 
   download_pinned_installer "$title_id"
+  download_title_extras
   rm -f "$installer_log"
   # Pin /DIR so the title installs where GAME_DIR points, whatever the
   # installer's own default directory is.
-  TRACKMANIA_MAC_INNO_DIR="C:\\Program Files (x86)\\${TRACKMANIA_MAC_TITLE_GAME_DIR_NAME}" \
-    run_released_installer "$installer_path" "$TRACKMANIA_MAC_TITLE_NAME"
-  wait_inno_setup "$TRACKMANIA_MAC_INSTALLER_PID" "$installer_log" "$TRACKMANIA_MAC_TITLE_NAME"
+  if test "${TRACKMANIA_MAC_TITLE_SOURCE_INTERACTIVE:-}" = true; then
+    TRACKMANIA_MAC_INNO_DIR="C:\\Program Files (x86)\\${TRACKMANIA_MAC_TITLE_GAME_DIR_NAME}" \
+      run_interactive_installer "$installer_path" "$TRACKMANIA_MAC_TITLE_NAME"
+    # A person drives this setup, so it gets longer than a silent one.
+    wait_inno_setup "$TRACKMANIA_MAC_INSTALLER_PID" "$installer_log" "$TRACKMANIA_MAC_TITLE_NAME" \
+      "${TRACKMANIA_MAC_SETUP_WIZARD_TIMEOUT:-3600}"
+    # Stops anything started from the setup's last page, such as the game.
+    stop_prefix_processes
+    test -f "$GAME_EXE" \
+      || die "$TRACKMANIA_MAC_TITLE_NAME setup closed without installing into $GAME_DIR. Run install again and keep the suggested folder."
+  else
+    TRACKMANIA_MAC_INNO_DIR="C:\\Program Files (x86)\\${TRACKMANIA_MAC_TITLE_GAME_DIR_NAME}" \
+      run_released_installer "$installer_path" "$TRACKMANIA_MAC_TITLE_NAME"
+    wait_inno_setup "$TRACKMANIA_MAC_INSTALLER_PID" "$installer_log" "$TRACKMANIA_MAC_TITLE_NAME"
+  fi
+  if title_has updates; then
+    apply_official_updates
+  fi
+  if title_has overlay; then
+    apply_overlay
+  fi
   verify_installed_game "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256" "$TRACKMANIA_MAC_TITLE_SHORT_NAME"
   say "Installed $TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION at $GAME_DIR"
 }

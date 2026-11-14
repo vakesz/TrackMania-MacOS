@@ -38,7 +38,7 @@ STATUSES = frozenset({"supported", "provisional", "unsupported"})
 # Default.SystemConfig.Gbx both belong to it, so it decides those components.
 FOREVER_EXE = "TmForever.exe"
 # Optional install components a title can have; Title.components derives them.
-COMPONENTS = ("competition-patch", "openal", "system-config")
+COMPONENTS = ("competition-patch", "openal", "system-config", "updates", "overlay")
 
 
 class _Field(typing.NamedTuple):
@@ -80,6 +80,13 @@ _FIELDS: typing.Tuple[_Field, ...] = (
     _Field("source_url", "url", False),
     _Field("source_sha256", "sha", False),
     _Field("source_size", "size", False),
+    # The pinned setup needs a person to click through its wizard.
+    _Field("source_interactive", "bool", False),
+    # Official update installers, run silently in order after the base setup.
+    _Field("updates", "downloads", False),
+    # One archive unpacked over the game folder after the updates, and the
+    # files it makes obsolete.
+    _Field("overlay", "overlay", False),
     # Per-title release pins; set only where the exact build is known.
     _Field("game_version", "version", False),
     _Field("game_exe_sha256", "sha", False),
@@ -98,6 +105,11 @@ _DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 _BUNDLE_ID = re.compile(r"^[A-Za-z0-9.-]+$")
 _URL = re.compile(r"^https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%\[\]-]+$")
 _PIN_TEXT = re.compile(r"^[A-Za-z0-9._ ()-]+$")
+# Patterns are applied with fullmatch: `$` alone would accept a trailing newline.
+# A cached download's file name or a file the overlay removes: no spaces or
+# glob characters, so the shell can split a list of them on spaces.
+_FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_DOWNLOAD_KEYS = frozenset({"url", "sha256", "size"})
 _LABEL_MAX = 60
 _PIN_SHA_KEYS = (
     "directx_sha256",
@@ -124,6 +136,23 @@ class RegistryError(Exception):
     """A title registry entry is missing, malformed or inconsistent."""
 
 
+class Download(typing.NamedTuple):
+    """One pinned extra download: an update installer or an overlay archive."""
+
+    url: str
+    sha256: str
+    size: int
+
+
+class Overlay(typing.NamedTuple):
+    """An archive unpacked over the game folder, and the files it makes obsolete."""
+
+    url: str
+    sha256: str
+    size: int
+    remove: typing.Tuple[str, ...]
+
+
 class Title(typing.NamedTuple):
     id: str
     name: str
@@ -148,6 +177,9 @@ class Title(typing.NamedTuple):
     source_url: typing.Optional[str]
     source_sha256: typing.Optional[str]
     source_size: typing.Optional[int]
+    source_interactive: typing.Optional[bool]
+    updates: typing.Tuple[Download, ...]
+    overlay: typing.Optional[Overlay]
     game_version: typing.Optional[str]
     game_exe_sha256: typing.Optional[str]
     creative_openal_sha256: typing.Optional[str]
@@ -169,13 +201,32 @@ class Title(typing.NamedTuple):
         competition-patch: the title runs through ModLoader (needs_tmloader).
         openal: its release ships a pinned Creative OpenAL32.dll to replace.
         system-config: it reads the runtime's Forever-format Default.SystemConfig.Gbx.
+        updates: official update installers run after the base setup (updates).
+        overlay: an archive is unpacked over the game folder (overlay).
         """
         present = {
             "competition-patch": self.needs_tmloader,
             "openal": bool(self.creative_openal_sha256),
             "system-config": self.game_exe == FOREVER_EXE,
+            "updates": bool(self.updates),
+            "overlay": self.overlay is not None,
         }
         return tuple(name for name in COMPONENTS if present[name])
+
+    @property
+    def extra_downloads(self) -> typing.Tuple[Download, ...]:
+        """The pinned downloads besides the installer: updates first, then the overlay."""
+        extras = list(self.updates)
+        if self.overlay is not None:
+            extras.append(Download(self.overlay.url, self.overlay.sha256, self.overlay.size))
+        return tuple(extras)
+
+    @property
+    def download_size(self) -> typing.Optional[int]:
+        """Bytes of every pinned download, or None while the installer size is unknown."""
+        if self.source_size is None:
+            return None
+        return self.source_size + sum(extra.size for extra in self.extra_downloads)
 
     @property
     def downloads(self) -> bool:
@@ -207,7 +258,7 @@ def _plain_name(value: str) -> bool:
 
 def _iso_date(value: str) -> bool:
     """True for a real calendar date written as YYYY-MM-DD."""
-    if not _DATE.match(value):
+    if not _DATE.fullmatch(value):
         return False
     try:
         datetime.date.fromisoformat(value)
@@ -216,9 +267,50 @@ def _iso_date(value: str) -> bool:
     return True
 
 
+def url_file_name(url: str) -> str:
+    """The cache file name of a download: the last component of its URL."""
+    return url.rsplit("/", 1)[-1]
+
+
+def _check_download(value: object, name: str, path: pathlib.Path, extra=frozenset()) -> dict:
+    """A download object's keys and pins; returns it for the caller's own keys."""
+    if not isinstance(value, dict) or not _DOWNLOAD_KEYS <= set(value):
+        raise RegistryError(f"{path}: {name} needs url, sha256 and size")
+    unknown = sorted(str(key) for key in value if key not in _DOWNLOAD_KEYS | extra)
+    if unknown:
+        raise RegistryError(f"{path}: {name} has unknown keys: {', '.join(unknown)}")
+    url, sha, size = value["url"], value["sha256"], value["size"]
+    if not isinstance(url, str) or not url.startswith("https://") or not _URL.fullmatch(url):
+        raise RegistryError(f"{path}: {name} url must be an absolute https URL")
+    if not _FILE_NAME.fullmatch(url_file_name(url)):
+        raise RegistryError(f"{path}: {name} url must end in a plain file name")
+    if not isinstance(sha, str) or not _SHA256.fullmatch(sha):
+        raise RegistryError(f"{path}: {name} sha256 must be a lowercase hex SHA-256")
+    if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
+        raise RegistryError(f"{path}: {name} size must be a positive integer")
+    return value
+
+
 def _check_value(field: _Field, value: object, path: pathlib.Path) -> object:
     """The validated value of one present key, or None for an empty optional one."""
     kind, name = field.kind, field.name
+    if kind == "downloads":
+        if not isinstance(value, list) or not value:
+            raise RegistryError(f"{path}: {name} must be a non-empty list of downloads")
+        return tuple(
+            Download(item["url"], item["sha256"], item["size"])
+            for item in (_check_download(entry, name, path) for entry in value)
+        )
+    if kind == "overlay":
+        item = _check_download(value, name, path, frozenset({"remove"}))
+        remove = item.get("remove", [])
+        if not isinstance(remove, list) or not all(
+            isinstance(entry, str) and _FILE_NAME.fullmatch(entry) for entry in remove
+        ):
+            raise RegistryError(f"{path}: {name} remove must be a list of plain file names")
+        if len({entry.casefold() for entry in remove}) != len(remove):
+            raise RegistryError(f"{path}: {name} remove lists a file twice")
+        return Overlay(item["url"], item["sha256"], item["size"], tuple(remove))
     if kind == "bool":
         if not isinstance(value, bool):
             raise RegistryError(f"{path}: {name} must be true or false")
@@ -249,13 +341,13 @@ def _check_value(field: _Field, value: object, path: pathlib.Path) -> object:
         raise RegistryError(f"{path}: unsafe name field {name}")
     if kind == "subpath" and not all(_plain_name(part) for part in value.split("/")):
         raise RegistryError(f"{path}: unsafe {name}")
-    if kind == "bundle" and not _BUNDLE_ID.match(value):
+    if kind == "bundle" and not _BUNDLE_ID.fullmatch(value):
         raise RegistryError(f"{path}: {name} must match [A-Za-z0-9.-]+")
-    if kind == "url" and not _URL.match(value):
+    if kind == "url" and not _URL.fullmatch(value):
         raise RegistryError(f"{path}: {name} must be an absolute http(s) URL")
-    if kind == "version" and not _PIN_TEXT.match(value):
+    if kind == "version" and not _PIN_TEXT.fullmatch(value):
         raise RegistryError(f"{path}: unsafe {name}")
-    if kind == "sha" and not _SHA256.match(value):
+    if kind == "sha" and not _SHA256.fullmatch(value):
         raise RegistryError(f"{path}: {name} must be a lowercase hex SHA-256")
     if kind == "label" and (
         len(value) > _LABEL_MAX
@@ -281,7 +373,7 @@ def _validate(data: object, path: pathlib.Path) -> Title:
     values: typing.Dict[str, object] = {
         field.name: _check_value(field, data[field.name], path)
         if field.name in data
-        else ("" if field.kind == "notes" else None)
+        else {"notes": "", "downloads": ()}.get(field.kind)
         for field in _FIELDS
     }
 
@@ -317,6 +409,22 @@ def _validate(data: object, path: pathlib.Path) -> Title:
     # The direct "online" flow verifies the installed executable against its pin.
     if values["installer"] == "online" and not values["game_exe_sha256"]:
         raise RegistryError(f"{path}: installer kind online requires game_exe_sha256")
+    # Only the direct "online" flow runs an interactive setup, updates or an overlay.
+    for layered in ("source_interactive", "updates", "overlay"):
+        if values[layered] and values["installer"] != "online":
+            raise RegistryError(f"{path}: {layered} requires installer kind online")
+    overlay = typing.cast(typing.Optional[Overlay], values["overlay"])
+    if overlay is not None and str(values["game_exe"]).casefold() in {
+        entry.casefold() for entry in overlay.remove
+    }:
+        raise RegistryError(f"{path}: overlay remove must not list game_exe")
+    # Every download shares the title's cache folder, so their names must differ.
+    names = [url_file_name(str(url))] if url else []
+    names += [url_file_name(extra.url) for extra in typing.cast(tuple, values["updates"])]
+    if overlay is not None:
+        names.append(url_file_name(overlay.url))
+    if len({entry.casefold() for entry in names}) != len(names):
+        raise RegistryError(f"{path}: the installer, updates and overlay need distinct file names")
 
     if bool(values["link_url"]) != bool(values["link_label"]):
         raise RegistryError(f"{path}: link_url and link_label go together")
@@ -437,11 +545,11 @@ def pins() -> typing.Dict[str, str]:
         value = data.get(key)
         if not isinstance(value, str) or not value:
             raise RegistryError(f"{path}: missing pin {key}")
-        if key in _PIN_SHA_KEYS and not _SHA256.match(value):
+        if key in _PIN_SHA_KEYS and not _SHA256.fullmatch(value):
             raise RegistryError(f"{path}: {key} must be a lowercase hex SHA-256")
-        if key in _PIN_TEXT_KEYS and not _PIN_TEXT.match(value):
+        if key in _PIN_TEXT_KEYS and not _PIN_TEXT.fullmatch(value):
             raise RegistryError(f"{path}: unsafe pin text {key}")
-        if key in _PIN_URL_KEYS and not (value.startswith("https://") and _URL.match(value)):
+        if key in _PIN_URL_KEYS and not (value.startswith("https://") and _URL.fullmatch(value)):
             raise RegistryError(f"{path}: {key} must be an https URL")
     return {key: data[key] for key in _PIN_SHA_KEYS + _PIN_TEXT_KEYS + _PIN_URL_KEYS}
 
@@ -456,19 +564,41 @@ def _shell_value(value: object) -> str:
     return str(value)
 
 
+def _layer_assignments(title: Title) -> typing.List[typing.Tuple[str, str]]:
+    """Updates as TRACKMANIA_MAC_TITLE_UPDATE_<n>_*, the overlay as _OVERLAY_*; always defined."""
+    pairs = [("TRACKMANIA_MAC_TITLE_UPDATE_COUNT", str(len(title.updates)))]
+    for index, update in enumerate(title.updates, start=1):
+        pairs += [
+            (f"TRACKMANIA_MAC_TITLE_UPDATE_{index}_URL", update.url),
+            (f"TRACKMANIA_MAC_TITLE_UPDATE_{index}_SHA256", update.sha256),
+            (f"TRACKMANIA_MAC_TITLE_UPDATE_{index}_SIZE", str(update.size)),
+        ]
+    overlay = title.overlay
+    # File names are plain (_FILE_NAME), so the remove list splits on spaces.
+    pairs += [
+        ("TRACKMANIA_MAC_TITLE_OVERLAY_URL", overlay.url if overlay else ""),
+        ("TRACKMANIA_MAC_TITLE_OVERLAY_SHA256", overlay.sha256 if overlay else ""),
+        ("TRACKMANIA_MAC_TITLE_OVERLAY_SIZE", str(overlay.size) if overlay else ""),
+        ("TRACKMANIA_MAC_TITLE_OVERLAY_REMOVE", " ".join(overlay.remove) if overlay else ""),
+    ]
+    return pairs
+
+
 def shell_assignments(title: typing.Optional[Title]) -> typing.List[typing.Tuple[str, str]]:
     """(NAME, value) pairs: TRACKMANIA_MAC_TITLE_* for the title, the release pins, the ModLoader layout."""
     pairs = []
     if title is not None:
         # save_dirs is omitted: names may contain spaces, so a joined string is
-        # ambiguous; the shell only needs user_subdir.
+        # ambiguous; the shell only needs user_subdir. updates and overlay are
+        # spelled out below as scalars.
         pairs = [
             (f"TRACKMANIA_MAC_TITLE_{field.upper()}", _shell_value(getattr(title, field)))
             for field in Title._fields
-            if field != "save_dirs"
+            if field not in ("save_dirs", "updates", "overlay")
         ]
         pairs.append(("TRACKMANIA_MAC_TITLE_PREFIX_MARKER", title.prefix_marker))
         pairs.append(("TRACKMANIA_MAC_TITLE_COMPONENTS", " ".join(title.components)))
+        pairs += _layer_assignments(title)
     release = pins()
     pairs += [(key.upper(), value) for key, value in release.items()]
     pairs += modloader.shell_assignments(release)

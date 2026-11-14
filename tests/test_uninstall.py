@@ -363,6 +363,46 @@ class GuardPlanTests(unittest.TestCase):
         self.assertFalse(tmu.exists())
         self.assertTrue((self.fx.cache / "games").is_dir())
 
+    def test_title_cache_folder_includes_updates_and_overlay(self):
+        self.fx.install("tmn-eswc", apps=False)
+        eswc = self.fx.cache / "games/tmn-eswc"
+        eswc.mkdir(parents=True)
+        names = [
+            "TmNationsESWC_Setup.exe",
+            "TmNationsESWC_Setup.exe.partial.Ab12Cd",
+            "tmnationseswc_175_to_179_setup.exe",
+            "tmnationseswc_175_to_179_setup.exe.partial.Zz9Yy8",
+            "Win10Patch.tar.gz",
+            "Win10Patch.tar.gz.partial.Qq1Ww2",
+            "notes.txt",
+        ]
+        for name in names:
+            (eswc / name).write_text("x")
+        uninstall.remove(self.plan("tmn-eswc"), report=lambda line: None)
+        self.assertEqual(sorted(os.listdir(eswc)), ["notes.txt"])
+        (eswc / "notes.txt").unlink()
+        (eswc / "Win10Patch.tar.gz").write_text("x")
+        uninstall.remove(self.plan("tmn-eswc"), report=lambda line: None)
+        self.assertFalse(eswc.exists())
+
+    def test_extra_downloads_of_a_title_whose_installer_is_shared_sit_in_its_folder(self):
+        update = registry.Download("https://example.com/u/update.exe", "1" * 64, 5)
+        title = TITLES["tmnf"]._replace(updates=(update,))
+        (self.fx.cache / "tmnationsforever_setup.exe").write_text("x")
+        folder = self.fx.cache / "games/tmnf"
+        folder.mkdir(parents=True)
+        (folder / "update.exe").write_text("x")
+        self.assertEqual(
+            uninstall.download_cache_paths(title, self.fx.cache),
+            [
+                (self.fx.cache / "tmnationsforever_setup.exe", "installer"),
+                (folder / "update.exe", "update"),
+            ],
+        )
+        removed = self.removed(uninstall.cache_entries(title, self.fx.cache))
+        self.assertIn(self.fx.cache / "tmnationsforever_setup.exe", removed)
+        self.assertIn(folder.resolve() / "update.exe", removed)
+
     def test_keeping_saves_still_refuses_saves_inside_the_prefix(self):
         prefix = self.fx.install("tmnf", saves=False)
         documents = prefix / "drive_c/users/player/Documents"
@@ -1058,6 +1098,33 @@ class ShellUninstallTests(unittest.TestCase):
                     result.stdout.strip(),
                     str(uninstall.installer_cache_path(title, self.fx.cache)),
                 )
+
+    def test_shell_and_python_agree_on_extra_downloads(self):
+        for title in TITLES.values():
+            extras = uninstall.download_cache_paths(title, self.fx.cache)[1:]
+            if not extras:
+                continue
+            with self.subTest(title=title.id):
+                urls = [update.url for update in title.updates]
+                urls += [title.overlay.url] if title.overlay else []
+                script = (
+                    'die() { echo "$*" >&2; exit 1; }; . "$1/src/shell/lib/titles.sh"; '
+                    'shift; for url in "$@"; do _cache_download_path "$TRACKMANIA_MAC_TITLE" "$url"; done'
+                )
+                result = subprocess.run(
+                    ["/bin/bash", "-c", script, "bash", str(ROOT), *urls],
+                    env={
+                        "PATH": "/usr/bin:/bin",
+                        "TRACKMANIA_MAC_PROJECT_DIR": str(ROOT),
+                        "TRACKMANIA_MAC_TITLE": title.id,
+                        "TRACKMANIA_MAC_CACHE": str(self.fx.cache),
+                    },
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.splitlines(), [str(path) for path, _ in extras])
 
 
 class PreviewTests(unittest.TestCase):

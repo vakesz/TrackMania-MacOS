@@ -180,6 +180,11 @@ class ProbeRunner(unittest.TestCase):
 
 
 class SmokeScripts(unittest.TestCase):
+    # A hang guard, not a speed check: one smoke script starts about a hundred
+    # short Python processes (stubs and probe runners), which can take well over
+    # 15 s on a loaded CI runner running the suite in parallel.
+    SCRIPT_TIMEOUT = 120
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="trackmania-mac-probe-test-")
         self.addCleanup(self.temp.cleanup)
@@ -277,7 +282,7 @@ class SmokeScripts(unittest.TestCase):
                     env=self.env,
                     capture_output=True,
                     text=True,
-                    timeout=15,
+                    timeout=self.SCRIPT_TIMEOUT,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 recorded = [json.loads(line) for line in self.log.read_text().splitlines()]
@@ -301,7 +306,7 @@ class SmokeScripts(unittest.TestCase):
                     env=self.env,
                     capture_output=True,
                     text=True,
-                    timeout=15,
+                    timeout=self.SCRIPT_TIMEOUT,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual("SKIP: source-only" in result.stdout, not source_present)
@@ -356,7 +361,7 @@ class SmokeScripts(unittest.TestCase):
                     env=self.env,
                     capture_output=True,
                     text=True,
-                    timeout=5,
+                    timeout=self.SCRIPT_TIMEOUT,
                 )
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(

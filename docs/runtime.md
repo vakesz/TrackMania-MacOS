@@ -27,6 +27,7 @@ order to the exact revisions in `config/sources.json`.
 | x87sidecar 0002 | Skip the scoped FPCR write when the guest rounds to nearest and the host FPCR already gives the same results | The same probes in all translator modes |
 | x87sidecar 0003 | Skip the f32 operand check for values loaded from a 32-bit float | The same probes in all translator modes |
 | x87sidecar 0004 | Run PC24 IR runs in native single precision, falling back to the exact body on any out-of-range value | The same probes with the fast bodies on and off (`X87_PC24_RUNS=0`) |
+| x87sidecar 0005 | In those single-precision bodies, read a register still in its 80-bit slot directly when it holds a normal f32 value or a zero, and give runs with one arithmetic operation a fast body too | `test_pc24_slot_reads` (every 80-bit encoding class read from a slot, against exact-rational results) in all translator modes |
 
 The filename gaps are intentional. D9VK's two build patches were superseded by
 the pinned upstream update. Rejected experiments are not included in releases.
@@ -51,6 +52,14 @@ The verified PC24/PC53 rounding and float-store fixes do not provide general
 only run when every value is exactly an f32 and every result stays in the f32
 range; anything else continues in the exact binary64 body, so they compute
 the same results.
+Patch 0005 reads a slot that holds anything other than a normal f32 value or a
+zero through the exact body as well. A possible follow-up would write the
+80-bit value straight into the slot when a run ends its reply, instead of
+leaving binary64 for the reply-end conversion (about 36 instructions on the
+hottest ESWC block); it changes the exact body and is not done.
+In the ESWC replay benchmark 0005 left the average unchanged (68.2 fps
+before and after, 1280x960, Cpu/Gpu synchro 3 Frames); frame times were
+slightly smoother (worst frame 25 ms against 31 ms).
 PC64 remains an approximation; extreme underflow/overflow chains, full x87
 status-word exceptions and unmasked traps are not qualified. A value lost from
 the internal representation cannot be recovered by rounding its final store.

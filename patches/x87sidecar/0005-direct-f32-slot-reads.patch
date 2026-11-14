@@ -1,0 +1,620 @@
+Subject: x87: Read 80-bit slots directly in PC24 fast bodies, and give one-op runs one.
+
+Requires 0004. Two changes to the single-precision fast body of PC24 runs.
+
+A run's first read of a register still in its 80-bit native slot went
+through the generic conversion to binary64 and then the fast body's
+narrowing check (FCVT, FCVT, FCMEQ): about 31 instructions per read. The
+fast body now builds the f32 from the slot bits when the slot holds a normal
+f32 value (integer bit set, the low 40 significand bits clear, exponent in
+the normal f32 range) or a signed zero, in about 22 instructions. Every
+other encoding (f32 subnormals, values that need more than 24 bits or lie
+outside the f32 range, infinities, NaNs, denormals, pseudo-denormals,
+unnormals, pseudo-infinities) leaves for the exact body at the same node,
+as 0004 already does, so results are unchanged. f32 subnormals and
+infinities from a slot, which 0004 kept in the fast body, now take that
+exit; they are rare. Registers are taken in the exact read's order, so the
+two bodies' allocation state stays identical at every node.
+
+A fast body needed two arithmetic nodes. One is enough: an exact PC24
+operation costs about 30 instructions, more than the 7-instruction entry
+check plus its single-precision form. Short runs such as fstp m32 of a
+slot, fld st(1), fadd m32 now get a fast body.
+
+Measured with ir_pressure_replay on blocks captured from TrackMania Nations
+ESWC (executed ARM instructions per block execution, native-slot context,
+CW 0x007f): the hottest block, 0x810c12, goes from 482 to 397; 0x42a0e0
+953 to 929; 0x945ad0 2908 to 2695; 0x4296b0 is unchanged at 375. Weighted by
+execution count, the 17 hottest blocks run 8.4% fewer instructions. The
+emitted code of each block, run in an AArch64 emulator with slot values of
+every class above, leaves memory and registers identical to 0004's.
+
+tests/test_pc24_slot_reads.c reads every one of those encodings from a slot
+in four run shapes, against exact-rational expectations
+(generate_pc24_slot_cases.py); it passes under native Rosetta too.
+
+Not done here: the slots a reply leaves in binary64 are converted back to
+80 bits by the reply-end export, after both bodies have merged. Writing the
+80-bit value directly in the IR epilogue when the run ends the reply would
+save about 12 instructions per slot (about 36 on 0x810c12), but changes the
+exact body, the slot tracker and the GPR pressure model; left for a later
+patch.
+
+diff --git a/rosetta_core/src/X87IRLower.cpp b/rosetta_core/src/X87IRLower.cpp
+index 5b6fd74..2eaffc1 100644
+--- a/rosetta_core/src/X87IRLower.cpp
++++ b/rosetta_core/src/X87IRLower.cpp
+@@ -626,6 +626,9 @@ static void lower_fma_reduce(AssemblerBuffer& buf, TranslationResult* result, FP
+ // NaN or infinity), the fast body converts every live value to f64 in place
+ // (exactly) and jumps into the exact body at the start of that node; every
+ // value and store before that point was bit-identical to the exact body's.
++// A register still in its 80-bit native slot is read directly into an f32
++// when it is a normal f32 value or a zero, without the binary64 conversion
++// and narrowing check; any other encoding leaves for the exact body.
+ // X87_PC24_RUNS=0 disables the fast body.
+ 
+ namespace {
+@@ -703,8 +706,9 @@ bool f64_is_f32(uint64_t bits) {
+     return back_bits == bits && (bits & 0x7ff0000000000000ull) != 0x7ff0000000000000ull;
+ }
+ 
+-// Every node the fast body supports; at least two arithmetic nodes to pay for
+-// the entry check.
++// Every node the fast body supports, and at least one arithmetic node: one
++// exact PC24 operation (about 30 instructions) already costs more than the
++// entry check (7) plus its single-precision form.
+ bool pc24_run_eligible(const Context& ctx) {
+     int arithmetic = 0;
+     for (int i = 0; i < ctx.num_nodes; i++) {
+@@ -754,7 +758,7 @@ bool pc24_run_eligible(const Context& ctx) {
+                 return false;
+         }
+     }
+-    return arithmetic >= 2;
++    return arithmetic >= 1;
+ }
+ 
+ }  // namespace
+@@ -915,6 +919,61 @@ void lower(Context& ctx, TranslationResult* result) {
+     auto emit_fast_node = [&](int i) -> bool {
+         auto& n = ctx.nodes[i];
+         switch (n.op) {
++            case Op::ReadSt: {
++                // A slot still in Rosetta's 80-bit layout is read straight into
++                // an f32 when it holds a normal f32 value (integer bit set, the
++                // 40 low significand bits clear, exponent within the normal
++                // f32 range) or a signed zero. Any other encoding leaves for
++                // the exact body at this node, which converts it as before.
++                // Every accepted value is exact in f64 and f32, so the S view
++                // equals what the exact read and fast_narrow give. Registers
++                // are taken in the exact read's order, which keeps the two
++                // passes' allocation state identical.
++                if (((ctx.native_depths >> n.initial_depth) & 1U) == 0) {
++                    return false;
++                }
++                const int Sd = alloc_free_fpr(*result);
++                fprs.node_fpr[i] = static_cast<int8_t>(Sd);
++                emit_native_st_addr(buf, Xbase, Wd_top, n.initial_depth, Wd_tmp, Xst_base);
++                const int Xm = alloc_free_gpr(*result);
++                const int Wx = alloc_free_gpr(*result);
++                const int Xt = alloc_free_gpr(*result);
++                emit_ldr_str_imm(buf, 3, 0, /*LDR*/ 1, 0, Wd_tmp, Xm);
++                emit_ldr_str_imm(buf, 1, 0, /*LDRH*/ 1, 4, Wd_tmp, Wx);
++                FLabel& exit = deopt_at(i);
++                FLabel zero, done;
++                emit_bitfield(buf, 1, 2, 1, 40, 39, Xm, Xt);  // LSL Xt, Xm, #24
++                exit.cbz(buf, true, true, Xt);                 // low 40 bits set
++                emit_bitfield(buf, 1, 2, 1, 40, 63, Xm, Xm);  // LSR Xm, Xm, #40
++                zero.tbz(buf, Xm, 23, false);                  // integer bit clear
++                emit_and_mask(buf, false, Xt, Wx, 0x7fff);
++                emit_add_imm(buf, 0, 1, 0, 1, 3, Xt, Xt);      // e - 12288
++                emit_add_imm(buf, 0, 1, 0, 0, 0xf81, Xt, Xt);  // u = e - 16257
++                // The f32 exponent u + 1 must be 1..254: u < 256, and u + 2 < 256.
++                emit_bitfield(buf, 0, 2, 0, 8, 31, Xt, Wd_tmp);  // LSR #8
++                exit.cbz(buf, false, true, Wd_tmp);
++                emit_add_imm(buf, 0, 0, 0, 0, 2, Xt, Wd_tmp);
++                exit.tbz(buf, Wd_tmp, 8, true);
++                // (u << 23) + (integer bit | fraction) = exponent and fraction.
++                emit_add_sub_shifted_reg(buf, 0, 0, 0, /*LSL*/ 0, Xt, 23, Xm, Xm);
++                emit_bitfield(buf, 0, 2, 0, 15, 31, Wx, Wx);  // sign
++                emit_logical_shifted_reg(buf, 0, /*ORR*/ 1, 0, /*LSL*/ 0, Wx, 31, Xm, Xm);
++                buf.emit(0x1e270000u | (uint32_t(Xm) << 5) | uint32_t(Sd));  // FMOV S, W
++                done.branch(buf);
++                // Integer bit clear: only a zero (exponent and significand 0)
++                // stays; a denormal, pseudo-denormal or unnormal leaves.
++                zero.bind(buf);
++                exit.cbz(buf, false, true, Xm);
++                emit_and_mask(buf, false, Xt, Wx, 0x7fff);
++                exit.cbz(buf, false, true, Xt);
++                emit_bitfield(buf, 0, 2, 0, 16, 15, Wx, Wx);  // LSL #16: the sign at bit 31
++                buf.emit(0x1e270000u | (uint32_t(Wx) << 5) | uint32_t(Sd));  // FMOV S, W
++                done.bind(buf);
++                free_gpr(*result, Xt);
++                free_gpr(*result, Wx);
++                free_gpr(*result, Xm);
++                return true;
++            }
+             case Op::LoadF32: {
+                 const int Sd = alloc_free_fpr(*result);
+                 fprs.node_fpr[i] = static_cast<int8_t>(Sd);
+diff --git a/scripts/run_tests.sh b/scripts/run_tests.sh
+index 6d86c17..3eff32b 100755
+--- a/scripts/run_tests.sh
++++ b/scripts/run_tests.sh
+@@ -126,6 +126,7 @@ ALL_TESTS=(
+     test_precision_control
+     test_pc24_arithmetic
+     test_pc24_host_state
++    test_pc24_slot_reads
+     test_fldconst
+     test_detach_signals
+     test_fld
+@@ -336,6 +337,8 @@ BASELINE_PHASE=0
+ # longer reaches what the knob fixes.  Phase 20 runs them that way.
+ NATIVE_SLOTS_TESTS=(
+     test_x87_cross_reply_exact
++    # Its fstp m80 of a slot the run only read must keep every bit.
++    test_pc24_slot_reads
+ )
+ # 1 while Phase 5 runs the tests with the sidecar's translation hook off.
+ STOCK_EMIT_PHASE=0
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index 7d08a69..82f6f12 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -123,4 +123,7 @@ set(X86_SAMPLE_EXTRA_DEPS "${CMAKE_CURRENT_SOURCE_DIR}/pc24_cases.h")
+ add_x86_sample(test_pc24_arithmetic)
+ unset(X86_SAMPLE_EXTRA_DEPS)
+ add_x86_sample(test_pc24_host_state)
++set(X86_SAMPLE_EXTRA_DEPS "${CMAKE_CURRENT_SOURCE_DIR}/pc24_slot_cases.h")
++add_x86_sample(test_pc24_slot_reads)
++unset(X86_SAMPLE_EXTRA_DEPS)
+ add_x86_sample(test_rc_rounding)
+diff --git a/tests/generate_pc24_slot_cases.py b/tests/generate_pc24_slot_cases.py
+new file mode 100644
+index 0000000..28c191b
+--- /dev/null
++++ b/tests/generate_pc24_slot_cases.py
+@@ -0,0 +1,204 @@
++"""Generate PC24 vectors for x87 registers read from their 80-bit slots.
++
++Exact rational arithmetic, no native FP oracle. Each case puts an 80-bit value
++on the stack, ends the translation, and then reads the register in a new
++reply, where it is still in Rosetta's 80-bit layout (see
++test_pc24_slot_reads.c). The values cover every encoding class: normal f32
++values at the exponent edges, signed zeros, f32 subnormals, values that need
++more than 24 significand bits, values outside the f32 exponent range,
++infinities, NaNs, and the denormal, pseudo-denormal, unnormal and
++pseudo-infinity encodings.
++"""
++
++from fractions import Fraction as F
++from pathlib import Path
++import struct
++
++BIAS = 16383
++DEFAULT_NAN = ("nan", 1, 0xC000000000000000)
++
++
++def scale(x, n):
++    return x * (1 << n) if n >= 0 else x / (1 << -n)
++
++
++def exponent(x):
++    e = x.numerator.bit_length() - x.denominator.bit_length()
++    return e - 1 if x < scale(F(1), e) else e
++
++
++def round_even(y):
++    q, r = divmod(y.numerator, y.denominator)
++    return q + int(2 * r > y.denominator or (2 * r == y.denominator and q & 1))
++
++
++def decode(m, se):
++    """An 80-bit encoding as ('num', sign, Fraction), ('inf', sign) or a NaN."""
++    sign, e = se >> 15, se & 0x7FFF
++    integer = m >> 63
++    if e == 0x7FFF:
++        if not integer:
++            return DEFAULT_NAN  # pseudo-infinity, pseudo-NaN
++        if m << 1 & (1 << 64) - 1:
++            return ("nan", sign, m | 1 << 62)  # quieted
++        return ("inf", sign)
++    if e == 0:
++        return ("num", sign, scale(F(m), 1 - BIAS - 63))  # denormal, pseudo-denormal
++    if not integer:
++        return DEFAULT_NAN  # unnormal
++    return ("num", sign, scale(F(m), e - BIAS - 63))
++
++
++def f32(bits):
++    sign = bits >> 31
++    e, f = bits >> 23 & 0xFF, bits & 0x7FFFFF
++    assert e not in (0, 0xFF) or (e == 0 and f == 0), "inputs are normal f32 or zero"
++    if e == 0:
++        return ("num", sign, F(0))
++    return ("num", sign, scale(F(f | 1 << 23), e - 127 - 23))
++
++
++def add_pc24(a, b):
++    """x87 fadd with PC=24, RC=nearest, and the extended exponent range."""
++    if a[0] == "nan":
++        return a
++    if b[0] == "nan":
++        return b
++    if a[0] == "inf" or b[0] == "inf":
++        if a[0] == b[0] == "inf" and a[1] != b[1]:
++            return DEFAULT_NAN
++        return a if a[0] == "inf" else b
++    x = (-a[2] if a[1] else a[2]) + (-b[2] if b[1] else b[2])
++    if not x:
++        both_negative = a[1] and b[1] and not a[2] and not b[2]
++        return ("num", int(bool(both_negative)), F(0))
++    e = exponent(abs(x))
++    q = round_even(scale(abs(x), 23 - e))
++    return ("num", int(x < 0), scale(F(q), e - 23))
++
++
++def store_f32(v):
++    if v[0] == "nan":
++        return v[1] << 31 | 0x7FC00000 | (v[2] >> 40 & 0x7FFFFF)
++    if v[0] == "inf":
++        return v[1] << 31 | 0x7F800000
++    sign, x = v[1], v[2]
++    if not x:
++        return sign << 31
++    if x >= scale(F(1), -126):
++        e = exponent(x)
++        q = round_even(scale(x, 23 - e))
++        if q == 1 << 24:
++            q, e = q >> 1, e + 1
++        if e > 127:
++            return sign << 31 | 0x7F800000
++        return sign << 31 | (e + 127) << 23 | (q - (1 << 23))
++    return sign << 31 | round_even(scale(x, 149))  # 2^23 is FLT_MIN itself
++
++
++def store_f64(v):
++    if v[0] == "nan":
++        return v[1] << 63 | 0x7FF << 52 | (v[2] >> 11 & (1 << 52) - 1)
++    if v[0] == "inf":
++        return v[1] << 63 | 0x7FF << 52
++    sign, x = v[1], v[2]
++    if not x:
++        return sign << 63
++    # PC24 results of these cases are normal binary64 values: exact.
++    assert scale(F(1), -1022) <= x < scale(F(1), 1024)
++    return sign << 63 | struct.unpack("<Q", struct.pack("<d", float(x)))[0] & ~(1 << 63)
++
++
++def store_f80(v):
++    if v[0] == "nan":
++        return v[2], v[1] << 15 | 0x7FFF
++    if v[0] == "inf":
++        return 1 << 63, v[1] << 15 | 0x7FFF
++    sign, x = v[1], v[2]
++    if not x:
++        return 0, sign << 15
++    e = exponent(x)
++    m = scale(x, 63 - e)
++    assert m.denominator == 1 and 0 < e + BIAS < 0x7FFF
++    return m.numerator, sign << 15 | (e + BIAS)
++
++
++def f32_bits(x):
++    return struct.unpack("<I", struct.pack("<f", x))[0]
++
++
++VALUES = [
++    ("1.5", 0xC000000000000000, 0x3FFF),
++    ("-2.25", 0x9000000000000000, 0xC000),
++    ("full 24-bit significand", 0xFFFFFF0000000000, 0x4002),
++    ("FLT_MIN", 1 << 63, BIAS - 126),
++    ("-FLT_MAX", 0xFFFFFF0000000000, 0x8000 | (BIAS + 127)),
++    ("+0", 0, 0),
++    ("-0", 0, 0x8000),
++    ("f32 subnormal 2^-149", 1 << 63, BIAS - 149),
++    ("2^-127", 1 << 63, BIAS - 127),
++    ("2^128", 1 << 63, BIAS + 128),
++    ("25-bit significand", (1 << 63) | (1 << 39), 0x3FFF),
++    ("lowest significand bit", (1 << 63) | 1, 0x3FFF),
++    ("53-bit significand", 0xFFFFFFFFFFFFF800, 0xBFFE),
++    ("+inf", 1 << 63, 0x7FFF),
++    ("-inf", 1 << 63, 0xFFFF),
++    ("quiet NaN", 0xC000000000000000, 0x7FFF),
++    ("signaling NaN", 0xA000000000000000, 0xFFFF),
++    ("denormal", 1 << 40, 0),
++    ("pseudo-denormal", 1 << 63, 0x8000),
++    ("unnormal", 1 << 62, 0x3FFF),
++    ("pseudo-zero", 0, 0x3FFF),
++    ("pseudo-infinity", 0, 0x7FFF),
++]
++PAIRS = [(1.0, 0.25), (-1.5, 1.5), (3.0e38, 3.0e38), (1e-30, -1e-30)]
++TINY = ("denormal", "pseudo-denormal")  # below binary64: the sidecar reads them as 0
++
++rows = []
++for name, m, se in VALUES:
++    x = decode(m, se)
++    for y_float, z_float in PAIRS:
++        if name in TINY and y_float == -1.5:
++            continue  # x + y + z would expose the tiny value itself
++        yb, zb = f32_bits(y_float), f32_bits(z_float)
++        y, z = f32(yb), f32(zb)
++        xy = add_pc24(x, y)
++        r4m, r4se = store_f80(add_pc24(xy, z))
++        rows.append(
++            (
++                name,
++                m,
++                se,
++                yb,
++                zb,
++                store_f32(xy),
++                store_f32(x),
++                store_f64(xy),
++                r4m,
++                r4se,
++                store_f32(add_pc24(x, x)),
++            )
++        )
++
++lines = [
++    "/* Generated by generate_pc24_slot_cases.py using exact rational arithmetic. */",
++    "static const struct pc24_slot_case {",
++    "    const char* name;",
++    "    uint64_t m;",
++    "    uint16_t se;",
++    "    uint32_t y, z;",
++    "    uint32_t x_plus_y_f32, x_f32;",
++    "    uint64_t x_plus_y_f64;",
++    "    uint64_t sum_m;",
++    "    uint16_t sum_se;",
++    "    uint32_t x_plus_x_f32;",
++    "} pc24_slot_cases[] = {",
++]
++for r in rows:
++    lines.append(
++        '    {"%s", UINT64_C(0x%016x), 0x%04x, 0x%08x, 0x%08x, 0x%08x, 0x%08x, '
++        "UINT64_C(0x%016x), UINT64_C(0x%016x), 0x%04x, 0x%08x}," % r
++    )
++lines += ["};", ""]
++Path(__file__).with_name("pc24_slot_cases.h").write_text("\n".join(lines))
++print(len(rows), "vectors")
+diff --git a/tests/pc24_slot_cases.h b/tests/pc24_slot_cases.h
+new file mode 100644
+index 0000000..604249b
+--- /dev/null
++++ b/tests/pc24_slot_cases.h
+@@ -0,0 +1,99 @@
++/* Generated by generate_pc24_slot_cases.py using exact rational arithmetic. */
++static const struct pc24_slot_case {
++    const char* name;
++    uint64_t m;
++    uint16_t se;
++    uint32_t y, z;
++    uint32_t x_plus_y_f32, x_f32;
++    uint64_t x_plus_y_f64;
++    uint64_t sum_m;
++    uint16_t sum_se;
++    uint32_t x_plus_x_f32;
++} pc24_slot_cases[] = {
++    {"1.5", UINT64_C(0xc000000000000000), 0x3fff, 0x3f800000, 0x3e800000, 0x40200000, 0x3fc00000, UINT64_C(0x4004000000000000), UINT64_C(0xb000000000000000), 0x4000, 0x40400000},
++    {"1.5", UINT64_C(0xc000000000000000), 0x3fff, 0xbfc00000, 0x3fc00000, 0x00000000, 0x3fc00000, UINT64_C(0x0000000000000000), UINT64_C(0xc000000000000000), 0x3fff, 0x40400000},
++    {"1.5", UINT64_C(0xc000000000000000), 0x3fff, 0x7f61b1e6, 0x7f61b1e6, 0x7f61b1e6, 0x3fc00000, UINT64_C(0x47ec363cc0000000), UINT64_C(0xe1b1e60000000000), 0x407f, 0x40400000},
++    {"1.5", UINT64_C(0xc000000000000000), 0x3fff, 0x0da24260, 0x8da24260, 0x3fc00000, 0x3fc00000, UINT64_C(0x3ff8000000000000), UINT64_C(0xc000000000000000), 0x3fff, 0x40400000},
++    {"-2.25", UINT64_C(0x9000000000000000), 0xc000, 0x3f800000, 0x3e800000, 0xbfa00000, 0xc0100000, UINT64_C(0xbff4000000000000), UINT64_C(0x8000000000000000), 0xbfff, 0xc0900000},
++    {"-2.25", UINT64_C(0x9000000000000000), 0xc000, 0xbfc00000, 0x3fc00000, 0xc0700000, 0xc0100000, UINT64_C(0xc00e000000000000), UINT64_C(0x9000000000000000), 0xc000, 0xc0900000},
++    {"-2.25", UINT64_C(0x9000000000000000), 0xc000, 0x7f61b1e6, 0x7f61b1e6, 0x7f61b1e6, 0xc0100000, UINT64_C(0x47ec363cc0000000), UINT64_C(0xe1b1e60000000000), 0x407f, 0xc0900000},
++    {"-2.25", UINT64_C(0x9000000000000000), 0xc000, 0x0da24260, 0x8da24260, 0xc0100000, 0xc0100000, UINT64_C(0xc002000000000000), UINT64_C(0x9000000000000000), 0xc000, 0xc0900000},
++    {"full 24-bit significand", UINT64_C(0xffffff0000000000), 0x4002, 0x3f800000, 0x3e800000, 0x41880000, 0x417fffff, UINT64_C(0x4031000000000000), UINT64_C(0x8a00000000000000), 0x4003, 0x41ffffff},
++    {"full 24-bit significand", UINT64_C(0xffffff0000000000), 0x4002, 0xbfc00000, 0x3fc00000, 0x4167ffff, 0x417fffff, UINT64_C(0x402cffffe0000000), UINT64_C(0xffffff0000000000), 0x4002, 0x41ffffff},
++    {"full 24-bit significand", UINT64_C(0xffffff0000000000), 0x4002, 0x7f61b1e6, 0x7f61b1e6, 0x7f61b1e6, 0x417fffff, UINT64_C(0x47ec363cc0000000), UINT64_C(0xe1b1e60000000000), 0x407f, 0x41ffffff},
++    {"full 24-bit significand", UINT64_C(0xffffff0000000000), 0x4002, 0x0da24260, 0x8da24260, 0x417fffff, 0x417fffff, UINT64_C(0x402fffffe0000000), UINT64_C(0xffffff0000000000), 0x4002, 0x41ffffff},
++    {"FLT_MIN", UINT64_C(0x8000000000000000), 0x3f81, 0x3f800000, 0x3e800000, 0x3f800000, 0x00800000, UINT64_C(0x3ff0000000000000), UINT64_C(0xa000000000000000), 0x3fff, 0x01000000},
++    {"FLT_MIN", UINT64_C(0x8000000000000000), 0x3f81, 0xbfc00000, 0x3fc00000, 0xbfc00000, 0x00800000, UINT64_C(0xbff8000000000000), UINT64_C(0x0000000000000000), 0x0000, 0x01000000},
++    {"FLT_MIN", UINT64_C(0x8000000000000000), 0x3f81, 0x7f61b1e6, 0x7f61b1e6, 0x7f61b1e6, 0x00800000, UINT64_C(0x47ec363cc0000000), UINT64_C(0xe1b1e60000000000), 0x407f, 0x01000000},
++    {"FLT_MIN", UINT64_C(0x8000000000000000), 0x3f81, 0x0da24260, 0x8da24260, 0x0da24260, 0x00800000, UINT64_C(0x39b4484c00000000), UINT64_C(0x0000000000000000), 0x0000, 0x01000000},
++    {"-FLT_MAX", UINT64_C(0xffffff0000000000), 0xc07e, 0x3f800000, 0x3e800000, 0xff7fffff, 0xff7fffff, UINT64_C(0xc7efffffe0000000), UINT64_C(0xffffff0000000000), 0xc07e, 0xff800000},
++    {"-FLT_MAX", UINT64_C(0xffffff0000000000), 0xc07e, 0xbfc00000, 0x3fc00000, 0xff7fffff, 0xff7fffff, UINT64_C(0xc7efffffe0000000), UINT64_C(0xffffff0000000000), 0xc07e, 0xff800000},
++    {"-FLT_MAX", UINT64_C(0xffffff0000000000), 0xc07e, 0x7f61b1e6, 0x7f61b1e6, 0xfdf270c8, 0xff7fffff, UINT64_C(0xc7be4e1900000000), UINT64_C(0xc363cd0000000000), 0x407e, 0xff800000},
++    {"-FLT_MAX", UINT64_C(0xffffff0000000000), 0xc07e, 0x0da24260, 0x8da24260, 0xff7fffff, 0xff7fffff, UINT64_C(0xc7efffffe0000000), UINT64_C(0xffffff0000000000), 0xc07e, 0xff800000},
++    {"+0", UINT64_C(0x0000000000000000), 0x0000, 0x3f800000, 0x3e800000, 0x3f800000, 0x00000000, UINT64_C(0x3ff0000000000000), UINT64_C(0xa000000000000000), 0x3fff, 0x00000000},
++    {"+0", UINT64_C(0x0000000000000000), 0x0000, 0xbfc00000, 0x3fc00000, 0xbfc00000, 0x00000000, UINT64_C(0xbff8000000000000), UINT64_C(0x0000000000000000), 0x0000, 0x00000000},
++    {"+0", UINT64_C(0x0000000000000000), 0x0000, 0x7f61b1e6, 0x7f61b1e6, 0x7f61b1e6, 0x00000000, UINT64_C(0x47ec363cc0000000), UINT64_C(0xe1b1e60000000000), 0x407f, 0x00000000},
++    {"+0", UINT64_C(0x0000000000000000), 0x0000, 0x0da24260, 0x8da24260, 0x0da24260, 0x00000000, UINT64_C(0x39b4484c00000000), UINT64_C(0x0000000000000000), 0x0000, 0x00000000},
++    {"-0", UINT64_C(0x0000000000000000), 0x8000, 0x3f800000, 0x3e800000, 0x3f800000, 0x80000000, UINT64_C(0x3ff0000000000000), UINT64_C(0xa000000000000000), 0x3fff, 0x80000000},
++    {"-0", UINT64_C(0x0000000000000000), 0x8000, 0xbfc00000, 0x3fc00000, 0xbfc00000, 0x80000000, UINT64_C(0xbff8000000000000), UINT64_C(0x0000000000000000), 0x0000, 0x80000000},
++    {"-0", UINT64_C(0x0000000000000000), 0x8000, 0x7f61b1e6, 0x7f61b1e6, 0x7f61b1e6, 0x80000000, UINT64_C(0x47ec363cc0000000), UINT64_C(0xe1b1e60000000000), 0x407f, 0x80000000},
++    {"-0", UINT64_C(0x0000000000000000), 0x8000, 0x0da24260, 0x8da24260, 0x0da24260, 0x80000000, UINT64_C(0x39b4484c00000000), UINT64_C(0x0000000000000000), 0x0000, 0x80000000},
++    {"f32 subnormal 2^-149", UINT64_C(0x8000000000000000), 0x3f6a, 0x3f800000, 0x3e800000, 0x3f800000, 0x00000001, UINT64_C(0x3ff0000000000000), UINT64_C(0xa000000000000000), 0x3fff, 0x00000002},
++    {"f32 subnormal 2^-149", UINT64_C(0x8000000000000000), 0x3f6a, 0xbfc00000, 0x3fc00000, 0xbfc00000, 0x00000001, UINT64_C(0xbff8000000000000), UINT64_C(0x0000000000000000), 0x0000, 0x00000002},
++    {"f32 subnormal 2^-149", UINT64_C(0x8000000000000000), 0x3f6a, 0x7f61b1e6, 0x7f61b1e6, 0x7f61b1e6, 0x00000001, UINT64_C(0x47ec363cc0000000), UINT64_C(0xe1b1e60000000000), 0x407f, 0x00000002},
++    {"f32 subnormal 2^-149", UINT64_C(0x8000000000000000), 0x3f6a, 0x0da24260, 0x8da24260, 0x0da24260, 0x00000001, UINT64_C(0x39b4484c00000000), UINT64_C(0x0000000000000000), 0x0000, 0x00000002},
++    {"2^-127", UINT64_C(0x8000000000000000), 0x3f80, 0x3f800000, 0x3e800000, 0x3f800000, 0x00400000, UINT64_C(0x3ff0000000000000), UINT64_C(0xa000000000000000), 0x3fff, 0x00800000},
++    {"2^-127", UINT64_C(0x8000000000000000), 0x3f80, 0xbfc00000, 0x3fc00000, 0xbfc00000, 0x00400000, UINT64_C(0xbff8000000000000), UINT64_C(0x0000000000000000), 0x0000, 0x00800000},
++    {"2^-127", UINT64_C(0x8000000000000000), 0x3f80, 0x7f61b1e6, 0x7f61b1e6, 0x7f61b1e6, 0x00400000, UINT64_C(0x47ec363cc0000000), UINT64_C(0xe1b1e60000000000), 0x407f, 0x00800000},
++    {"2^-127", UINT64_C(0x8000000000000000), 0x3f80, 0x0da24260, 0x8da24260, 0x0da24260, 0x00400000, UINT64_C(0x39b4484c00000000), UINT64_C(0x0000000000000000), 0x0000, 0x00800000},
++    {"2^128", UINT64_C(0x8000000000000000), 0x407f, 0x3f800000, 0x3e800000, 0x7f800000, 0x7f800000, UINT64_C(0x47f0000000000000), UINT64_C(0x8000000000000000), 0x407f, 0x7f800000},
++    {"2^128", UINT64_C(0x8000000000000000), 0x407f, 0xbfc00000, 0x3fc00000, 0x7f800000, 0x7f800000, UINT64_C(0x47f0000000000000), UINT64_C(0x8000000000000000), 0x407f, 0x7f800000},
++    {"2^128", UINT64_C(0x8000000000000000), 0x407f, 0x7f61b1e6, 0x7f61b1e6, 0x7f800000, 0x7f800000, UINT64_C(0x47fe1b1e60000000), UINT64_C(0xb0d8f30000000000), 0x4080, 0x7f800000},
++    {"2^128", UINT64_C(0x8000000000000000), 0x407f, 0x0da24260, 0x8da24260, 0x7f800000, 0x7f800000, UINT64_C(0x47f0000000000000), UINT64_C(0x8000000000000000), 0x407f, 0x7f800000},
++    {"25-bit significand", UINT64_C(0x8000008000000000), 0x3fff, 0x3f800000, 0x3e800000, 0x40000000, 0x3f800000, UINT64_C(0x4000000000000000), UINT64_C(0x9000000000000000), 0x4000, 0x40000000},
++    {"25-bit significand", UINT64_C(0x8000008000000000), 0x3fff, 0xbfc00000, 0x3fc00000, 0xbefffffe, 0x3f800000, UINT64_C(0xbfdfffffc0000000), UINT64_C(0x8000000000000000), 0x3fff, 0x40000000},
++    {"25-bit significand", UINT64_C(0x8000008000000000), 0x3fff, 0x7f61b1e6, 0x7f61b1e6, 0x7f61b1e6, 0x3f800000, UINT64_C(0x47ec363cc0000000), UINT64_C(0xe1b1e60000000000), 0x407f, 0x40000000},
++    {"25-bit significand", UINT64_C(0x8000008000000000), 0x3fff, 0x0da24260, 0x8da24260, 0x3f800001, 0x3f800000, UINT64_C(0x3ff0000020000000), UINT64_C(0x8000010000000000), 0x3fff, 0x40000000},
++    {"lowest significand bit", UINT64_C(0x8000000000000001), 0x3fff, 0x3f800000, 0x3e800000, 0x40000000, 0x3f800000, UINT64_C(0x4000000000000000), UINT64_C(0x9000000000000000), 0x4000, 0x40000000},
++    {"lowest significand bit", UINT64_C(0x8000000000000001), 0x3fff, 0xbfc00000, 0x3fc00000, 0xbf000000, 0x3f800000, UINT64_C(0xbfe0000000000000), UINT64_C(0x8000000000000000), 0x3fff, 0x40000000},
++    {"lowest significand bit", UINT64_C(0x8000000000000001), 0x3fff, 0x7f61b1e6, 0x7f61b1e6, 0x7f61b1e6, 0x3f800000, UINT64_C(0x47ec363cc0000000), UINT64_C(0xe1b1e60000000000), 0x407f, 0x40000000},
++    {"lowest significand bit", UINT64_C(0x8000000000000001), 0x3fff, 0x0da24260, 0x8da24260, 0x3f800000, 0x3f800000, UINT64_C(0x3ff0000000000000), UINT64_C(0x8000000000000000), 0x3fff, 0x40000000},
++    {"53-bit significand", UINT64_C(0xfffffffffffff800), 0xbffe, 0x3f800000, 0x3e800000, 0x25000000, 0xbf800000, UINT64_C(0x3ca0000000000000), UINT64_C(0x8000000000000000), 0x3ffd, 0xc0000000},
++    {"53-bit significand", UINT64_C(0xfffffffffffff800), 0xbffe, 0xbfc00000, 0x3fc00000, 0xc0200000, 0xbf800000, UINT64_C(0xc004000000000000), UINT64_C(0x8000000000000000), 0xbfff, 0xc0000000},
++    {"53-bit significand", UINT64_C(0xfffffffffffff800), 0xbffe, 0x7f61b1e6, 0x7f61b1e6, 0x7f61b1e6, 0xbf800000, UINT64_C(0x47ec363cc0000000), UINT64_C(0xe1b1e60000000000), 0x407f, 0xc0000000},
++    {"53-bit significand", UINT64_C(0xfffffffffffff800), 0xbffe, 0x0da24260, 0x8da24260, 0xbf800000, 0xbf800000, UINT64_C(0xbff0000000000000), UINT64_C(0x8000000000000000), 0xbfff, 0xc0000000},
++    {"+inf", UINT64_C(0x8000000000000000), 0x7fff, 0x3f800000, 0x3e800000, 0x7f800000, 0x7f800000, UINT64_C(0x7ff0000000000000), UINT64_C(0x8000000000000000), 0x7fff, 0x7f800000},
++    {"+inf", UINT64_C(0x8000000000000000), 0x7fff, 0xbfc00000, 0x3fc00000, 0x7f800000, 0x7f800000, UINT64_C(0x7ff0000000000000), UINT64_C(0x8000000000000000), 0x7fff, 0x7f800000},
++    {"+inf", UINT64_C(0x8000000000000000), 0x7fff, 0x7f61b1e6, 0x7f61b1e6, 0x7f800000, 0x7f800000, UINT64_C(0x7ff0000000000000), UINT64_C(0x8000000000000000), 0x7fff, 0x7f800000},
++    {"+inf", UINT64_C(0x8000000000000000), 0x7fff, 0x0da24260, 0x8da24260, 0x7f800000, 0x7f800000, UINT64_C(0x7ff0000000000000), UINT64_C(0x8000000000000000), 0x7fff, 0x7f800000},
++    {"-inf", UINT64_C(0x8000000000000000), 0xffff, 0x3f800000, 0x3e800000, 0xff800000, 0xff800000, UINT64_C(0xfff0000000000000), UINT64_C(0x8000000000000000), 0xffff, 0xff800000},
++    {"-inf", UINT64_C(0x8000000000000000), 0xffff, 0xbfc00000, 0x3fc00000, 0xff800000, 0xff800000, UINT64_C(0xfff0000000000000), UINT64_C(0x8000000000000000), 0xffff, 0xff800000},
++    {"-inf", UINT64_C(0x8000000000000000), 0xffff, 0x7f61b1e6, 0x7f61b1e6, 0xff800000, 0xff800000, UINT64_C(0xfff0000000000000), UINT64_C(0x8000000000000000), 0xffff, 0xff800000},
++    {"-inf", UINT64_C(0x8000000000000000), 0xffff, 0x0da24260, 0x8da24260, 0xff800000, 0xff800000, UINT64_C(0xfff0000000000000), UINT64_C(0x8000000000000000), 0xffff, 0xff800000},
++    {"quiet NaN", UINT64_C(0xc000000000000000), 0x7fff, 0x3f800000, 0x3e800000, 0x7fc00000, 0x7fc00000, UINT64_C(0x7ff8000000000000), UINT64_C(0xc000000000000000), 0x7fff, 0x7fc00000},
++    {"quiet NaN", UINT64_C(0xc000000000000000), 0x7fff, 0xbfc00000, 0x3fc00000, 0x7fc00000, 0x7fc00000, UINT64_C(0x7ff8000000000000), UINT64_C(0xc000000000000000), 0x7fff, 0x7fc00000},
++    {"quiet NaN", UINT64_C(0xc000000000000000), 0x7fff, 0x7f61b1e6, 0x7f61b1e6, 0x7fc00000, 0x7fc00000, UINT64_C(0x7ff8000000000000), UINT64_C(0xc000000000000000), 0x7fff, 0x7fc00000},
++    {"quiet NaN", UINT64_C(0xc000000000000000), 0x7fff, 0x0da24260, 0x8da24260, 0x7fc00000, 0x7fc00000, UINT64_C(0x7ff8000000000000), UINT64_C(0xc000000000000000), 0x7fff, 0x7fc00000},
++    {"signaling NaN", UINT64_C(0xa000000000000000), 0xffff, 0x3f800000, 0x3e800000, 0xffe00000, 0xffe00000, UINT64_C(0xfffc000000000000), UINT64_C(0xe000000000000000), 0xffff, 0xffe00000},
++    {"signaling NaN", UINT64_C(0xa000000000000000), 0xffff, 0xbfc00000, 0x3fc00000, 0xffe00000, 0xffe00000, UINT64_C(0xfffc000000000000), UINT64_C(0xe000000000000000), 0xffff, 0xffe00000},
++    {"signaling NaN", UINT64_C(0xa000000000000000), 0xffff, 0x7f61b1e6, 0x7f61b1e6, 0xffe00000, 0xffe00000, UINT64_C(0xfffc000000000000), UINT64_C(0xe000000000000000), 0xffff, 0xffe00000},
++    {"signaling NaN", UINT64_C(0xa000000000000000), 0xffff, 0x0da24260, 0x8da24260, 0xffe00000, 0xffe00000, UINT64_C(0xfffc000000000000), UINT64_C(0xe000000000000000), 0xffff, 0xffe00000},
++    {"denormal", UINT64_C(0x0000010000000000), 0x0000, 0x3f800000, 0x3e800000, 0x3f800000, 0x00000000, UINT64_C(0x3ff0000000000000), UINT64_C(0xa000000000000000), 0x3fff, 0x00000000},
++    {"denormal", UINT64_C(0x0000010000000000), 0x0000, 0x7f61b1e6, 0x7f61b1e6, 0x7f61b1e6, 0x00000000, UINT64_C(0x47ec363cc0000000), UINT64_C(0xe1b1e60000000000), 0x407f, 0x00000000},
++    {"denormal", UINT64_C(0x0000010000000000), 0x0000, 0x0da24260, 0x8da24260, 0x0da24260, 0x00000000, UINT64_C(0x39b4484c00000000), UINT64_C(0x0000000000000000), 0x0000, 0x00000000},
++    {"pseudo-denormal", UINT64_C(0x8000000000000000), 0x8000, 0x3f800000, 0x3e800000, 0x3f800000, 0x80000000, UINT64_C(0x3ff0000000000000), UINT64_C(0xa000000000000000), 0x3fff, 0x80000000},
++    {"pseudo-denormal", UINT64_C(0x8000000000000000), 0x8000, 0x7f61b1e6, 0x7f61b1e6, 0x7f61b1e6, 0x80000000, UINT64_C(0x47ec363cc0000000), UINT64_C(0xe1b1e60000000000), 0x407f, 0x80000000},
++    {"pseudo-denormal", UINT64_C(0x8000000000000000), 0x8000, 0x0da24260, 0x8da24260, 0x0da24260, 0x80000000, UINT64_C(0x39b4484c00000000), UINT64_C(0x0000000000000000), 0x0000, 0x80000000},
++    {"unnormal", UINT64_C(0x4000000000000000), 0x3fff, 0x3f800000, 0x3e800000, 0xffc00000, 0xffc00000, UINT64_C(0xfff8000000000000), UINT64_C(0xc000000000000000), 0xffff, 0xffc00000},
++    {"unnormal", UINT64_C(0x4000000000000000), 0x3fff, 0xbfc00000, 0x3fc00000, 0xffc00000, 0xffc00000, UINT64_C(0xfff8000000000000), UINT64_C(0xc000000000000000), 0xffff, 0xffc00000},
++    {"unnormal", UINT64_C(0x4000000000000000), 0x3fff, 0x7f61b1e6, 0x7f61b1e6, 0xffc00000, 0xffc00000, UINT64_C(0xfff8000000000000), UINT64_C(0xc000000000000000), 0xffff, 0xffc00000},
++    {"unnormal", UINT64_C(0x4000000000000000), 0x3fff, 0x0da24260, 0x8da24260, 0xffc00000, 0xffc00000, UINT64_C(0xfff8000000000000), UINT64_C(0xc000000000000000), 0xffff, 0xffc00000},
++    {"pseudo-zero", UINT64_C(0x0000000000000000), 0x3fff, 0x3f800000, 0x3e800000, 0xffc00000, 0xffc00000, UINT64_C(0xfff8000000000000), UINT64_C(0xc000000000000000), 0xffff, 0xffc00000},
++    {"pseudo-zero", UINT64_C(0x0000000000000000), 0x3fff, 0xbfc00000, 0x3fc00000, 0xffc00000, 0xffc00000, UINT64_C(0xfff8000000000000), UINT64_C(0xc000000000000000), 0xffff, 0xffc00000},
++    {"pseudo-zero", UINT64_C(0x0000000000000000), 0x3fff, 0x7f61b1e6, 0x7f61b1e6, 0xffc00000, 0xffc00000, UINT64_C(0xfff8000000000000), UINT64_C(0xc000000000000000), 0xffff, 0xffc00000},
++    {"pseudo-zero", UINT64_C(0x0000000000000000), 0x3fff, 0x0da24260, 0x8da24260, 0xffc00000, 0xffc00000, UINT64_C(0xfff8000000000000), UINT64_C(0xc000000000000000), 0xffff, 0xffc00000},
++    {"pseudo-infinity", UINT64_C(0x0000000000000000), 0x7fff, 0x3f800000, 0x3e800000, 0xffc00000, 0xffc00000, UINT64_C(0xfff8000000000000), UINT64_C(0xc000000000000000), 0xffff, 0xffc00000},
++    {"pseudo-infinity", UINT64_C(0x0000000000000000), 0x7fff, 0xbfc00000, 0x3fc00000, 0xffc00000, 0xffc00000, UINT64_C(0xfff8000000000000), UINT64_C(0xc000000000000000), 0xffff, 0xffc00000},
++    {"pseudo-infinity", UINT64_C(0x0000000000000000), 0x7fff, 0x7f61b1e6, 0x7f61b1e6, 0xffc00000, 0xffc00000, UINT64_C(0xfff8000000000000), UINT64_C(0xc000000000000000), 0xffff, 0xffc00000},
++    {"pseudo-infinity", UINT64_C(0x0000000000000000), 0x7fff, 0x0da24260, 0x8da24260, 0xffc00000, 0xffc00000, UINT64_C(0xfff8000000000000), UINT64_C(0xc000000000000000), 0xffff, 0xffc00000},
++};
+diff --git a/tests/test_pc24_slot_reads.c b/tests/test_pc24_slot_reads.c
+new file mode 100644
+index 0000000..9bb0fbf
+--- /dev/null
++++ b/tests/test_pc24_slot_reads.c
+@@ -0,0 +1,127 @@
++// PC24 runs that read x87 registers still in their 80-bit native slots.
++//
++// Each sequence loads an 80-bit value, then calls an empty function: the call
++// ends the translation, so the reply after it starts with the value in
++// Rosetta's 80-bit layout, and its PC24 run reads the slot. With the
++// single-precision fast body that read is direct for a normal f32 value or a
++// zero; every other encoding must leave for the exact body and give the same
++// result. The expected values come from exact rational arithmetic
++// (generate_pc24_slot_cases.py), not from a native FP oracle.
++//
++//   seq_add:    fld st(0); fadd m32; fstp m32       one arithmetic node
++//   seq_store:  fst m32; fld st(0); fadd m32; fstp m64; fstp st(0)
++//   seq_sum:    fld st(0); fadd m32; fadd m32; fstp m80
++//   seq_double: two copies; fld st(1); fadd st, st(1); fstp m32  (two slot reads)
++//   seq_add also stores the untouched slot with fstp m80, which must keep
++//   every bit.
++#include <stdint.h>
++#include <stdio.h>
++#include <string.h>
++
++#include "pc24_slot_cases.h"
++
++void seq_add(const void* x80, const float* y, uint32_t* out32, void* out80);
++void seq_store(const void* x80, const float* y, uint32_t* out32, uint64_t* out64);
++void seq_sum(const void* x80, const float* yz, void* out80);
++void seq_double(const void* x80, uint32_t* out32);
++
++__asm__(
++    ".text\n"
++    "_slot_break:\n"
++    "    ret\n"
++    ".globl _seq_add\n"
++    "_seq_add:\n"
++    "    fldt (%rdi)\n"
++    "    call _slot_break\n"
++    "    fld %st(0)\n"
++    "    fadds (%rsi)\n"
++    "    fstps (%rdx)\n"
++    "    call _slot_break\n"
++    "    fstpt (%rcx)\n"
++    "    ret\n"
++    ".globl _seq_store\n"
++    "_seq_store:\n"
++    "    fldt (%rdi)\n"
++    "    call _slot_break\n"
++    "    fsts (%rdx)\n"
++    "    fld %st(0)\n"
++    "    fadds (%rsi)\n"
++    "    fstpl (%rcx)\n"
++    "    fstp %st(0)\n"
++    "    ret\n"
++    ".globl _seq_sum\n"
++    "_seq_sum:\n"
++    "    fldt (%rdi)\n"
++    "    call _slot_break\n"
++    "    fld %st(0)\n"
++    "    fadds (%rsi)\n"
++    "    fadds 4(%rsi)\n"
++    "    fstpt (%rdx)\n"
++    "    fstp %st(0)\n"
++    "    ret\n"
++    ".globl _seq_double\n"
++    "_seq_double:\n"
++    "    fldt (%rdi)\n"
++    "    fldt (%rdi)\n"
++    "    call _slot_break\n"
++    "    fld %st(1)\n"
++    "    fadd %st(1), %st\n"
++    "    fstps (%rsi)\n"
++    "    fstp %st(0)\n"
++    "    fstp %st(0)\n"
++    "    ret\n");
++
++struct f80 {
++    uint64_t m;
++    uint16_t se;
++} __attribute__((packed));
++
++static unsigned failures;
++
++static void check(const char* what, const struct pc24_slot_case* c, uint64_t got,
++                  uint64_t want) {
++    if (got == want)
++        return;
++    failures++;
++    if (failures <= 40)
++        printf("FAIL %s x=%s (%04x:%016llx) y=%08x z=%08x got=%016llx expected=%016llx\n",
++               what, c->name, c->se, (unsigned long long)c->m, c->y, c->z,
++               (unsigned long long)got, (unsigned long long)want);
++}
++
++int main(void) {
++    unsigned short saved, pc24 = 0x007f;
++    __asm__ volatile("fnstcw %0" : "=m"(saved));
++    unsigned count = 0;
++    for (unsigned i = 0; i < sizeof(pc24_slot_cases) / sizeof(pc24_slot_cases[0]); i++) {
++        const struct pc24_slot_case* c = &pc24_slot_cases[i];
++        const struct f80 x = {c->m, c->se};
++        float yz[2];
++        memcpy(&yz[0], &c->y, 4);
++        memcpy(&yz[1], &c->z, 4);
++        uint32_t add32 = 0xdeadbeef, store32 = 0xdeadbeef, double32 = 0xdeadbeef;
++        uint64_t store64 = 0xdeadbeefdeadbeefull;
++        struct f80 kept = {0, 0}, sum = {0, 0};
++
++        __asm__ volatile("fldcw %0" ::"m"(pc24));
++        seq_add(&x, &yz[0], &add32, &kept);
++        seq_store(&x, &yz[0], &store32, &store64);
++        seq_sum(&x, yz, &sum);
++        seq_double(&x, &double32);
++        __asm__ volatile("fldcw %0" ::"m"(saved));
++
++        check("fadd-m32", c, add32, c->x_plus_y_f32);
++        check("kept-m80.m", c, kept.m, c->m);
++        check("kept-m80.se", c, kept.se, c->se);
++        check("fst-m32", c, store32, c->x_f32);
++        check("fadd-m64", c, store64, c->x_plus_y_f64);
++        check("sum-m80.m", c, sum.m, c->sum_m);
++        check("sum-m80.se", c, sum.se, c->sum_se);
++        check("double-m32", c, double32, c->x_plus_x_f32);
++        count += 8;
++    }
++    // run_tests.sh reads the last line when X87_NATIVE_SLOTS=0 must fail it.
++    printf("%s %u PC24 slot-read checks\n%u failures\n", failures ? "FAIL" : "PASS", count,
++           failures);
++    return failures != 0;
++}

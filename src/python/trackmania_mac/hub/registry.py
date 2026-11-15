@@ -43,6 +43,7 @@ COMPONENTS = (
     "competition-patch",
     "openal",
     "system-config",
+    "source-patch",
     "updates",
     "overlay",
     "nx-compat",
@@ -97,6 +98,10 @@ _FIELDS: typing.Tuple[_Field, ...] = (
     _Field("source_size", "size", False),
     # The pinned setup needs a person to click through its wizard.
     _Field("source_interactive", "bool", False),
+    # Byte edits to the pinned Inno Setup's header, run from a copy of the setup:
+    # {header_sha256, edits: [{offset, before, after}], sha256_after}
+    # (trackmania_mac.install.setup_patch).
+    _Field("source_patch", "source_patch", False),
     # Official update installers, run silently in order after the base setup.
     _Field("updates", "downloads", False),
     # One archive unpacked over the game folder after the updates, and the
@@ -140,6 +145,8 @@ _PIN_TEXT = re.compile(r"^[A-Za-z0-9._ ()-]+$")
 _FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 # A patch file under config/exe-patches: <title id>/<name>.json.
 _EXE_PATCH_FILE = re.compile(r"^[a-z0-9-]+/[a-z0-9][a-z0-9-]*\.json$")
+_HEX_OFFSET = re.compile(r"^0x[0-9a-f]{1,8}$")
+_HEX_BYTES = re.compile(r"^(?:[0-9a-f]{2}){1,16}$")
 _DOWNLOAD_KEYS = frozenset({"url", "sha256", "size"})
 _LABEL_MAX = 60
 _PIN_SHA_KEYS = (
@@ -198,6 +205,23 @@ class GameExePatch(typing.NamedTuple):
     sha256_before: str
 
 
+class SetupEdit(typing.NamedTuple):
+    """Bytes at an offset of the setup's decompressed header, before and after the edit."""
+
+    offset: int
+    before: bytes
+    after: bytes
+
+
+class SourcePatch(typing.NamedTuple):
+    """Edits to the pinned setup's header, the header's SHA-256 before them and the
+    SHA-256 of the modified setup they give."""
+
+    header_sha256: str
+    edits: typing.Tuple[SetupEdit, ...]
+    sha256_after: str
+
+
 class Title(typing.NamedTuple):
     id: str
     name: str
@@ -223,6 +247,7 @@ class Title(typing.NamedTuple):
     source_sha256: typing.Optional[str]
     source_size: typing.Optional[int]
     source_interactive: typing.Optional[bool]
+    source_patch: typing.Optional[SourcePatch]
     updates: typing.Tuple[Download, ...]
     overlay: typing.Optional[Overlay]
     nx_compat: typing.Tuple[str, ...]
@@ -250,6 +275,7 @@ class Title(typing.NamedTuple):
         competition-patch: the title runs through ModLoader (needs_tmloader).
         openal: its release ships a pinned Creative OpenAL32.dll to replace.
         system-config: it reads the runtime's Forever-format Default.SystemConfig.Gbx.
+        source-patch: install runs a modified copy of the pinned setup (source_patch).
         updates: official update installers run after the base setup (updates).
         overlay: an archive is unpacked over the game folder (overlay).
         nx-compat: install sets the NX_COMPAT flag on some game files (nx_compat).
@@ -261,6 +287,7 @@ class Title(typing.NamedTuple):
             "competition-patch": self.needs_tmloader,
             "openal": bool(self.creative_openal_sha256),
             "system-config": self.game_exe == FOREVER_EXE,
+            "source-patch": self.source_patch is not None,
             "updates": bool(self.updates),
             "overlay": self.overlay is not None,
             "nx-compat": bool(self.nx_compat),
@@ -377,6 +404,37 @@ def _check_subpaths(value: object, name: str, path: pathlib.Path) -> typing.Tupl
     return tuple(value)
 
 
+def _check_source_patch(value: object, name: str, path: pathlib.Path) -> SourcePatch:
+    """Byte edits at distinct, non-overlapping offsets, each changing its bytes."""
+    if not isinstance(value, dict) or set(value) != {"header_sha256", "edits", "sha256_after"}:
+        raise RegistryError(f"{path}: {name} needs exactly header_sha256, edits and sha256_after")
+    for key in ("header_sha256", "sha256_after"):
+        if not isinstance(value[key], str) or not _SHA256.fullmatch(value[key]):
+            raise RegistryError(f"{path}: {name} {key} must be a lowercase hex SHA-256")
+    entries = value["edits"]
+    if not isinstance(entries, list) or not entries:
+        raise RegistryError(f"{path}: {name} edits must be a non-empty list")
+    edits = []
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {"offset", "before", "after"}:
+            raise RegistryError(f"{path}: {name} edits need exactly offset, before and after")
+        offset, before, after = entry["offset"], entry["before"], entry["after"]
+        if not isinstance(offset, str) or not _HEX_OFFSET.fullmatch(offset):
+            raise RegistryError(f"{path}: {name} offset must be lowercase hex like 0x3aed9")
+        if not all(
+            isinstance(item, str) and _HEX_BYTES.fullmatch(item) for item in (before, after)
+        ):
+            raise RegistryError(f"{path}: {name} before and after must be lowercase hex bytes")
+        if len(before) != len(after) or before == after:
+            raise RegistryError(f"{path}: {name} after must change as many bytes as before holds")
+        edits.append(SetupEdit(int(offset, 16), bytes.fromhex(before), bytes.fromhex(after)))
+    edits.sort()
+    for left, right in zip(edits, edits[1:]):
+        if left.offset + len(left.before) > right.offset:
+            raise RegistryError(f"{path}: {name} edits must not overlap")
+    return SourcePatch(value["header_sha256"], tuple(edits), value["sha256_after"])
+
+
 def _check_value(field: _Field, value: object, path: pathlib.Path) -> object:
     """The validated value of one present key, or None for an empty optional one."""
     kind, name = field.kind, field.name
@@ -429,6 +487,8 @@ def _check_value(field: _Field, value: object, path: pathlib.Path) -> object:
         if not isinstance(sha, str) or not _SHA256.fullmatch(sha):
             raise RegistryError(f"{path}: {name} sha256_before must be a lowercase hex SHA-256")
         return GameExePatch(file, sha)
+    if kind == "source_patch":
+        return _check_source_patch(value, name, path)
     if kind == "bool":
         if not isinstance(value, bool):
             raise RegistryError(f"{path}: {name} must be true or false")
@@ -531,6 +591,7 @@ def _validate(data: object, path: pathlib.Path) -> Title:
     # the NX_COMPAT step, the executable patch or the settings seed.
     for layered in (
         "source_interactive",
+        "source_patch",
         "updates",
         "overlay",
         "nx_compat",
@@ -539,6 +600,9 @@ def _validate(data: object, path: pathlib.Path) -> Title:
     ):
         if values[layered] and values["installer"] != "online":
             raise RegistryError(f"{path}: {layered} requires installer kind online")
+    source_patch = typing.cast(typing.Optional[SourcePatch], values["source_patch"])
+    if source_patch is not None and source_patch.sha256_after == sha:
+        raise RegistryError(f"{path}: source_patch sha256_after must differ from source_sha256")
     exe_patch = typing.cast(typing.Optional[GameExePatch], values["game_exe_patch"])
     if exe_patch is not None:
         if exe_patch.file.split("/", 1)[0] != values["id"]:
@@ -748,8 +812,9 @@ def shell_assignments(title: typing.Optional[Title]) -> typing.List[typing.Tuple
     if title is not None:
         # save_dirs and game_save_dirs are omitted: names may contain spaces, so
         # a joined string is ambiguous; the shell only needs user_subdir, and
-        # trackmania_mac.install.game_saves, .system_config and .exe_patch read
-        # game_save_dirs, game_system_config and game_exe_patch themselves.
+        # trackmania_mac.install.game_saves, .system_config, .exe_patch and
+        # .setup_patch read game_save_dirs, game_system_config, game_exe_patch and
+        # source_patch themselves.
         # updates and overlay are spelled out below as scalars.
         pairs = [
             (f"TRACKMANIA_MAC_TITLE_{field.upper()}", _shell_value(getattr(title, field)))
@@ -760,6 +825,7 @@ def shell_assignments(title: typing.Optional[Title]) -> typing.List[typing.Tuple
                 "game_save_dirs",
                 "game_system_config",
                 "game_exe_patch",
+                "source_patch",
                 "updates",
                 "overlay",
             )

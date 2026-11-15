@@ -393,6 +393,7 @@ class TitleRegistryTests(unittest.TestCase):
             'run_interactive_installer() { printf "%s\\n" "$TRACKMANIA_MAC_INNO_DIR"; TRACKMANIA_MAC_INSTALLER_PID=0; mkdir -p "${GAME_EXE%/*}"; : >"$GAME_EXE"; }; '
             "download_title_extras() { :; }; stop_prefix_processes() { :; }; apply_overlay() { :; }; apply_nx_compat() { :; }; "
             "apply_game_exe_patch() { :; }; "
+            'write_patched_setup() { printf "/stub/patched.exe\\n"; }; '
             "seed_game_system_config() { :; }; "
             "verify_file() { :; }; "
             "wait_inno_setup() { :; }; verify_installed_game() { :; }; say() { :; }; "
@@ -430,6 +431,71 @@ class TitleRegistryTests(unittest.TestCase):
                     ["C:\\Program Files (x86)\\" + data["game_dir_name"]] * runs,
                 )
 
+    def run_eswc_install(self, home, write_patched_setup):
+        """install_game for tmn-eswc up to the setup; prints each setup path it runs."""
+        stubs = (
+            "download_pinned_installer() { :; }; download_title_extras() { :; }; "
+            'run_interactive_installer() { printf "run %s\\n" "$1"; TRACKMANIA_MAC_INSTALLER_PID=0; '
+            'mkdir -p "${GAME_EXE%/*}"; : >"$GAME_EXE"; }; '
+            "wait_inno_setup() { :; }; "
+            'stop_prefix_processes() { printf "stopped\\n"; }; '
+            # The first step after the setup reports whether the copy is still there.
+            'apply_official_updates() { ls "${TRACKMANIA_MAC_CACHE}/games/tmn-eswc"; exit 0; }; '
+            "say() { :; }; "
+        )
+        return subprocess.run(
+            [
+                "/bin/bash",
+                "-euc",
+                ". src/shell/lib/common.sh; . src/shell/lib/install/game.sh; "
+                + stubs
+                + write_patched_setup
+                + "install_game",
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=15,
+            env={"PATH": "/usr/bin:/bin", "HOME": home, "TRACKMANIA_MAC_TITLE": "tmn-eswc"},
+        )
+
+    def test_a_patched_setup_runs_from_a_copy_that_is_removed(self):
+        """source_patch: the wizard runs the copy, which is gone when the setup ends."""
+        cache = "Library/TrackManiaMacOS/cache/games/tmn-eswc"
+        staging = cache + "/TmNationsESWC_Setup.inner"
+        writer = (
+            'write_patched_setup() { mkdir -p "$2"; : >"$2/copy.exe"; '
+            'test -f "$1" || return 1; printf "%s\\n" "$2/copy.exe"; }; '
+        )
+        with tempfile.TemporaryDirectory(prefix="trackmania-mac-dir-") as home:
+            (Path(home) / cache).mkdir(parents=True)
+            (Path(home) / cache / "TmNationsESWC_Setup.exe").write_bytes(b"download")
+            result = self.run_eswc_install(home, writer)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                result.stdout.splitlines(),
+                ["run {}/{}/copy.exe".format(home, staging), "stopped", "TmNationsESWC_Setup.exe"],
+            )
+            self.assertFalse((Path(home) / staging).exists())
+            self.assertEqual(
+                (Path(home) / cache / "TmNationsESWC_Setup.exe").read_bytes(), b"download"
+            )
+
+    def test_a_setup_that_cannot_be_patched_is_not_run(self):
+        cache = "Library/TrackManiaMacOS/cache/games/tmn-eswc"
+        staging = cache + "/TmNationsESWC_Setup.inner"
+        writer = (
+            'write_patched_setup() { mkdir -p "$2"; : >"$2/partial"; '
+            'die "Could not prepare the setup."; }; '
+        )
+        with tempfile.TemporaryDirectory(prefix="trackmania-mac-dir-") as home:
+            (Path(home) / cache).mkdir(parents=True)
+            result = self.run_eswc_install(home, writer)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Could not prepare the setup.", result.stderr)
+            self.assertNotIn("run ", result.stdout)
+            self.assertFalse((Path(home) / staging).exists())
+
     def test_prefix_marker_is_derived_and_exported(self):
         for path in sorted(TITLES.glob("*.json")):
             with self.subTest(title=path.stem):
@@ -462,6 +528,7 @@ class TitleRegistryTests(unittest.TestCase):
         self.assertEqual(
             components["tmn-eswc"],
             (
+                "source-patch",
                 "updates",
                 "overlay",
                 "nx-compat",
@@ -1049,6 +1116,75 @@ class RegistryValidationTests(unittest.TestCase):
         pairs = dict(self.registry.shell_assignments(self.layered(game_exe_patch=good)))
         self.assertNotIn("TRACKMANIA_MAC_TITLE_GAME_EXE_PATCH", pairs)
         self.assertEqual(pairs["TRACKMANIA_MAC_TITLE_COMPONENTS"].split()[-1], "game-exe-patch")
+
+    def source_patch(self, **changes):
+        patch = {
+            "header_sha256": "4" * 64,
+            "edits": [{"offset": "0x3aed9", "before": "14", "after": "34"}],
+            "sha256_after": "5" * 64,
+        }
+        patch.update(changes)
+        return patch
+
+    def test_source_patch_holds_byte_edits_and_two_hashes(self):
+        title = self.layered(source_patch=self.source_patch())
+        self.assertEqual(
+            title.source_patch,
+            self.registry.SourcePatch(
+                "4" * 64, (self.registry.SetupEdit(0x3AED9, b"\x14", b"\x34"),), "5" * 64
+            ),
+        )
+        self.assertIn("source-patch", title.components)
+        self.assertNotIn("source-patch", self.layered().components)
+        two = [
+            {"offset": "0x20", "before": "aabb", "after": "aacc"},
+            {"offset": "0x10", "before": "01", "after": "02"},
+        ]
+        edits = self.layered(source_patch=self.source_patch(edits=two)).source_patch.edits
+        self.assertEqual([edit.offset for edit in edits], [0x10, 0x20])
+        edit = {"offset": "0x10", "before": "14", "after": "34"}
+        for value in (
+            "patch",
+            {},
+            {key: item for key, item in self.source_patch().items() if key != "edits"},
+            dict(self.source_patch(), extra=1),
+            self.source_patch(header_sha256="4" * 63),
+            self.source_patch(sha256_after="A" * 64),
+            self.source_patch(edits=[]),
+            self.source_patch(edits=edit),
+            self.source_patch(edits=[dict(edit, extra=1)]),
+            self.source_patch(edits=[dict(edit, offset=16)]),
+            self.source_patch(edits=[dict(edit, offset="16")]),
+            self.source_patch(edits=[dict(edit, offset="0x3AED9")]),
+            self.source_patch(edits=[dict(edit, offset="0x123456789")]),
+            self.source_patch(edits=[dict(edit, before="1")]),
+            self.source_patch(edits=[dict(edit, before="")]),
+            self.source_patch(edits=[dict(edit, after="3G")]),
+            self.source_patch(edits=[dict(edit, after="3434")]),
+            self.source_patch(edits=[dict(edit, after="14")]),
+            self.source_patch(edits=[edit, dict(edit, offset="0x10")]),
+            self.source_patch(
+                edits=[
+                    {"offset": "0x10", "before": "0102", "after": "0103"},
+                    dict(edit, offset="0x11"),
+                ]
+            ),
+        ):
+            with self.subTest(value=value), self.assertRaises(self.registry.RegistryError):
+                self.layered(source_patch=value)
+
+    def test_source_patch_needs_the_online_kind_and_changes_the_setup(self):
+        with self.assertRaisesRegex(self.registry.RegistryError, "requires installer kind"):
+            self.validate(source_patch=self.source_patch())
+        with self.assertRaisesRegex(self.registry.RegistryError, "must differ"):
+            self.layered(source_patch=self.source_patch(sha256_after=self.data["source_sha256"]))
+
+    def test_source_patch_is_not_exported_to_the_shell(self):
+        pairs = dict(
+            self.registry.shell_assignments(self.layered(source_patch=self.source_patch()))
+        )
+        self.assertNotIn("TRACKMANIA_MAC_TITLE_SOURCE_PATCH", pairs)
+        self.assertIn("source-patch", pairs["TRACKMANIA_MAC_TITLE_COMPONENTS"].split())
 
     def test_every_game_exe_patch_file_exists(self):
         registry = load_registry()

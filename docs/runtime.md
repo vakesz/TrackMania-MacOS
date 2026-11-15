@@ -379,6 +379,49 @@ new build dropped TLS 1.0, SHA-1 signatures or one of the ciphers, which breaks
 account creation. Check the Wine `secur32` and `schannel` GnuTLS priority string
 and the GnuTLS build options first.
 
+## Nations ESWC setup without a launch option
+
+Applies to: titles whose registry entry sets `source_patch` (TrackMania Nations
+ESWC today).
+
+The official Nations ESWC setup ("TrackMania Nations ESWC 0.1.7.5", Inno Setup
+5.1.4) has to be clicked through. Its own licence page turns Next off until you
+accept, so a silent run stops at once (its log says "Failed to proceed to next
+wizard page; aborting."). Its last page has one option, "Launch TrackMania Nations
+ESWC", ticked by default. It starts `TmNationsESWCLauncher.exe` from the official
+0.1.7.5 build, which is protected by StarForce and cannot run under Wine. The game
+is not finished at that point either: the 1.7.9 update, the community build and the
+steps after it come once the setup has closed.
+
+So install runs a modified copy of Nadeo's setup, not the download itself. The copy
+differs in one byte: the flags of the setup's only [Run] entry go from `0x14`
+(`postinstall`, `skipifsilent`) to `0x34`, which adds `skipifnotsilent`. Inno Setup
+then leaves that entry out of an install you click through, so the last page shows
+its text and Finish, with no option to start anything. The licence page, the folder
+page and the rest of the setup are unchanged.
+
+`python -m trackmania_mac.install.setup_patch apply SETUP COPY` writes the copy. It
+reads the setup's header, decompresses its first block and checks the block's
+SHA-256 (`header_sha256`) and the byte it changes. It then writes every byte of the
+download up to its offset table, the header again with the changed block stored
+uncompressed, and a new offset table that points at it. The copy must have the
+registry's `sha256_after`. The module refuses anything it does not recognise, and
+then writes nothing: a download without the pinned hash, an unknown offset table or
+Inno Setup data version, a damaged block, a different header, a different byte or a
+different result.
+
+The download in the cache is unchanged and keeps its pinned hash; the module only
+reads it. The copy goes into a `TmNationsESWC_Setup.inner` folder next to the
+download and is removed when the setup ends, whether it finished, failed or was
+cancelled. If install is killed outright, the next install removes the folder before
+it writes a new copy. If the copy cannot be written, install stops and no setup runs.
+After the setup closes, install still stops every Wine process in the prefix.
+
+innoextract reads the copy and its file checksums pass, and Setup 5.1.4 under Wine
+loads the rebuilt header and starts its wizard. You still accept the setup's
+licence agreement, but the game's licence may not allow changing its setup. The
+registry holds only the offset and the old and new value of the one byte.
+
 ## Memory protection flag
 
 Applies to: titles whose registry entry sets `nx_compat` (TrackMania Nations

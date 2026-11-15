@@ -300,7 +300,9 @@ class LayeredInstall(unittest.TestCase):
             'step() { printf "%s\\n" "$*" >>"$HOME/steps"; }; '
             "download_pinned_installer() { step download-installer; }; "
             'download_verified() { step download "${2##*/}" "$3" "$4"; }; '
-            'run_interactive_installer() { step interactive "${1##*/}" "$TRACKMANIA_MAC_INNO_DIR"; '
+            'write_patched_setup() { step patch-setup "${1##*/}"; mkdir -p "$2"; printf "%s\\n" "$2/${1##*/}"; }; '
+            'remove_inno_staging() { step remove-copy "${1##*/}"; rm -rf "$1"; }; '
+            'run_interactive_installer() { step interactive "$(basename "${1%/*}")/${1##*/}" "$TRACKMANIA_MAC_INNO_DIR"; '
             'TRACKMANIA_MAC_INSTALLER_PID=0; mkdir -p "${GAME_EXE%/*}"; : >"$GAME_EXE"; }; '
             'run_released_installer() { step silent "${1##*/}"; TRACKMANIA_MAC_INSTALLER_PID=0; }; '
             'wait_inno_setup() { step wait "$3" "${4:-default}"; }; '
@@ -336,9 +338,12 @@ class LayeredInstall(unittest.TestCase):
                 "8f42e6b0f9058360ce497363cbcbc022fd9d4385a84606db9b0d65a2abcdb5f7 19194902",
                 "download Win10Patch.tar.gz "
                 "b2ec4f34a0fc1009175792f9f2e3130bdf242379235a1ad4c50019117ebb7460 67468269",
-                "interactive TmNationsESWC_Setup.exe C:\\Program Files (x86)\\TmNationsESWC",
+                "patch-setup TmNationsESWC_Setup.exe",
+                "interactive TmNationsESWC_Setup.inner/TmNationsESWC_Setup.exe "
+                "C:\\Program Files (x86)\\TmNationsESWC",
                 "wait TrackMania Nations ESWC 3600",
                 "stop",
+                "remove-copy TmNationsESWC_Setup.inner",
                 "verify-file tmnationseswc_175_to_179_setup.exe",
                 "silent tmnationseswc_175_to_179_setup.exe",
                 "wait TrackMania Nations ESWC update tmnationseswc_175_to_179_setup.exe default",
@@ -374,7 +379,7 @@ class LayeredInstall(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("setup closed without installing into", result.stderr)
         self.assertIn("keep the suggested folder", result.stderr)
-        self.assertEqual(steps[-1], "stop")
+        self.assertEqual(steps[-2:], ["stop", "remove-copy TmNationsESWC_Setup.inner"])
 
     def test_a_changed_update_download_stops_before_it_runs(self):
         result, steps, _ = self.run_install(

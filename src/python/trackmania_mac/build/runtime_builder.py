@@ -292,7 +292,7 @@ def source_excluded(name, path):
         ".trackmania-mac-source.json"
     ):
         return True
-    # libunistring 1.4.2 leaves this scratch file when declared.sh lacks GNU sed.
+    # libunistring 1.4.2 and 1.5 leave this scratch file when declared.sh lacks GNU sed.
     # Keep the distributed libunistring.sym itself covered by the source gate.
     if name == "libunistring" and path == Path("lib/libunistring.sym-t1"):
         return True
@@ -646,8 +646,16 @@ def autotools(name, *options):
 
 
 def dependencies():
+    # FreeType 2.15 enables an experimental Apple HVF driver when the SDK has
+    # hvf/Scaler.h. That would tie the build to the SDK version and add a weak
+    # link to /usr/lib/libhvf.dylib that Wine has no use for.
     autotools(
-        "freetype", "--without-harfbuzz", "--without-brotli", "--without-png", "--without-bzip2"
+        "freetype",
+        "--without-harfbuzz",
+        "--without-brotli",
+        "--without-png",
+        "--without-bzip2",
+        "ac_cv_header_hvf_Scaler_h=no",
     )
     autotools("gmp", "--disable-cxx")
     autotools("nettle", "--disable-documentation", "--disable-openssl")

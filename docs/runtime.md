@@ -23,7 +23,7 @@ order to the exact revisions in `config/sources.json`.
 | D9VK 0003 | Correct promoted volume-texture destination slice stride | Manual GPU volume red/green and packed-format readback probe; no automated test |
 | D9VK 0004 | Preserve the eye vector in `texm3x3vspec` | Manual GPU volume/cube reflection check; no automated test |
 | MoltenVK 0001 | Reuse the dependency sources supplied in a source release | Source archive preparation |
-| x87sidecar 0001 | Scoped PC24/PC53 arithmetic and float-store rounding within a binary64-backed implementation, ported to 0b7c5e5 | Bit-exact numeric, allocator, host-state and interruption probes |
+| x87sidecar 0001 | Scoped PC24/PC53 arithmetic and float-store rounding within a binary64-backed implementation, ported to 052944f | Bit-exact numeric, allocator, host-state and interruption probes |
 | x87sidecar 0002 | Skip the scoped FPCR write when the guest rounds to nearest and the host FPCR already gives the same results | The same probes in all translator modes |
 | x87sidecar 0003 | Skip the f32 operand check for values loaded from a 32-bit float | The same probes in all translator modes |
 | x87sidecar 0004 | Run PC24 IR runs in native single precision, falling back to the exact body on any out-of-range value | The same probes with the fast bodies on and off (`X87_PC24_RUNS=0`) |

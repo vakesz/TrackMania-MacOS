@@ -5,7 +5,7 @@ instructions. vkd3d left them unlowered, so those pixel shaders failed to
 compile and the affected materials did not render. Lower each into its dp3
 and sampling sequence during d3dbc instruction lowering.
 
-Based on Wine 36b6a2cf679. Preserve E in R = 2*dot(N,E)/dot(N,N)*N-E;
+Based on Wine 9f8c4ae4d35. Preserve E in R = 2*dot(N,E)/dot(N,N)*N-E;
 only N may be normalized. tests/legacy-shader-render.c checks this lowering
 through a scratch-built shader library separately from D9VK GPU rendering.
 Wine's own render path still needs GPU validation.

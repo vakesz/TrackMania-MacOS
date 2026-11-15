@@ -23,22 +23,25 @@ ROOT = Path(__file__).resolve().parents[1]
 NAME = "Default.SystemConfig.Gbx"
 SETTINGS = json.loads((ROOT / "config/game-settings.json").read_text())
 
-# The 200-byte file accepted in-game (windowed 1280x960, 3 Frames synchro).
+# The 252-byte seed (windowed 1280x960, 3 Frames synchro, PC3 quality chunk).
+# On a scratch copy of an installed prefix the game started with it and kept
+# the chunk as written; a fresh install with this seed has not been looked at.
 KNOWN_GOOD_1280X960 = (
     b"GBX\x06\x00TUUE"
     b"b005000\r\n0\r\n1\r\n0\r\n"
-    b"b005020\r\n1397442896\r\n137\r\nFalse\r\n"
+    b"b005020\r\n1397442896\r\n189\r\nFalse\r\n"
     b"b013001\r\n1397442896\r\n37\r\n1280\r\n960\r\n3\r\n1\r\n0\r\n0\r\nFalse\r\nFalse\r\n"
     b"b013003\r\n1397442896\r\n33\r\nFalse\r\n1\r\nFalse\r\n0\r\nFalse\r\nTrue\r\n"
+    b"b01300d\r\n1397442896\r\n27\r\n1\r\nTrue\r\n0\r\n3\r\n3\r\n3\r\n3\r\n3\r\n"
     b"facade01\r\nfacade01\r\n"
 )
 
 
 class TextGbxTests(unittest.TestCase):
-    def test_bytes_match_the_file_tested_in_game(self):
+    def test_bytes_match_the_expected_seed(self):
         data = system_config.text_2006({"width": 1280, "height": 960})
         self.assertEqual(data, KNOWN_GOOD_1280X960)
-        self.assertEqual(len(data), 200)
+        self.assertEqual(len(data), 252)
 
     def test_other_sizes_change_only_the_size_and_the_lengths_that_cover_it(self):
         data = system_config.text_2006({"width": 1280, "height": 720})
@@ -48,10 +51,10 @@ class TextGbxTests(unittest.TestCase):
         tokens = wide[len(system_config.TEXT_2006_HEADER) :].split(b"\r\n")
         # b005020's length covers every token after it up to its own facade01;
         # b013001's covers its eight tokens.
-        self.assertEqual(tokens[4:7], [b"b005020", b"1397442896", b"139"])
+        self.assertEqual(tokens[4:7], [b"b005020", b"1397442896", b"191"])
         self.assertEqual(tokens[8:11], [b"b013001", b"1397442896", b"39"])
         inner = tokens[7 : tokens.index(b"facade01") + 1]
-        self.assertEqual(sum(len(token) + 2 for token in inner), 139)
+        self.assertEqual(sum(len(token) + 2 for token in inner), 191)
         self.assertEqual(tokens[-2:], [b"facade01", b""])
 
     def test_windowed_with_3_frames_synchro_and_no_install_key(self):
@@ -61,6 +64,16 @@ class TextGbxTests(unittest.TestCase):
         synchro = tokens[tokens.index(b"b013003") + 3 :][:6]
         self.assertEqual(synchro[1], b"1")  # 3 Frames
         self.assertNotIn(b"b005012", KNOWN_GOOD_1280X960)
+
+    def test_seeds_the_pc3_quality_chunk_after_the_synchro_chunk(self):
+        tokens = KNOWN_GOOD_1280X960[9:].split(b"\r\n")
+        order = [t for t in tokens if t in (b"b013001", b"b013003", b"b01300d", b"facade01")]
+        self.assertEqual(order, [b"b013001", b"b013003", b"b01300d", b"facade01", b"facade01"])
+        start = tokens.index(b"b01300d")
+        body = tokens[start + 3 : start + 11]
+        self.assertEqual(body, [b"1", b"True", b"0", b"3", b"3", b"3", b"3", b"3"])
+        self.assertEqual(int(tokens[start + 2]), sum(len(t) + 2 for t in body))
+        self.assertEqual([t.decode() for t in body], system_config.PC3_QUALITY_TOKENS)
 
     def test_size_is_validated_like_the_forever_profile(self):
         for settings in (

@@ -438,14 +438,16 @@ class SessionTests(unittest.TestCase):
             (self.GPU_KEY, ['"VideoPciDeviceID"=' + device, '"VideoPciVendorID"=' + vendor]),
         )
 
-    def registry_writes(self, options=("--audio", "on", "--settings")):
+    def registry_writes(self, options=("--audio", "on", "--settings"), command=None):
         (self.home / "wine.jsonl").unlink(missing_ok=True)
         result = self.cli(
-            options=list(options) + ["--startup-timeout", "3"], target=[r"C:\Games\TmForever.exe"]
+            options=list(options) + ["--startup-timeout", "3"],
+            target=[command or r"C:\Games\TmForever.exe"],
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         calls = self.wine_calls()
         self.assertEqual(calls[-1]["args"][0], str(self.helper))
+        self.last_reg_args = [call["args"] for call in calls if call["args"][0] == "reg"]
         return [call["args"][4] for call in calls if call["args"][0] == "reg"], result
 
     def test_values_already_in_user_reg_are_not_written_again(self):
@@ -464,6 +466,82 @@ class SessionTests(unittest.TestCase):
             with self.subTest(name):
                 self.full_user_reg(**kwargs)
                 self.assertEqual(self.registry_writes()[0], expected)
+
+    ESWC_LAUNCHER = r"C:\Games\TmNationsESWCLauncher.exe"
+    PROMO_KEY = r"HKCU\Software\Nadeo\TmNations"
+    PROMO_VALUES = (
+        ("Launcher_CheckPeriodSeconds", "0x7fffffff"),
+        ("Launcher_CheckLastDate1", "0x01d5c036"),
+        ("Launcher_CheckLastDate2", "0x69050000"),
+    )
+    PROMO_REG_KEY = r"Software\\Nadeo\\TmNations"
+    PROMO_REG_LINES = {
+        "Launcher_CheckPeriodSeconds": '"Launcher_CheckPeriodSeconds"=dword:7fffffff',
+        "Launcher_CheckLastDate1": '"Launcher_CheckLastDate1"=dword:01d5c036',
+        "Launcher_CheckLastDate2": '"Launcher_CheckLastDate2"=dword:69050000',
+    }
+
+    def eswc_user_reg(self, promo_lines):
+        """user.reg holding Audio off, so only the launcher's own values can be written."""
+        keys = [(self.DRIVERS_KEY, ['"Audio"=""'])]
+        if promo_lines:
+            keys.append((self.PROMO_REG_KEY, promo_lines))
+        self.write_user_reg(*keys)
+
+    def test_eswc_launcher_settings_seed_the_promo_check(self):
+        self.eswc_user_reg([])
+        self.registry_writes(("--audio", "off", "--settings"), self.ESWC_LAUNCHER)
+        self.assertEqual(
+            self.last_reg_args[-3:],
+            [
+                ["reg", "add", self.PROMO_KEY, "/v", name, "/t", "REG_DWORD", "/d", value, "/f"]
+                for name, value in self.PROMO_VALUES
+            ],
+        )
+
+    def test_eswc_launcher_gets_no_nvidia_spoof(self):
+        self.eswc_user_reg([])
+        writes, _ = self.registry_writes(("--audio", "off", "--settings"), self.ESWC_LAUNCHER)
+        self.assertEqual(writes, [name for name, _ in self.PROMO_VALUES])
+        for args in self.last_reg_args:
+            self.assertNotIn("AppDefaults", args[2])
+            self.assertNotIn("VideoPciVendorID", args)
+            self.assertNotIn("VideoPciDeviceID", args)
+
+    def test_eswc_launcher_without_settings_writes_nothing(self):
+        self.eswc_user_reg([])
+        self.assertEqual(self.registry_writes(("--audio", "off"), self.ESWC_LAUNCHER)[0], [])
+        # Only the launcher's name triggers the seed, not the game's.
+        self.assertEqual(
+            self.registry_writes(("--audio", "off", "--settings"), r"C:\Games\TmNationsESWC.exe")[
+                0
+            ],
+            [],
+        )
+
+    def test_eswc_launcher_values_already_in_user_reg_are_not_written_again(self):
+        self.eswc_user_reg(list(self.PROMO_REG_LINES.values()))
+        writes, _ = self.registry_writes(("--audio", "off", "--settings"), self.ESWC_LAUNCHER)
+        self.assertEqual(writes, [])
+
+    def test_eswc_launcher_writes_only_the_value_that_differs(self):
+        # The server's period and a later check, as the launcher stores them.
+        for name, line in (
+            ("Launcher_CheckPeriodSeconds", '"Launcher_CheckPeriodSeconds"=dword:0002a300'),
+            ("Launcher_CheckLastDate1", '"Launcher_CheckLastDate1"=dword:01dc0000'),
+            ("Launcher_CheckLastDate2", '"Launcher_CheckLastDate2"=dword:00000001'),
+        ):
+            with self.subTest(name):
+                lines = dict(self.PROMO_REG_LINES, **{name: line})
+                self.eswc_user_reg(list(lines.values()))
+                writes, _ = self.registry_writes(
+                    ("--audio", "off", "--settings"), self.ESWC_LAUNCHER
+                )
+                self.assertEqual(writes, [name])
+        with self.subTest("period only"):
+            self.eswc_user_reg([self.PROMO_REG_LINES["Launcher_CheckPeriodSeconds"]])
+            writes, _ = self.registry_writes(("--audio", "off", "--settings"), self.ESWC_LAUNCHER)
+            self.assertEqual(writes, ["Launcher_CheckLastDate1", "Launcher_CheckLastDate2"])
 
     def test_absent_key_or_value_is_written(self):
         self.write_user_reg((self.DRIVERS_KEY, ['"Audio"="coreaudio"']))

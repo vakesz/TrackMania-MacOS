@@ -12,7 +12,7 @@ tokens each followed by CRLF. The body is class CSystemConfig (0x0B005000) with
 its three header fields, then chunks: a chunk id, the skip marker 1397442896
 ("PIKS" read as a little-endian integer), the byte length of the chunk's tokens
 with their CRLFs, then the tokens. A nested node ends with `facade01`, and the
-file ends with `facade01` and one empty token. The only chunk written is the
+file ends with `facade01` and one empty token. The only node written is the
 display node 0x0B005020 (IsSafeMode False), holding:
 
 - 0x0B013001: width, height, then `3 1 0 0 False` as the launcher writes them
@@ -20,7 +20,12 @@ display node 0x0B005020 (IsSafeMode False), holding:
 - 0x0B013003: `False`, the Cpu/Gpu synchro index, `False`, `0`, optimize
   dynamic geometry (`False`), `True`. The index is the launcher's dropdown
   position (None 0, 3 Frames 1, 2.5 2, 2 3, 1.5 4, 1 Frame 5, Half 6,
-  Immediate 7); it is written as 1, 3 Frames.
+  Immediate 7); it is written as 1, 3 Frames;
+- 0x0B01300D: the tokens `1 True 0 3 3 3 3 3`, copied from the file the game
+  wrote after the player chose PC3 in the settings launcher. Before that
+  choice the game's own file held `1 False 0 3 3 3 3 3` and a fresh install
+  drew the stadium untextured. Only the second token differed; what each
+  token means is not known.
 
 The per-install key (chunk 0x0B005012) is never written. The game fills
 everything else with its own defaults. Width and height come from
@@ -58,6 +63,9 @@ END = "facade01"
 TEXT_2006_HEADER = b"GBX\x06\x00TUUE"
 # The launcher's Cpu/Gpu synchro dropdown position for "3 Frames".
 SYNCHRO_3_FRAMES = 1
+# Written by the game after PC3 was chosen in the settings launcher; the
+# meaning of the tokens is not known.
+PC3_QUALITY_TOKENS = ["1", "True", "0", "3", "3", "3", "3", "3"]
 _INT_MAX = 0x7FFFFFFF
 
 
@@ -80,11 +88,11 @@ def _size(settings: typing.Mapping[str, object]) -> typing.Tuple[int, int]:
 
 
 def text_2006(settings: typing.Mapping[str, object]) -> bytes:
-    """The minimal Nations ESWC Default.SystemConfig.Gbx: windowed, 3 Frames synchro."""
+    """The minimal Nations ESWC Default.SystemConfig.Gbx: windowed, 3 Frames synchro, PC3."""
     width, height = _size(settings)
-    display = _chunk(
-        "b013001", [str(width), str(height), "3", "1", "0", "0", "False", "False"]
-    ) + _chunk("b013003", ["False", str(SYNCHRO_3_FRAMES), "False", "0", "False", "True"])
+    display = _chunk("b013001", [str(width), str(height), "3", "1", "0", "0", "False", "False"])
+    display += _chunk("b013003", ["False", str(SYNCHRO_3_FRAMES), "False", "0", "False", "True"])
+    display += _chunk("b01300d", PC3_QUALITY_TOKENS)
     tokens = ["b005000", "0", "1", "0"]
     tokens += _chunk("b005020", ["False"] + display + [END])
     tokens += [END, ""]

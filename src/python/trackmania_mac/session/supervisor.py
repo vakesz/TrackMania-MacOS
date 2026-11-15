@@ -461,6 +461,22 @@ def run(
                         preparation.append(
                             ["reg", "add", key, "/v", name, "/t", "REG_DWORD", "/d", value, "/f"]
                         )
+                elif basename == "TmNationsESWCLauncher.exe":
+                    # Nadeo's update server still answers this launcher with a
+                    # promo page, which the launcher opens in the browser each
+                    # time it asks. It asks when its last check is in the
+                    # future or older than the period, so a past date
+                    # (2020-01-01 as a FILETIME) with the longest period, 68
+                    # years, keeps it from asking.
+                    key = "HKCU\\Software\\Nadeo\\TmNations"
+                    for name, value in (
+                        ("Launcher_CheckPeriodSeconds", "0x7fffffff"),
+                        ("Launcher_CheckLastDate1", "0x01d5c036"),
+                        ("Launcher_CheckLastDate2", "0x69050000"),
+                    ):
+                        preparation.append(
+                            ["reg", "add", key, "/v", name, "/t", "REG_DWORD", "/d", value, "/f"]
+                        )
             for registry_args in _unapplied(prefix, preparation):
                 _check_interrupt(interrupted)
                 if time.monotonic() >= startup_deadline:

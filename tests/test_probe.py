@@ -312,7 +312,7 @@ class SmokeScripts(unittest.TestCase):
                 self.assertEqual("SKIP: source-only" in result.stdout, not source_present)
                 calls = [json.loads(line) for line in self.log.read_text().splitlines()]
                 probes = [call for call in calls if call["name"] in ("wine", "x87sidecar")]
-                self.assertEqual(len(probes), 48 if source_present else 2)
+                self.assertEqual(len(probes), 53 if source_present else 2)
                 storms = [
                     call
                     for call in probes

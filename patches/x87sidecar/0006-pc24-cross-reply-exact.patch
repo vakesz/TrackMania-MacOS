@@ -1,0 +1,46 @@
+Subject: tests: Run the cross-reply exactness test under PC24 with TEST_PC24=1.
+
+Requires 0004. Since upstream 052944f (#57), with native slots an fild m64
+whose value is only stored with fistp m64 or left on the stack stays a
+LoadF64 that holds the integer's bits (kExactI64 when it is on the stack),
+and the run's end writes its exact 80-bit value back into the slot. 0004
+accepts LoadF64 in a single-precision PC24 body: the body narrows those bits
+as if they were a binary64 value, exactly or by leaving for the exact body,
+and widens them back before the shared write-back. That keeps them bit for
+bit, but upstream's test never sets the control word, so it never reaches a
+PC24 body.
+
+TEST_PC24=1 sets control word 0x007f (TMNF's PC24, round to nearest) once
+before the first case, as the PC24 switches of 0001's tests do. Unset, the
+test is unchanged.
+
+diff --git a/tests/test_x87_cross_reply_exact.c b/tests/test_x87_cross_reply_exact.c
+index 3d4f63c..90f29e5 100644
+--- a/tests/test_x87_cross_reply_exact.c
++++ b/tests/test_x87_cross_reply_exact.c
+@@ -40,9 +40,14 @@
+  *
+  * Expected: passes under stock Rosetta and under x87sidecar, fails with
+  * X87_NATIVE_SLOTS=0 (run_tests.sh checks both).
++ *
++ * TEST_PC24=1 runs every case with control word 0x007f (PC24, round to
++ * nearest), set once in its own block before the first case, so the IR runs
++ * of the last group also take the single-precision PC24 bodies.
+  */
+ #include <stdint.h>
+ #include <stdio.h>
++#include <stdlib.h>
+ #include <string.h>
+ 
+ static int failures = 0;
+@@ -543,6 +548,10 @@ int main(int argc, char** argv) {
+         dump |= strcmp(argv[i], "--dump") == 0;
+         int_stores_may_round |= strcmp(argv[i], "--int-stores-may-round") == 0;
+     }
++    if (getenv("TEST_PC24")) {
++        const uint16_t cw = 0x007f;
++        __asm__ volatile("fldcw %0" : : "m"(cw));
++    }
+     int cases = 0;
+     for (size_t mi = 0; mi < sizeof(kMiddles) / sizeof(kMiddles[0]); mi++) {
+         const middle* m = &kMiddles[mi];

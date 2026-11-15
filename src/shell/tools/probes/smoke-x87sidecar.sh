@@ -31,11 +31,14 @@ for mode in default exact direct unfused pressure; do
   esac
   # Storm checks interruption stability, not an independent numeric RC oracle.
   # STORM_PC24 sets its input CW; the sample does not load it before every case.
+  # test_x87_cross_reply_exact (patch 0006) needs the native slots and enough GPRs
+  # for its exact integer stores, so neither knob is inherited.
   for probe in test_precision_control test_pc24_arithmetic test_pc24_host_state test_rc_rounding \
-    test_pc24_slot_reads test_arith test_flags_across_x87 test_fxch test_x87_signal_storm; do
+    test_pc24_slot_reads test_arith test_flags_across_x87 test_fxch test_x87_signal_storm \
+    test_x87_cross_reply_exact; do
     say "Testing $probe ($mode)"
     trackmania_mac_python -m trackmania_mac.probes.probe_runner 60 \
-      env -u X87_FPR_POOL_LIMIT -u X87_PC24_RUNS -u STORM_CASE STORM_PC24=1 TEST_PC24=1 X87_ENABLE_IR_SPLIT=1 X87_ENABLE_IR_REMAT=1 X87_ENABLE_FMA_CONTRACT=0 X87_FAST_ROUND=0 \
+      env -u X87_FPR_POOL_LIMIT -u X87_PC24_RUNS -u X87_NATIVE_SLOTS -u X87_GPR_POOL_LIMIT -u STORM_CASE STORM_PC24=1 TEST_PC24=1 X87_ENABLE_IR_SPLIT=1 X87_ENABLE_IR_REMAT=1 X87_ENABLE_FMA_CONTRACT=0 X87_FAST_ROUND=0 \
       "${mode_vars[@]}" "$sidecar" --cooperative "${source_dir}/bin/tests/$probe"
   done
 done

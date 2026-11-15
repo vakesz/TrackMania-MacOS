@@ -280,6 +280,47 @@ if grep -Fq -e '--redirect' "$CALL_LOG"; then
   exit 1
 fi
 
+# A title with game_save_dirs: Play moves the saves its game writes in the game
+# folder to the saves folder and links them back before Wine starts; a folder it
+# cannot link only warns, and the game still starts.
+ESWC_GAME="${FAKE_PREFIX}/drive_c/Program Files (x86)/TmNationsESWC"
+ESWC_SAVES="${FAKE_DATA}/saves/tmn-eswc"
+ESWC_KEPT="${ESWC_SAVES}/TmNationsESWC/GameData"
+mkdir -p "${ESWC_GAME}/GameData/Profiles/Player" "${ESWC_GAME}/GameData/Tracks/Replays" "$ESWC_SAVES"
+touch "${ESWC_GAME}/TmNationsESWC.exe"
+printf 'profile' >"${ESWC_GAME}/GameData/Profiles/Player/profile.gbx"
+printf 'not a folder' >"${ESWC_GAME}/GameData/Tracks/Replays/Autosaves"
+printf 'tmn-eswc:1\n' >"${FAKE_PREFIX}/.trackmania-mac-prefix"
+: >"$CALL_LOG"
+eswc_output="$(TRACKMANIA_MAC_TITLE=tmn-eswc TRACKMANIA_MAC_USERDATA="$ESWC_SAVES" \
+  "${PROJECT_DIR}/src/shell/cli/trackmania-mac" play 2>&1)"
+test "$(readlink "${ESWC_GAME}/GameData/Profiles")" = "${ESWC_KEPT}/Profiles"
+test "$(cat "${ESWC_KEPT}/Profiles/Player/profile.gbx")" = profile
+test "$(readlink "${ESWC_GAME}/GameData/Tracks/Replays/My Replays")" = "${ESWC_KEPT}/Tracks/Replays/My Replays"
+test -f "${ESWC_GAME}/GameData/Tracks/Replays/Autosaves"
+grep -Fq 'Autosaves is not a folder' <<<"$eswc_output"
+grep -Fq 'not linked to the saves folder' <<<"$eswc_output"
+grep -Fq "<--watch><${ESWC_GAME}/TmNationsESWC.exe><--><${ESWC_GAME}/TmNationsESWC.exe>" "$CALL_LOG"
+# Doctor reports a folder left in the game folder, and nothing once all are linked.
+eswc_doctor="$(TRACKMANIA_MAC_TITLE=tmn-eswc TRACKMANIA_MAC_USERDATA="$ESWC_SAVES" \
+  "${PROJECT_DIR}/src/shell/cli/trackmania-mac" doctor 2>&1)" || true
+grep -Fq 'Autosaves is not a folder' <<<"$eswc_doctor"
+if grep -Fq 'Game-folder saves: kept in' <<<"$eswc_doctor"; then
+  echo 'doctor reported linked game-folder saves while one was not' >&2
+  exit 1
+fi
+rm "${ESWC_GAME}/GameData/Tracks/Replays/Autosaves"
+eswc_doctor="$(TRACKMANIA_MAC_TITLE=tmn-eswc TRACKMANIA_MAC_USERDATA="$ESWC_SAVES" \
+  "${PROJECT_DIR}/src/shell/cli/trackmania-mac" doctor 2>&1)" || true
+grep -Fq 'Autosaves is not linked' <<<"$eswc_doctor"
+TRACKMANIA_MAC_TITLE=tmn-eswc TRACKMANIA_MAC_USERDATA="$ESWC_SAVES" \
+  "${PROJECT_DIR}/src/shell/cli/trackmania-mac" play >/dev/null 2>&1
+eswc_doctor="$(TRACKMANIA_MAC_TITLE=tmn-eswc TRACKMANIA_MAC_USERDATA="$ESWC_SAVES" \
+  "${PROJECT_DIR}/src/shell/cli/trackmania-mac" doctor 2>&1)" || true
+grep -Fq "Game-folder saves: kept in ${ESWC_SAVES}" <<<"$eswc_doctor"
+cp "${TEST_ROOT}/trackmania-mac-prefix.saved" "${FAKE_PREFIX}/.trackmania-mac-prefix"
+rm -rf "$ESWC_GAME" "$ESWC_SAVES"
+
 : >"$CALL_LOG"
 doctor_output="$("${PROJECT_DIR}/src/shell/cli/trackmania-mac" doctor 2>&1)" || true
 printf '%s\n' "$doctor_output" | grep -q 'Renderer: d9vk'

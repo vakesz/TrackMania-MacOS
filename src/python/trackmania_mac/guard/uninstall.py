@@ -7,7 +7,9 @@ parses a plan, so no path or app metadata can be read back as an instruction.
 
 What a title owns:
 - its prefix (`check_prefix` accepts it) and, only with include_saves, its
-  default UserData folder, which is the prefix's Windows Documents folder;
+  default UserData folder, which is the prefix's Windows Documents folder.
+  Keeping saves refuses a prefix whose game folder still holds files in a
+  registry `game_save_dirs` folder instead of a link to the saves folder;
 - its two app wrappers, only when they carry our app marker (this release's
   or an earlier one's) and this title's bundle identifier, current or earlier;
 - its launcher support directory, cached installer, logs and extracted icon;
@@ -40,6 +42,7 @@ from pathlib import Path
 from trackmania_mac import legacy, markers
 from trackmania_mac.hub import paths as hub_paths
 from trackmania_mac.hub import registry
+from trackmania_mac.install import game_saves
 
 from . import managed_paths
 
@@ -56,6 +59,7 @@ TOMBSTONE = re.compile(
     )
 )
 MOUNTED = "is a mounted volume; unmount it first"
+GAME_SAVES_MOVED = "saves in the game folder; moved to the saves folder before removal"
 UNFINISHED_SAVES = "saves from an unfinished uninstall"
 # plan exits with this status when nothing is left to remove.
 NOTHING_TO_REMOVE = 3
@@ -192,6 +196,26 @@ def installer_cache_path(title: registry.Title, cache: Path) -> typing.Optional[
         # The historical single-title location, directly in the shared cache.
         return cache / name
     return cache / "games" / title.id / name
+
+
+def download_cache_paths(
+    title: registry.Title, cache: Path
+) -> typing.List[typing.Tuple[Path, str]]:
+    """(path, role) of every pinned download: the installer, then updates and overlay.
+
+    Mirrors _cache_installer_path and _cache_download_path in
+    src/shell/lib/titles.sh (parity-tested). Extra downloads always sit in
+    `games/<id>`; role is installer, update or overlay.
+    """
+    paths: typing.List[typing.Tuple[Path, str]] = []
+    installer = installer_cache_path(title, cache)
+    if installer is not None:
+        paths.append((installer, "installer"))
+    folder = cache / "games" / title.id
+    paths += [(folder / registry.url_file_name(update.url), "update") for update in title.updates]
+    if title.overlay is not None:
+        paths.append((folder / registry.url_file_name(title.overlay.url), "overlay"))
+    return paths
 
 
 def shared_cache_names() -> typing.Set[str]:
@@ -443,40 +467,49 @@ def _installer_files(directory: Path, name: str) -> typing.List[Entry]:
 
 
 def cache_entries(title: registry.Title, cache: Path) -> typing.List[Entry]:
-    """The title's cached installer, its partial downloads and its unpacked staging.
+    """The title's cached downloads, their partial downloads and the unpacked staging.
 
-    tmnf's installer sits directly in the shared cache. Other titles download
-    to `games/<id>`, which carries no ownership marker, so only the known
-    files in it are removed and the folder itself only once it is empty.
+    tmnf's installer sits directly in the shared cache. Other installers, and
+    every title's updates and overlay, download to `games/<id>`, which carries
+    no ownership marker, so only the known files in it are removed and the
+    folder itself only once it is empty.
     """
     target = installer_cache_path(title, cache)
     if target is None or not os.path.lexists(cache) or cache.is_symlink():
         return []
     name = target.name
+    extras = [path.name for path, role in download_cache_paths(title, cache) if role != "installer"]
+    entries: typing.List[Entry] = []
+    names = [name] + extras
     if title.id == "tmnf":
         if not name or name in shared_cache_names():
             raise ValueError("The cached installer name {!r} is shared by every title".format(name))
         resolved_cache = managed_paths.safe_path(str(cache))
-        return _installer_files(resolved_cache, name) if resolved_cache.is_dir() else []
+        entries = _installer_files(resolved_cache, name) if resolved_cache.is_dir() else []
+        if not extras:
+            return entries
+        names = extras
     folder = cache / "games" / title.id
     if not os.path.lexists(folder):
-        return []
+        return entries
     if folder.is_symlink():
-        return [_keep("cache", folder, "a symlink")]
+        return entries + [_keep("cache", folder, "a symlink")]
     resolved = managed_paths.safe_path(str(folder))
     if not resolved.is_dir() or not _same(resolved.parent, cache / "games"):
-        return [_keep("cache", folder, "not this game's cache folder")]
-    entries = _installer_files(resolved, name)
-    # unpack_inner_inno stages `${installer%.exe}.inner` next to the installer.
-    staging = (name[: -len(".exe")] if name.endswith(".exe") else name) + ".inner"
-    inner = resolved / staging
-    if os.path.lexists(inner):
-        info = os.lstat(inner)
-        if stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid():
-            entries.append(_remove("cache", inner))
-        else:
-            entries.append(_keep("cache", inner, "not a folder this hub unpacked"))
-    entries += leftover_entries(resolved, staging, "cache")
+        return entries + [_keep("cache", folder, "not this game's cache folder")]
+    for download in names:
+        entries += _installer_files(resolved, download)
+    if name in names:
+        # unpack_inner_inno stages `${installer%.exe}.inner` next to the installer.
+        staging = (name[: -len(".exe")] if name.endswith(".exe") else name) + ".inner"
+        inner = resolved / staging
+        if os.path.lexists(inner):
+            info = os.lstat(inner)
+            if stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid():
+                entries.append(_remove("cache", inner))
+            else:
+                entries.append(_keep("cache", inner, "not a folder this hub unpacked"))
+        entries += leftover_entries(resolved, staging, "cache")
     if _owned(resolved):
         entries.append(_planned("prune", "cache", resolved))
     return entries
@@ -555,13 +588,24 @@ def prefix_entries(
     title: registry.Title,
     include_saves: bool,
     warnings: typing.List[str],
+    move_game_saves: bool = False,
 ) -> typing.List[Entry]:
     if not os.path.lexists(prefix_value.rstrip("/") or "/"):
         return []
     if not include_saves:
-        # Saves inside the prefix block this removal, exactly as before.
+        # Saves inside the prefix block this removal, exactly as before, and so
+        # do saves still in the game folder (registry game_save_dirs). Only the
+        # confirmation's plan may list those as moved first: the shell moves
+        # them after the answer, and `remove` plans again without this.
         prefix = managed_paths.check_uninstall(prefix_value, userdata_value, title=title.id)
-        return [_remove("prefix", prefix)]
+        if not move_game_saves:
+            game_saves.check_prefix(prefix, title)
+            return [_remove("prefix", prefix)]
+        moved = [
+            _keep("game-saves", path, GAME_SAVES_MOVED)
+            for path in game_saves.saves_found(prefix, title)
+        ]
+        return [_remove("prefix", prefix)] + moved
     managed_paths.check_layout([prefix_value, userdata_value])
     managed_paths.check_prefix(prefix_value, title=title.id)
     prefix = managed_paths.safe_path(prefix_value)
@@ -678,6 +722,7 @@ def _leftovers(
             for entry in found:
                 if entry.verb == "remove":
                     managed_paths.check_prefix_saves(entry.path)
+                    game_saves.check_prefix(entry.path, title)
         entries += found
     for path, kind in ((apps[0], "game-app"), (apps[1], "settings-app")):
         parent = path.parent
@@ -731,11 +776,14 @@ def plan(
     cache: str,
     include_saves: bool = False,
     warnings: typing.Optional[typing.List[str]] = None,
+    move_game_saves: bool = False,
 ) -> typing.List[Entry]:
     """Validate every path and return what to remove and what is kept, in removal order.
 
     Raises ValueError/OSError/RuntimeError (or RegistryError) when anything is
     uncertain. The caller must hold the prefix and app operation locks.
+    MOVE_GAME_SAVES (for the confirmation only, never for a removal) lists
+    saves still in the live prefix's game folder as kept instead of refusing.
     """
     warnings = warnings if warnings is not None else []
     title, titles = load_titles()
@@ -759,7 +807,7 @@ def plan(
     entry = launcher_entry(launcher, support_path, title)
     if entry is not None:
         entries.append(entry)
-    entries += prefix_entries(prefix, userdata, title, include_saves, warnings)
+    entries += prefix_entries(prefix, userdata, title, include_saves, warnings, move_game_saves)
     entries += userdata_entries(userdata, title, titles, home, include_saves)
     entries += _leftovers(
         title,
@@ -1028,9 +1076,13 @@ def main(argv: typing.Optional[typing.List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("command", choices=("plan", "remove"))
     parser.add_argument("--include-saves", action="store_true")
+    # plan only: the shell moves game-folder saves after the confirmation.
+    parser.add_argument("--move-game-saves", action="store_true")
     for name in ("prefix", "userdata", "app", "settings_app", "launcher", "support", "cache"):
         parser.add_argument(name)
     args = parser.parse_args(argv)
+    if args.move_game_saves and (args.command != "plan" or args.include_saves):
+        parser.error("--move-game-saves only describes a plan that keeps saves")
     warnings: typing.List[str] = []
     try:
         entries = plan(
@@ -1043,6 +1095,7 @@ def main(argv: typing.Optional[typing.List[str]] = None) -> int:
             args.cache,
             include_saves=args.include_saves,
             warnings=warnings,
+            move_game_saves=args.move_game_saves,
         )
         for warning in warnings:
             shown = warning if _printable(warning) else repr(warning)

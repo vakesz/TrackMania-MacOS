@@ -122,6 +122,18 @@ folder, which is the prefix's Windows Documents folder. `--include-saves` remove
 only that folder, and only at its default location; save folder names overlap
 between titles, so a custom or shared folder is never removed.
 
+A title whose game writes saves inside its game folder lists those folders in
+its registry `game_save_dirs` (Nations ESWC). They are kept in the saves folder
+and linked from the game folder (see
+[Saves in the game folder](runtime.md#saves-in-the-game-folder)), so removing
+the prefix removes only the links. An uninstall that keeps saves lists any
+files still in those folders as moved to the saves folder first, moves them
+only once the removal is confirmed (`--yes` counts), and then refuses ("Saves
+are still in the game folder") while files remain there. Files the prefix would
+take with it count wherever a symlink inside the prefix leads, and in every
+case-spelling of a folder name. `--include-saves` removes them with the prefix.
+The snapshot does not change.
+
 An uninstall never removes the Wine runtime, the shared downloads (DirectX,
 TMLoader, OpenAL Soft; [Settings](#settings) can clear them), a title root (`games/<id>`, which holds the title's
 operation lock), or another title's files. Every title has its own root and
@@ -213,7 +225,7 @@ is now `local.trackmania-mac.hub`.
 | Original (`tm-original`) | user-owned retail disk image or setup executable | its own game executable | unsupported |
 | TrackMania 2 Canyon (`tm-canyon`) | pinned official ManiaPlanet trial | its own game executable | unsupported |
 | Turbo (`tm-turbo`) | existing Steam game folder | its own game executable | unsupported |
-| Nations ESWC (`tmn-eswc`) | pinned official free installer | its own game executable | unsupported |
+| Nations ESWC (`tmn-eswc`) | pinned official free installer (you click through its setup), official 1.7.9 update and community StarForce-free 1.8.0 build | its own game executable | provisional |
 | TrackMania 2 Stadium (`tm-stadium`) | pinned official ManiaPlanet trial | its own game executable | unsupported |
 | TrackMania 2 Valley (`tm-valley`) | pinned official ManiaPlanet trial | its own game executable | unsupported |
 | TrackMania 2 Lagoon (`tm-lagoon`) | pinned official ManiaPlanet trial | its own game executable | unsupported |
@@ -245,6 +257,9 @@ broken by id, followed by entries that could not be read. The hub keeps that
 order inside its "installed" and "available" sidebar sections and does not
 re-sort by status; with nothing selected it selects the first installed title,
 else the first supported one.
+
+Each title entry's `sourceSize` is the total size in bytes of the title's pinned
+downloads: the installer, its updates and its overlay.
 
 `config/titles/*.json` is the sole authority for title paths, app names and
 bundle identifiers; each title's prefix marker is derived from its id. The shell

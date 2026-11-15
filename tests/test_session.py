@@ -33,7 +33,8 @@ for fd in range(3, 256):
     except OSError: continue
     assert (info.st_dev, info.st_ino) != (lock.st_dev, lock.st_ino), 'inherited operation FD'
 invocation = {'args': args, 'prefix': os.environ['WINEPREFIX'], 'pid': os.getpid(),
-              'pgid': os.getpgrp(), 'override': os.environ.get('WINEDLLOVERRIDES')}
+              'pgid': os.getpgrp(), 'override': os.environ.get('WINEDLLOVERRIDES'),
+              'cwd': os.getcwd()}
 calls = root / 'wine.jsonl'
 with calls.open('a') as stream:
     stream.write(json.dumps(invocation) + '\n')
@@ -50,6 +51,7 @@ result = pathlib.Path(args[args.index('--result') + 1])
     'pgid': os.getpgrp(), 'override': os.environ.get('WINEDLLOVERRIDES'),
     'mode': result.parent.stat().st_mode & 0o777,
     'umask': inherited_umask,
+    'cwd': os.getcwd(),
 }))
 def publish(value):
     temporary = result.with_suffix('.tmp')
@@ -315,6 +317,32 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(len(self.wine_calls()), 1)
         self.assert_cleanup()
         self.assert_no_results()
+
+    def test_only_the_helper_starts_in_the_requested_folder(self):
+        game = self.home / "game folder"
+        game.mkdir()
+        neutral = self.root / "neutral"
+        neutral.mkdir()
+        result = subprocess.run(
+            self.command(options=["--audio", "on", "--cwd", str(game)]),
+            env=dict(self.env, FAKE_SCENARIO="normal"),
+            cwd=str(neutral),
+            text=True,
+            capture_output=True,
+            timeout=8,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        invocation = json.loads((self.home / "invocation.json").read_text())
+        self.assertEqual(invocation["cwd"], str(game))
+        registry_calls = [call for call in self.wine_calls() if call["args"][0] == "reg"]
+        self.assertTrue(registry_calls)
+        self.assertEqual({call["cwd"] for call in registry_calls}, {str(neutral)})
+
+    def test_a_missing_working_directory_does_not_launch(self):
+        result = self.cli(options=["--cwd", str(self.home / "missing")])
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("not a folder", result.stderr)
+        self.assertEqual(self.wine_calls(), [])
 
     def test_audio_and_settings_prepare_in_order_with_the_same_environment(self):
         for audio, driver in (("on", "coreaudio"), ("off", "")):

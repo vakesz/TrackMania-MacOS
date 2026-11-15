@@ -353,8 +353,15 @@ def run(
     settings=False,
     redirect=None,
     redirect_except=(),
+    cwd=None,
 ):
     """Return 0/1 for a confirmed target exit; raise on supervision failure.
+
+    cwd is the working directory of the Wine process that starts the target
+    (its Windows current directory), usually the game folder. Only that child
+    gets it: this process is started from a neutral folder, because `python -m`
+    puts its working directory first on sys.path and a game folder is writable
+    by the game and by third-party files laid over it.
 
     With redirect, a process of that executable started inside the session is
     stopped unless one of its arguments starts with a redirect_except switch;
@@ -386,6 +393,8 @@ def run(
     for switch in redirect_except:
         if not REDIRECT_EXCEPT.fullmatch(switch):
             raise ValueError("Redirect exceptions must be /switch names: {!r}".format(switch))
+    if cwd is not None and not Path(cwd).is_dir():
+        raise ValueError("The working directory is not a folder: {}".format(cwd))
     if desktop is not None:
         if not re.fullmatch(r"[0-9]{1,5}x[0-9]{1,5}", desktop) or not all(
             0 < int(size) <= 65535 for size in desktop.split("x")
@@ -507,6 +516,7 @@ def run(
             helper_host = subprocess.Popen(
                 args,
                 env=env,
+                cwd=None if cwd is None else str(cwd),
                 close_fds=True,
                 start_new_session=True,
                 stdin=subprocess.DEVNULL,
@@ -628,6 +638,7 @@ def main(argv=None):
     launch.add_argument("--redirect")
     launch.add_argument("--redirect-except", action="append", default=[])
     launch.add_argument("--startup-timeout", type=float, default=300)
+    launch.add_argument("--cwd")
     launch.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     try:
@@ -648,6 +659,7 @@ def main(argv=None):
             args.settings,
             args.redirect,
             args.redirect_except,
+            args.cwd,
         )
     except InterruptedError as error:
         _log(error.args[1] if len(error.args) > 1 else str(error))

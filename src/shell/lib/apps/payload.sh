@@ -22,7 +22,7 @@ record_build_revision() {
 }
 
 stage_launcher_payload() {
-  local project="$1" destination="$2" module art
+  local project="$1" destination="$2" module art patch folder
 
   mkdir -p "${destination}/src/shell" "${destination}/src/python/trackmania_mac" "${destination}/config"
   cp -R "${project}/src/shell/cli" "${project}/src/shell/lib" "${destination}/src/shell/"
@@ -35,9 +35,18 @@ stage_launcher_payload() {
   done
   # Bytecode never ships: the launcher must run installed sources as-is.
   find "${destination}/src" \( -name '__pycache__' -o -name '*.pyc' \) -prune -exec rm -rf {} +
-  cp "${project}/config/dxvk.conf" "${project}/config/pins.json" "${destination}/config/"
+  cp "${project}/config/dxvk.conf" "${project}/config/pins.json" "${project}/config/game-settings.json" \
+    "${destination}/config/"
   mkdir -p "${destination}/config/titles"
   cp "${project}/config/titles/"*.json "${destination}/config/titles/"
+  # Patches for game executables (registry game_exe_patch), applied by install:
+  # regular files only, never through a symlink.
+  for patch in "${project}/config/exe-patches/"*/*.json; do
+    folder="${patch%/*}"
+    test -f "$patch" && test ! -L "$patch" && test ! -L "$folder" || continue
+    mkdir -p "${destination}/config/exe-patches/${folder##*/}"
+    cp "$patch" "${destination}/config/exe-patches/${folder##*/}/"
+  done
   # The release version is read from pyproject.toml (src/shell/lib/version.sh).
   cp "${project}/pyproject.toml" "${destination}/"
   record_build_revision "$project" "${destination}/config/build-revision"

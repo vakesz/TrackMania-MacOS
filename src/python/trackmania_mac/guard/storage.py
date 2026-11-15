@@ -147,12 +147,16 @@ def _total(sizes: typing.Iterable[typing.Optional[int]]) -> typing.Optional[int]
 # --- Downloads -------------------------------------------------------------
 
 
-def _installer_label(entry: Entry, installer: str, title: registry.Title) -> str:
+# How a title's pinned download is named, by its role (uninstall.download_cache_paths).
+DOWNLOAD_LABELS = {"installer": "{} installer", "update": "{} update", "overlay": "{} game files"}
+
+
+def _installer_label(entry: Entry, roles: typing.Dict[str, str], title: registry.Title) -> str:
     name = entry.path.name
     if entry.verb == "prune":
         return ""
-    if name == installer:
-        return "{} installer".format(title.name)
+    if name in roles:
+        return DOWNLOAD_LABELS[roles[name]].format(title.name)
     if PARTIAL.fullmatch(name):
         return UNFINISHED
     if uninstall.TOMBSTONE.fullmatch(name):
@@ -209,8 +213,9 @@ def plan_downloads(
         target = uninstall.installer_cache_path(title, root)
         if target is None:
             continue
+        roles = {path.name: role for path, role in uninstall.download_cache_paths(title, root)}
         for entry in uninstall.cache_entries(title, root):
-            planned.append((_installer_label(entry, target.name, title), entry))
+            planned.append((_installer_label(entry, roles, title), entry))
     now = time.time()
     for child in sorted(os.listdir(root)):
         path = root / child

@@ -127,6 +127,38 @@ class StorageTests(unittest.TestCase):
         with mock.patch.object(storage, "SIZE_BUDGET", 2):
             self.assertIsNone(storage.preview()["downloads"]["bytes"])
 
+    def test_sizes_never_follow_a_game_folders_links_to_its_saves(self):
+        # trackmania_mac.install.game_saves links save folders in the game folder
+        # to the saves folder; a prefix's size must not count them a second time.
+        saves = self.data / "saves/tmn-eswc/TmNationsESWC/GameData/Profiles"
+        self.file(saves / "Player/profile.gbx", "1234567890")
+        game = self.data / "games/tmn-eswc/prefix/drive_c/Program Files (x86)/TmNationsESWC"
+        self.file(game / "TmNationsESWC.exe", "123")
+        (game / "GameData").mkdir()
+        (game / "GameData/Profiles").symlink_to(saves, target_is_directory=True)
+        link_size = os.lstat(game / "GameData/Profiles").st_size
+        prefix = self.data / "games/tmn-eswc/prefix"
+        self.assertEqual(storage._Sizer().size(prefix), 3 + link_size)
+
+    def test_preview_labels_every_pinned_download_of_a_title(self):
+        eswc = self.cache / "games/tmn-eswc"
+        self.file(eswc / "TmNationsESWC_Setup.exe", "1234")
+        self.file(eswc / "tmnationseswc_175_to_179_setup.exe", "12")
+        self.file(eswc / "Win10Patch.tar.gz", "123")
+        self.file(eswc / "Win10Patch.tar.gz.partial.AbC123", "1")
+        downloads = storage.preview()["downloads"]
+        self.assertEqual(
+            {item["label"]: item["bytes"] for item in downloads["items"]},
+            {
+                "TrackMania Nations ESWC installer": 4,
+                "TrackMania Nations ESWC update": 2,
+                "TrackMania Nations ESWC game files": 3,
+                storage.UNFINISHED: 1,
+            },
+        )
+        self.assertGreater(self.clean("downloads"), 0)
+        self.assertFalse(eswc.exists())
+
     def test_a_running_operation_blocks_downloads_and_runtimes(self):
         installer = self.file(self.cache / "directx_Jun2010_redist.exe")
         stale = self.runtime_folder("0.1.0")

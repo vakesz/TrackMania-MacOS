@@ -27,6 +27,7 @@ order to the exact revisions in `config/sources.json`.
 | x87sidecar 0002 | Skip the scoped FPCR write when the guest rounds to nearest and the host FPCR already gives the same results | The same probes in all translator modes |
 | x87sidecar 0003 | Skip the f32 operand check for values loaded from a 32-bit float | The same probes in all translator modes |
 | x87sidecar 0004 | Run PC24 IR runs in native single precision, falling back to the exact body on any out-of-range value | The same probes with the fast bodies on and off (`X87_PC24_RUNS=0`) |
+| x87sidecar 0005 | In those single-precision bodies, read a register still in its 80-bit slot directly when it holds a normal f32 value or a zero, and give runs with one arithmetic operation a fast body too | `test_pc24_slot_reads` (every 80-bit encoding class read from a slot, against exact-rational results) in all translator modes |
 
 The filename gaps are intentional. D9VK's two build patches were superseded by
 the pinned upstream update. Rejected experiments are not included in releases.
@@ -51,6 +52,14 @@ The verified PC24/PC53 rounding and float-store fixes do not provide general
 only run when every value is exactly an f32 and every result stays in the f32
 range; anything else continues in the exact binary64 body, so they compute
 the same results.
+Patch 0005 reads a slot that holds anything other than a normal f32 value or a
+zero through the exact body as well. A possible follow-up would write the
+80-bit value straight into the slot when a run ends its reply, instead of
+leaving binary64 for the reply-end conversion (about 36 instructions on the
+hottest ESWC block); it changes the exact body and is not done.
+In the ESWC replay benchmark 0005 left the average unchanged (68.2 fps
+before and after, 1280x960, Cpu/Gpu synchro 3 Frames); frame times were
+slightly smoother (worst frame 25 ms against 31 ms).
 PC64 remains an approximation; extreme underflow/overflow chains, full x87
 status-word exceptions and unmasked traps are not qualified. A value lost from
 the internal representation cannot be recovered by rounding its final store.
@@ -226,7 +235,9 @@ windows if a launch seems silent.
 
 Applies to: every title, except that the initial settings file
 (`config/game-settings.json` and `Default.SystemConfig.Gbx`) is seeded only for
-Nations and United Forever, the titles with `TmForever.exe` as `game_exe`.
+Nations and United Forever, the titles with `TmForever.exe` as `game_exe`, and
+for titles whose registry entry sets `game_system_config` (Nations ESWC, see
+[Nations ESWC settings](#nations-eswc-settings)).
 
 By default the launcher runs the game directly, so it uses the display mode set
 in TrackMania Settings (fullscreen or windowed, at the chosen resolution).
@@ -250,6 +261,36 @@ The generator names documented fields and labels unknown ones; the TMF shader
 quality field is inferred from the later display layout. It validates required
 types, integer encoding limits and preset enum ranges, not every setting the
 game may accept. Offline tests check chunk structure and unchanged default bytes.
+
+### Nations ESWC settings
+
+Applies to: titles whose registry entry sets `game_system_config` (TrackMania
+Nations ESWC today).
+
+Nations ESWC reads its settings from `Default.SystemConfig.Gbx` in its game
+folder, not from Documents. No installer ships the file; the settings launcher
+writes it the first time it runs. It is the 2006 text GBX format, not the
+Forever engine's binary one, so the Forever seed above does not apply.
+
+After the NX_COMPAT step, install runs
+`python -m trackmania_mac.install.system_config seed GAME_DIR config/game-settings.json`,
+which writes a 200-byte file when the game folder has none. It holds only the
+display node: the width and height from `config/game-settings.json` (1280x720),
+windowed, and Cpu/Gpu synchro set to "3 Frames". It never contains the
+per-install key (chunk `b005012`), and the game fills every other setting with
+its own default. An existing file, folder or symlink of that name is left as it
+is, so a file the launcher or the player wrote always wins. The file is written
+to a temporary file and hard-linked into place, so it is complete or absent. A
+seed that fails only warns: the game then starts with its own defaults.
+
+3 Frames, because it measured faster and smoother than the game's default,
+Immediate, in a scratch install: about 55 fps with stalls under Immediate,
+against about 68 fps and smooth play under 3 Frames, with the worst frame at
+31 ms. Windowed,
+because fullscreen changes the display mode, which blanked a second monitor in
+testing; TrackMania Settings can still switch to fullscreen. This is the game's
+own windowed mode, not the explorer virtual desktop that
+`TRACKMANIA_MAC_WINDOW_SIZE` selects.
 
 ## Account creation over TLS 1.0
 
@@ -285,6 +326,155 @@ When you bump Wine or GnuTLS, run this test before release. A failure means the
 new build dropped TLS 1.0, SHA-1 signatures or one of the ciphers, which breaks
 account creation. Check the Wine `secur32` and `schannel` GnuTLS priority string
 and the GnuTLS build options first.
+
+## Memory protection flag
+
+Applies to: titles whose registry entry sets `nx_compat` (TrackMania Nations
+ESWC today).
+
+Wine's PE loader turns on `force_exec_prot` as soon as any loaded module lacks
+the `IMAGE_DLLCHARACTERISTICS_NX_COMPAT` flag (0x0100 in `DllCharacteristics`):
+it then maps all readable memory as executable. Under Rosetta, every write to
+executable memory goes through Rosetta's exception handler, which watches for
+self-modifying code. D9VK rewrites its large mapped vertex buffers every frame,
+so the game crawls.
+
+Nations ESWC has three such files: `TmNationsESWC.exe` (from the community
+build) and `binkw32.dll` and `unicows.dll` (from the official setup). In a
+scratch install the menu ran at about 12 fps. With the flag set on all three it
+ran at about 200 fps, with no crashes in the menu and short races.
+
+The registry's `nx_compat` field lists the file names. After the overlay,
+install runs `python -m trackmania_mac.install.pe_flags nx-compat GAME_DIR NAME...`,
+which sets that one bit in each 32-bit PE file and changes nothing else. It skips
+files that already have the flag, and refuses symlinks and anything that is not a
+32-bit x86 PE. The title's `game_exe_sha256` is the hash after this step, or after
+the executable patch when the title has one (see the next section). A title needs
+the field only when a file it ships lacks the flag.
+
+An install made before this step existed has the pinned executable without the
+flag. Running install again then runs only the steps after the overlay (this one
+and the executable patch): it does not run the official updates or the overlay
+again. The updates that did finish are recorded by checksum in
+`drive_c/trackmania-mac-updates.done` in the prefix, so a repeated install never
+runs an official updater twice.
+
+## Nations ESWC particle speed patch
+
+Applies to: titles whose registry entry sets `game_exe_patch` (TrackMania Nations
+ESWC today).
+
+During the replay benchmark on an M1 Pro, about 58% of the Nations ESWC game
+thread's time went to one function, 0x80ff40 in `TmNationsESWC.exe`. For every
+particle of smoke, dust or sparks it builds a quad of four vertices that faces the
+camera and writes it into a Direct3D vertex buffer. It is x87 code, which Rosetta
+runs far slower than SSE code: x87sidecar turns each vertex into about 2,000 Arm
+instructions. The game ran at about 66 fps there.
+
+Install replaces the function's particle loop with SSE2 code that gives the same
+bits:
+
+- The loop runs with the x87 control word at 24-bit precision and rounding toward
+  zero (the function sets the rounding itself). With MXCSR set to round toward
+  zero, a single-precision SSE add or multiply whose result is stored gives the
+  same bits, because rounding toward zero twice gives the same result as once.
+- Only two values stay in an x87 register across two operations (size times
+  aspect, and the first sum of the x coordinate). They differ from single
+  precision only when they overflow or underflow.
+- The colour conversion (`fistp` to 16 bits) becomes `cvttps2dq` with the x87
+  result for values out of range (0x8000). Texture coordinates are copied as an
+  x87 load and store copies them, which turns a signalling NaN into a quiet one.
+- Before writing a particle, the new code checks for a NaN in the position or the
+  scaled vectors, and for those overflow and underflow cases. Such a particle goes
+  through the original x87 code instead. When the game's control word is not at
+  24-bit precision, every particle does.
+
+The patch file, `config/exe-patches/tmn-eswc/sse-particles.json`, adds a section
+`.sse` at the end of the image, which can be read and run but not written, and
+writes a 5-byte jump into it at each of the function's two loop heads (0x810685
+and 0x810d17). Apart from those 10 bytes, the file only grows a section header and
+its section count and image size change. It holds our compiled code and the 10
+bytes of the game it expects at the loop heads, and no other game code.
+
+After the NX_COMPAT step, install runs
+`python -m trackmania_mac.install.exe_patch apply GAME_DIR`. It patches only an
+executable whose SHA-256 is the entry's `sha256_before`, and writes the result only
+when its SHA-256 is `game_exe_sha256`. An install that stopped before the patch is
+finished by running install or update again: `exe_patch stage` tells how far the
+executable got, and only the steps after the overlay run. Reinstalling the game is
+the only way back to the unpatched executable.
+
+The code is `src/c/eswc-sse-particles/billboards.c` and `entry.s`.
+`python -m trackmania_mac.build.sse_particles_builder` compiles the C file to
+`billboards.s` with the pinned compiler (i686-w64-mingw32-gcc 16.2.0) and assembles
+both, without a linker, with the pinned assembler (binutils 2.47) into the patch
+file. The committed patch is the authority; it was reproduced byte for byte locally
+with those versions. CI runs the builder with `--check`: it checks the committed
+code (its hash, no x87 instruction, no absolute address, jumps only within it or to
+the three places in the game) and that the sources still assemble, but CI's older
+binutils encodes some instructions differently, so CI does not compare the bytes.
+
+To check the patch against the game's own loop, run
+`python3 -m trackmania_mac.probes.eswc_sse_gate` with the game installed and closed.
+It maps the installed executable without running it and compares the patch with
+the x87 loop under stock Rosetta (exact x87) and under x87sidecar, on game-like
+particles and on edge cases (subnormal, huge, infinite and NaN values, colours
+outside 0 to 1, texture indices out of range), under 24-bit precision and other
+control words. In 30,000 calls with 1,124,136 particles, 327,892 of them handed to
+the x87 code, the patch gave the same vertices and loop state as the x87 loop under
+stock Rosetta in every call, and under x87sidecar the particles it computes matched
+stock Rosetta. Under x87sidecar, the x87 loop itself differs from stock Rosetta on
+some edge cases (never on the game-like particles), and so do the particles the
+patch hands to it. A particle took about 2.7 µs with the x87 loop under
+x87sidecar and about 15 ns with the patch.
+
+The replay benchmark was run in the game with a prototype build of the same C
+code, linked instead of assembled (executable SHA-256 `a6ab62b0...`): the average
+went from 66 fps to 144 to 173 fps, the warm minimum was 50 fps, and the particles
+looked the same. The shipped build (`822def66...`) differs only in how the code is
+encoded, and passed the same harness run above; it has not been benchmarked in the
+game.
+
+Making this patch meant disassembling the game's executable to find the loop, and
+install changes that executable on your Mac. The game's licence may not allow
+either. The repository holds only our own code and the 10 bytes of the game that
+the patch checks before it writes anything.
+
+## Saves in the game folder
+
+Applies to: titles whose registry entry sets `game_save_dirs` (TrackMania
+Nations ESWC today).
+
+Nations ESWC keeps profiles, scores, its own tracks and replays under
+`GameData` in its game folder, inside the Wine prefix, not in Windows
+Documents. An uninstall that keeps saves removes the prefix, so these folders
+would go with it. `game_save_dirs` lists them relative to the game folder. Each
+one is kept at the same path in the title's saves folder, under its
+`user_subdir`, and the game folder holds an absolute symlink to it. For
+example, `GameData/Profiles` is kept in
+`saves/tmn-eswc/TmNationsESWC/GameData/Profiles`.
+
+Install (after the game is installed), Play (before Wine starts) and an
+uninstall that keeps saves (once it is confirmed, before it removes anything) run
+`python -m trackmania_mac.install.game_saves link GAME_DIR USERDATA`. A missing
+folder is created in the saves folder and linked. Files the game folder
+already holds there are moved into the saves folder, one entry at a time, with
+a rename that never replaces anything. When the saves folder already has an
+entry of the same name, it stays, and the game folder's copy moves to
+`<user_subdir>/Recovered from game folder/<path>`, numbered when that name is
+taken. A run that stops halfway is finished by the next one. Names are matched
+ignoring case; a folder holding two entries whose names differ only in case
+(possible on a case-sensitive volume) is left alone with a warning.
+
+A folder is left as it is, with a warning, when it is a file, when it links
+somewhere else that still exists, when a symlink sits on the way to it in
+either folder, or when the saves folder is on another volume (the move would
+have to copy). Install and Play still finish. Doctor runs the same tool with
+`check`, which only reads, and warns about each folder that is not linked yet,
+including a link whose saves folder is missing or reached through a symlink.
+An uninstall that keeps saves refuses to remove a prefix whose game folder
+still holds files in one of these folders, under any spelling of its name,
+including through a symlink that leads elsewhere inside the prefix.
 
 ## Troubleshooting
 

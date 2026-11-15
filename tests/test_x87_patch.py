@@ -178,9 +178,48 @@ void single_stores() {
     std::puts("2 isolated FST/FSTP allocator cases passed");
 }
 
+// A PC24 run with one arithmetic node keeps its single-precision fast body
+// (0005 lowered the threshold from two), and that body reads a register still
+// in its 80-bit slot straight into an f32 (FMOV S, W) instead of converting
+// it to binary64 and checking the narrowing with FCMEQ.
+void native_slot_fast_read() {
+    using namespace X87IR;
+    Context ctx{};
+    ctx.init();
+    int16_t x = ctx.resolve(0);
+    ctx.slot_val[0] = ctx.add_node(Op::FAdd, x, x);
+    ctx.native_depths = 1;
+    ThreadContextOffsets offsets{};
+    std::vector<uint32_t> code(16384);
+    TranslationResult result{};
+    result.insn_buf.data = code.data();
+    result.insn_buf.end_cap = code.size() * sizeof(uint32_t);
+    result.free_gpr_mask = kGprScratchMask;
+    result.free_fpr_mask = kFprScratchMask;
+    result.thread_context_offsets = &offsets;
+    result.x87_cache.run_remaining = 1;
+    lower(ctx, &result);
+    assert(result.alloc_failure == nullptr);
+    bool entry = false, direct = false, narrow = false;
+    for (size_t i = 0; i < result.insn_buf.end / 4; ++i) {
+        uint32_t w = code[i], next = code[i + 1];
+        uint32_t rt = w & 31;
+        // LDRH Wt, [Xn]; UBFX Wt, Wt, #8, #4: the entry check, not patched to a branch.
+        if ((w & 0xfffffc00u) == 0x79400000u && next == (0x53082c00u | rt << 5 | rt))
+            entry = true;
+        if ((w & 0xfffffc00u) == 0x1e270000u)  // FMOV S, W
+            direct = true;
+        if ((w & 0xffe0fc00u) == 0x5e60e400u)  // FCMEQ D, D, D
+            narrow = true;
+    }
+    assert(entry && direct && !narrow);
+    std::puts("1 native-slot PC24 fast-body case passed");
+}
+
 int main() {
     numeric();
     single_stores();
+    native_slot_fast_read();
     using namespace X87IR;
     int cases = 0;
     for (Op op : {Op::FAdd, Op::FSub, Op::FMul, Op::FDiv, Op::FSqrt}) {

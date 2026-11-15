@@ -119,6 +119,16 @@ class HubBackendTests(unittest.TestCase):
             self.assertEqual(Path(canyon["apps"]["game"]).name, "TrackMania 2 Canyon.app")
             # TMU's retail installer keeps the serial-key note surfaced.
             self.assertEqual(titles["tmu"]["requiresSerial"], True)
+            # ESWC's download size counts its update and overlay too.
+            eswc = titles["tmn-eswc"]
+            self.assertEqual(eswc["status"], "provisional")
+            self.assertEqual(eswc["kind"], "online")
+            self.assertEqual(eswc["sourceSize"], 278695200 + 19194902 + 67468269)
+            self.assertEqual(titles["tmnf"]["sourceSize"], None)
+            self.assertEqual(
+                [(action["id"], action["label"]) for action in eswc["actions"]],
+                [("install", "Install or repair")],
+            )
 
     def test_cd_key_gate_reads_install_key_for_united_forever_only(self):
         with tempfile.TemporaryDirectory() as directory:

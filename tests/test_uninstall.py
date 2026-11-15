@@ -17,6 +17,7 @@ from unittest import mock
 
 from trackmania_mac.guard import operation_guard, uninstall
 from trackmania_mac.hub import registry
+from trackmania_mac.install import game_saves
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -92,6 +93,24 @@ class Fixture:
             launcher.mkdir(parents=True)
             (launcher / ".trackmania-mac-launcher").touch()
         return prefix
+
+    def game_dir(self, title_id):
+        game = TITLES[title_id].game_dir_name
+        return self.prefix(title_id) / "drive_c/Program Files (x86)" / game
+
+    def game_save(self, title_id, text="mine"):
+        """A profile in the game folder's first game_save_dirs folder, as the game writes it."""
+        relative = TITLES[title_id].game_save_dirs[0]
+        path = self.game_dir(title_id) / relative / "Player/profile.gbx"
+        path.parent.mkdir(parents=True)
+        path.write_text(text)
+        return path
+
+    def kept_game_save(self, title_id):
+        """Where game_save's profile is kept once it is in the saves folder."""
+        title = TITLES[title_id]
+        relative = title.game_save_dirs[0] + "/Player/profile.gbx"
+        return self.userdata(title_id) / title.user_subdir / relative
 
     def arguments(self, title_id, **overrides):
         title = TITLES[title_id]
@@ -363,6 +382,46 @@ class GuardPlanTests(unittest.TestCase):
         self.assertFalse(tmu.exists())
         self.assertTrue((self.fx.cache / "games").is_dir())
 
+    def test_title_cache_folder_includes_updates_and_overlay(self):
+        self.fx.install("tmn-eswc", apps=False)
+        eswc = self.fx.cache / "games/tmn-eswc"
+        eswc.mkdir(parents=True)
+        names = [
+            "TmNationsESWC_Setup.exe",
+            "TmNationsESWC_Setup.exe.partial.Ab12Cd",
+            "tmnationseswc_175_to_179_setup.exe",
+            "tmnationseswc_175_to_179_setup.exe.partial.Zz9Yy8",
+            "Win10Patch.tar.gz",
+            "Win10Patch.tar.gz.partial.Qq1Ww2",
+            "notes.txt",
+        ]
+        for name in names:
+            (eswc / name).write_text("x")
+        uninstall.remove(self.plan("tmn-eswc"), report=lambda line: None)
+        self.assertEqual(sorted(os.listdir(eswc)), ["notes.txt"])
+        (eswc / "notes.txt").unlink()
+        (eswc / "Win10Patch.tar.gz").write_text("x")
+        uninstall.remove(self.plan("tmn-eswc"), report=lambda line: None)
+        self.assertFalse(eswc.exists())
+
+    def test_extra_downloads_of_a_title_whose_installer_is_shared_sit_in_its_folder(self):
+        update = registry.Download("https://example.com/u/update.exe", "1" * 64, 5)
+        title = TITLES["tmnf"]._replace(updates=(update,))
+        (self.fx.cache / "tmnationsforever_setup.exe").write_text("x")
+        folder = self.fx.cache / "games/tmnf"
+        folder.mkdir(parents=True)
+        (folder / "update.exe").write_text("x")
+        self.assertEqual(
+            uninstall.download_cache_paths(title, self.fx.cache),
+            [
+                (self.fx.cache / "tmnationsforever_setup.exe", "installer"),
+                (folder / "update.exe", "update"),
+            ],
+        )
+        removed = self.removed(uninstall.cache_entries(title, self.fx.cache))
+        self.assertIn(self.fx.cache / "tmnationsforever_setup.exe", removed)
+        self.assertIn(folder.resolve() / "update.exe", removed)
+
     def test_keeping_saves_still_refuses_saves_inside_the_prefix(self):
         prefix = self.fx.install("tmnf", saves=False)
         documents = prefix / "drive_c/users/player/Documents"
@@ -373,6 +432,70 @@ class GuardPlanTests(unittest.TestCase):
             self.plan()
         removed = self.removed(self.plan(include_saves=True))
         self.assertIn(prefix, removed)
+
+    def test_keeping_saves_refuses_saves_left_in_the_game_folder(self):
+        prefix = self.fx.install("tmn-eswc")
+        self.fx.game_save("tmn-eswc")
+        with self.assertRaisesRegex(ValueError, "Saves are still in the game folder"):
+            self.plan("tmn-eswc")
+        self.assertIn(prefix, self.removed(self.plan("tmn-eswc", include_saves=True)))
+
+    def test_keeping_saves_removes_a_prefix_whose_game_saves_are_linked(self):
+        prefix = self.fx.install("tmn-eswc")
+        self.fx.game_save("tmn-eswc")
+        title = TITLES["tmn-eswc"]
+        warnings = game_saves.run(
+            "link",
+            str(self.fx.game_dir("tmn-eswc")),
+            str(self.fx.userdata("tmn-eswc")),
+            title,
+            lambda line: None,
+        )
+        self.assertEqual(warnings, [])
+        entries = self.plan("tmn-eswc")
+        self.assertIn(prefix, self.removed(entries))
+        uninstall.remove(entries, lambda line: None)
+        self.assertFalse(os.path.lexists(prefix))
+        self.assertEqual(self.fx.kept_game_save("tmn-eswc").read_text(), "mine")
+
+    def test_the_confirmation_lists_game_folder_saves_as_moved_first(self):
+        prefix = self.fx.install("tmn-eswc")
+        save = self.fx.game_save("tmn-eswc")
+        os.environ["TRACKMANIA_MAC_TITLE"] = "tmn-eswc"
+        entries = uninstall.plan(**self.fx.arguments("tmn-eswc"), move_game_saves=True)
+        self.assertIn(prefix, self.removed(entries))
+        kept = self.kept(entries)[save.parent.parent]
+        self.assertEqual((kept.kind, kept.reason), ("game-saves", uninstall.GAME_SAVES_MOVED))
+        self.assertTrue(save.exists())
+        # Only the confirmation may: a removal plan still refuses, and so does
+        # the option for a tombstone, whose saves nothing moves.
+        with self.assertRaisesRegex(ValueError, "Saves are still in the game folder"):
+            self.plan("tmn-eswc")
+        tomb = self.fx.root("tmn-eswc") / ".prefix.trackmania-mac-removing.0123abcd"
+        prefix.rename(tomb)
+        with self.assertRaisesRegex(ValueError, "Saves are still in the game folder"):
+            uninstall.plan(**self.fx.arguments("tmn-eswc"), move_game_saves=True)
+
+    def test_move_game_saves_is_refused_for_a_removal(self):
+        self.fx.install("tmn-eswc")
+        values = list(self.fx.arguments("tmn-eswc").values())
+        for arguments in (
+            ["remove", "--move-game-saves", *values],
+            ["plan", "--move-game-saves", "--include-saves", *values],
+        ):
+            with self.subTest(arguments=arguments[:3]), self.assertRaises(SystemExit):
+                with mock.patch("sys.stderr"):
+                    uninstall.main(arguments)
+        self.assertTrue(self.fx.prefix("tmn-eswc").is_dir())
+
+    def test_keep_saves_checks_a_prefix_tombstone_for_game_saves(self):
+        prefix = self.fx.install("tmn-eswc")
+        self.fx.game_save("tmn-eswc")
+        tomb = self.fx.root("tmn-eswc") / ".prefix.trackmania-mac-removing.0123abcd"
+        prefix.rename(tomb)
+        with self.assertRaisesRegex(ValueError, "Saves are still in the game folder"):
+            self.plan("tmn-eswc")
+        self.assertIn(tomb, self.removed(self.plan("tmn-eswc", include_saves=True)))
 
     def test_keeping_saves_reports_the_saves_folder(self):
         self.fx.install("tmnf")
@@ -961,6 +1084,44 @@ class ShellUninstallTests(unittest.TestCase):
         self.assertTrue(self.fx.root("tmnf").is_dir())
         self.assertIn("Removed {}".format(self.fx.prefix("tmnf")), result.stdout)
 
+    def test_keeping_saves_moves_game_folder_saves_out_first(self):
+        self.fx.install("tmn-eswc")
+        self.fx.game_save("tmn-eswc")
+        result = self.run_cli("uninstall", "--yes", title="tmn-eswc")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(os.path.lexists(self.fx.prefix("tmn-eswc")))
+        self.assertEqual(self.fx.kept_game_save("tmn-eswc").read_text(), "mine")
+        self.assertIn("Moved the saves in", result.stdout)
+
+    def test_cancelling_the_confirmation_moves_no_game_folder_saves(self):
+        prefix = self.fx.install("tmn-eswc")
+        save = self.fx.game_save("tmn-eswc")
+        result = self.run_cli("uninstall", title="tmn-eswc")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Cancelled.", result.stdout)
+        self.assertIn(uninstall.GAME_SAVES_MOVED, result.stdout)
+        self.assertEqual(save.read_text(), "mine")
+        self.assertFalse(save.parent.parent.is_symlink())
+        self.assertFalse(self.fx.kept_game_save("tmn-eswc").exists())
+        self.assertTrue(prefix.is_dir())
+
+    def test_game_folder_saves_that_cannot_move_block_a_keep_saves_uninstall(self):
+        self.fx.install("tmn-eswc")
+        save = self.fx.game_save("tmn-eswc")
+        title = TITLES["tmn-eswc"]
+        # A file where the saves folder needs a folder: the move is refused.
+        blocker = self.fx.userdata("tmn-eswc") / title.user_subdir / "GameData"
+        blocker.parent.mkdir(parents=True, exist_ok=True)
+        blocker.write_text("not a folder")
+        result = self.run_cli("uninstall", "--yes", title="tmn-eswc")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Saves are still in the game folder", result.stderr)
+        self.assertIn("could not be moved out of the game folder", result.stderr)
+        self.assertEqual(save.read_text(), "mine")
+        result = self.run_cli("uninstall", "--yes", "--include-saves", title="tmn-eswc")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(os.path.lexists(self.fx.prefix("tmn-eswc")))
+
     def test_busy_prefix_is_refused_immediately(self):
         prefix = self.fx.install("tmnf")
         fd = operation_guard.acquire(prefix)
@@ -1058,6 +1219,33 @@ class ShellUninstallTests(unittest.TestCase):
                     result.stdout.strip(),
                     str(uninstall.installer_cache_path(title, self.fx.cache)),
                 )
+
+    def test_shell_and_python_agree_on_extra_downloads(self):
+        for title in TITLES.values():
+            extras = uninstall.download_cache_paths(title, self.fx.cache)[1:]
+            if not extras:
+                continue
+            with self.subTest(title=title.id):
+                urls = [update.url for update in title.updates]
+                urls += [title.overlay.url] if title.overlay else []
+                script = (
+                    'die() { echo "$*" >&2; exit 1; }; . "$1/src/shell/lib/titles.sh"; '
+                    'shift; for url in "$@"; do _cache_download_path "$TRACKMANIA_MAC_TITLE" "$url"; done'
+                )
+                result = subprocess.run(
+                    ["/bin/bash", "-c", script, "bash", str(ROOT), *urls],
+                    env={
+                        "PATH": "/usr/bin:/bin",
+                        "TRACKMANIA_MAC_PROJECT_DIR": str(ROOT),
+                        "TRACKMANIA_MAC_TITLE": title.id,
+                        "TRACKMANIA_MAC_CACHE": str(self.fx.cache),
+                    },
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.splitlines(), [str(path) for path, _ in extras])
 
 
 class PreviewTests(unittest.TestCase):

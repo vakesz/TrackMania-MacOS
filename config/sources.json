@@ -2,7 +2,7 @@
   "wine": {"git": "https://github.com/wine-mirror/wine.git", "revision": "9f8c4ae4d35c7ff4153267aba9618c026f5f5583"},
   "d9vk": {"git": "https://github.com/Sikarugir-App/d9vk.git", "revision": "f229921c1b7f14edeadeccff04a9e65d0a016148", "submodules": true},
   "x87sidecar": {"git": "https://github.com/athei/x87sidecar.git", "revision": "052944fc613e187f5e238bfa362b411787045d6b"},
-  "moltenvk": {"url": "https://github.com/KhronosGroup/MoltenVK/archive/refs/tags/v1.4.2.tar.gz", "sha256": "6864db532f1dbbdb621a8d0ec13f24edae318fd9269dd3dd0cdff791334bb1cb"},
+  "moltenvk": {"url": "https://github.com/KhronosGroup/MoltenVK/archive/5189f8de86ec365860f63bf1da736815cfaea5cd.tar.gz", "sha256": "430ebdd3df90aa398b78576b85a76a18d59da21c6b2d367be62d41f88c98da38"},
   "freetype": {"url": "https://downloads.sourceforge.net/project/freetype/freetype2/2.15.0/freetype-2.15.0.tar.xz", "sha256": "93cd47eb719c325107f2d3cf087d06299e944c3b48a40b55537302304dea1dd5"},
   "gmp": {"url": "https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz", "sha256": "a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898"},
   "nettle": {"url": "https://ftp.gnu.org/gnu/nettle/nettle-4.0.tar.gz", "sha256": "3addbc00da01846b232fb3bc453538ea5468da43033f21bb345cb1e9073f5094"},

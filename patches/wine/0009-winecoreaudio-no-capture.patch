@@ -7,7 +7,7 @@ the endpoint enumeration, and refuse capture units in get_audiounit(), the one
 place input I/O is enabled, so no path can reach the microphone. Playback is
 unchanged.
 
-Based on Wine 36b6a2cf679. Exercised by ./src/shell/tools/probes/smoke-audio.sh,
+Based on Wine 9f8c4ae4d35. Exercised by ./src/shell/tools/probes/smoke-audio.sh,
 which enumerate and play render devices only.
 
 diff --git a/dlls/winecoreaudio.drv/coreaudio.c b/dlls/winecoreaudio.drv/coreaudio.c
@@ -42,7 +42,7 @@ index 0ec10fe..4eb01c4 100644
      memset(&desc, 0, sizeof(desc));
      desc.componentType = kAudioUnitType_Output;
      desc.componentSubType = kAudioUnitSubType_HALOutput;
-@@ -1187,6 +1199,10 @@ static NTSTATUS unix_is_format_supported(void *args)
+@@ -1435,6 +1447,10 @@ static NTSTATUS unix_is_format_supported(void *args)
      const AudioDeviceID dev_id = dev_id_from_device(params->device);
  
      unit = get_audiounit(params->flow, dev_id);
@@ -52,4 +52,4 @@ index 0ec10fe..4eb01c4 100644
 +    }
  
      converter = NULL;
-     params->result = ca_setup_audiounit(params->flow, unit, params->fmt_in, &dev_desc, &converter);
+     params->result = ca_setup_audiounit(dev_id, params->flow, params->share, unit, params->fmt_in,

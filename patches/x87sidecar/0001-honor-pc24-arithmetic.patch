@@ -1,6 +1,6 @@
 Subject: x87: Honor PC24/PC53 arithmetic and floating-store rounding.
 
-Based on athei/x87sidecar 0b7c5e54dad37f6ed8374b91443e2d2083652452 (ported from 4e9c738).
+Based on athei/x87sidecar 052944fc613e187f5e238bfa362b411787045d6b (ported from 4e9c738).
 TMNF uses control word 0x007f. Always computing in f64 ignores its PC field.
 
 Share arithmetic emission across IR, direct, and peephole paths. Native f32
@@ -34,6 +34,10 @@ Port notes for 0b7c5e5: upstream now keeps x87 registers in their native
 narrowing (the 80-bit value converted with round-to-odd) and then applies the
 guest-RC store rounding of this patch, so the value is still rounded once.
 The GPR pressure estimate for that StoreF32 case is unchanged at 3.
+Port notes for 052944f: upstream added a CvtI64 node and an epilogue
+write-back of exact fild m64 values (#57). CvtI64 is an exact integer
+conversion, not arithmetic, so it keeps upstream's SCVTF and its pressure
+entry. The hunks are unchanged; only their context moved.
 
 diff --git a/rosetta_core/CMakeLists.txt b/rosetta_core/CMakeLists.txt
 index 2d865f0..960dec8 100644
@@ -767,7 +771,7 @@ index 41a3c15..9c5b7ec 100644
      free_gpr(a1, Wtop);
      free_gpr(a1, Wsw);
 diff --git a/rosetta_core/src/X87IRLower.cpp b/rosetta_core/src/X87IRLower.cpp
-index 2b15de7..e77462f 100644
+index b826ed0..8b320b0 100644
 --- a/rosetta_core/src/X87IRLower.cpp
 +++ b/rosetta_core/src/X87IRLower.cpp
 @@ -1,3 +1,4 @@
@@ -775,7 +779,7 @@ index 2b15de7..e77462f 100644
  #include <algorithm>
  #include <cstdint>
  #include <cstdio>
-@@ -773,7 +774,7 @@ void lower(Context& ctx, TranslationResult* result) {
+@@ -788,7 +789,7 @@ void lower(Context& ctx, TranslationResult* result) {
                      Dd = alloc_free_fpr(*result);
                  }
                  fprs.node_fpr[i] = static_cast<int8_t>(Dd);
@@ -784,7 +788,7 @@ index 2b15de7..e77462f 100644
                  break;
              }
              case Op::FSub: {
-@@ -784,7 +785,7 @@ void lower(Context& ctx, TranslationResult* result) {
+@@ -799,7 +800,7 @@ void lower(Context& ctx, TranslationResult* result) {
                      Dd = alloc_free_fpr(*result);
                  }
                  fprs.node_fpr[i] = static_cast<int8_t>(Dd);
@@ -793,7 +797,7 @@ index 2b15de7..e77462f 100644
                  break;
              }
              case Op::FMul: {
-@@ -795,7 +796,7 @@ void lower(Context& ctx, TranslationResult* result) {
+@@ -810,7 +811,7 @@ void lower(Context& ctx, TranslationResult* result) {
                      Dd = alloc_free_fpr(*result);
                  }
                  fprs.node_fpr[i] = static_cast<int8_t>(Dd);
@@ -802,7 +806,7 @@ index 2b15de7..e77462f 100644
                  break;
              }
              case Op::FDiv: {
-@@ -806,7 +807,7 @@ void lower(Context& ctx, TranslationResult* result) {
+@@ -821,7 +822,7 @@ void lower(Context& ctx, TranslationResult* result) {
                      Dd = alloc_free_fpr(*result);
                  }
                  fprs.node_fpr[i] = static_cast<int8_t>(Dd);
@@ -811,7 +815,7 @@ index 2b15de7..e77462f 100644
                  break;
              }
  
-@@ -888,7 +889,7 @@ void lower(Context& ctx, TranslationResult* result) {
+@@ -903,7 +904,7 @@ void lower(Context& ctx, TranslationResult* result) {
                      Dd = alloc_free_fpr(*result);
                  }
                  fprs.node_fpr[i] = static_cast<int8_t>(Dd);
@@ -820,7 +824,7 @@ index 2b15de7..e77462f 100644
                  break;
              }
              case Op::FRndInt: {
-@@ -1081,8 +1082,8 @@ void lower(Context& ctx, TranslationResult* result) {
+@@ -1096,8 +1097,8 @@ void lower(Context& ctx, TranslationResult* result) {
                  const int Ds_narrow = alloc_free_fpr(*result);
                  if (narrows_native_slot(ctx, n)) {
                      // X87_NATIVE_SLOTS: narrow from the slot's 80-bit value,
@@ -831,7 +835,7 @@ index 2b15de7..e77462f 100644
                      const int depth = ctx.nodes[src_node].initial_depth;
                      emit_native_st_addr(buf, Xbase, Wd_top, depth, Wd_tmp, Xst_base);
                      const int Xm = alloc_free_gpr(*result);
-@@ -1096,9 +1097,9 @@ void lower(Context& ctx, TranslationResult* result) {
+@@ -1111,9 +1112,9 @@ void lower(Context& ctx, TranslationResult* result) {
                      free_gpr(*result, Xt2);
                      free_gpr(*result, Wx);
                      free_gpr(*result, Xm);
@@ -843,7 +847,7 @@ index 2b15de7..e77462f 100644
                  }
  
                  // Allocate the broadcast Q register lazily — only if at least
-@@ -1626,13 +1627,15 @@ void lower(Context& ctx, TranslationResult* result) {
+@@ -1657,13 +1658,15 @@ void lower(Context& ctx, TranslationResult* result) {
  // (Wd_tmp2 + Wd_tagw).  preamble_gprs carries that from the cache state.
  //
  // Per-node transient GPR demand (mirrors the lowering code exactly):
@@ -860,9 +864,9 @@ index 2b15de7..e77462f 100644
 +//   - StoreF32: 2 (guest-RC rounding before address allocation); 3 when
 +//     narrowing an 80-bit slot (narrows_native_slot), freed before the rounding
  //   - LoadI16/I32/I64: 2 (addr + Wd_val)
+ //   - CvtI64: 1 (the bits between FMOV and SCVTF)
  //   - StoreI16/I32/I64: 2 (Wd_int + the indefinite guard's Xt, then Wd_int + addr);
- //     4 for an exact store of an 80-bit slot (stores_native_slot)
-@@ -1731,15 +1734,10 @@ int peak_live_gprs(const Context& ctx, int budget, int* first_over_node, bool fa
+@@ -1765,15 +1768,10 @@ int peak_live_gprs(const Context& ctx, int budget, int* first_over_node, bool fa
              case Op::ConstZero:
              case Op::ConstOne:
              case Op::ConstF64:
@@ -878,7 +882,7 @@ index 2b15de7..e77462f 100644
                  break;
  
              // FCSel: 0, except FCMOVU/FCMOVNU, which read NZCV into one
-@@ -1759,6 +1757,14 @@ int peak_live_gprs(const Context& ctx, int budget, int* first_over_node, bool fa
+@@ -1793,6 +1791,14 @@ int peak_live_gprs(const Context& ctx, int budget, int* first_over_node, bool fa
                  }
                  break;
  
@@ -893,7 +897,7 @@ index 2b15de7..e77462f 100644
              // Transcendentals — peak GPR demand inside emit_inline_<op>_core
              // (the NZCV save GPR that guards guest EFLAGS in the flag-
              // clobbering cores is included in each count):
-@@ -1785,10 +1791,13 @@ int peak_live_gprs(const Context& ctx, int budget, int* first_over_node, bool fa
+@@ -1824,10 +1830,13 @@ int peak_live_gprs(const Context& ctx, int budget, int* first_over_node, bool fa
              case Op::LoadF64:
              case Op::LoadF32:
              case Op::StoreF64:
@@ -909,7 +913,7 @@ index 2b15de7..e77462f 100644
                  break;
  
              // 2 GPRs: Loads need addr + Wd_val; stores need Wd_int + addr.
-@@ -1922,7 +1931,8 @@ int peak_live_gprs(const Context& ctx, int budget, int* first_over_node, bool fa
+@@ -1980,7 +1989,8 @@ int peak_live_gprs(const Context& ctx, int budget, int* first_over_node, bool fa
  //   - free_dead_inputs() fires at the end of each node, so the transient peak
  //     *during* a node is: (currently live) + 1 for the new output, before dead
  //     inputs are freed.  try_reuse_input() can avoid the +1 by recycling a
@@ -919,7 +923,7 @@ index 2b15de7..e77462f 100644
  //   - StoreF32 allocates Ds_narrow, plus Vq_broadcast for a STR Q group, and
  //     frees them before the node ends.  Model as a +1 or +2 spike.
  //   - StoreI* allocates one transient FPR (Dscr in the indefinite guard)
-@@ -2018,12 +2028,30 @@ int peak_live_fprs(const Context& ctx, int budget, int* first_over_node) {
+@@ -2077,12 +2087,30 @@ int peak_live_fprs(const Context& ctx, int budget, int* first_over_node) {
          // emitted as part of the chain head's lower_fma_reduce body — no
          // FPR is allocated for them.  Skip the produces_fpr accounting.
          const bool absorbed_member = (n.flags & kFmaReduceMember) && !(n.flags & kFmaReduceHead);
@@ -1230,10 +1234,10 @@ index 0000000..c9c09bb
 +    free_gpr(result, rc);
 +}
 diff --git a/scripts/run_tests.sh b/scripts/run_tests.sh
-index 9e403ba..6d86c17 100755
+index be63041..99515a1 100755
 --- a/scripts/run_tests.sh
 +++ b/scripts/run_tests.sh
-@@ -123,6 +123,9 @@ LOADER="$BIN/x87sidecar_entitled"
+@@ -141,6 +141,9 @@ LOADER="$BIN/x87sidecar_entitled"
  TESTS_BIN="$BIN/tests"
  
  ALL_TESTS=(
@@ -1244,14 +1248,13 @@ index 9e403ba..6d86c17 100755
      test_detach_signals
      test_fld
 diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
-index 88669bc..7d08a69 100644
+index 94869f2..6dceaf1 100644
 --- a/tests/CMakeLists.txt
 +++ b/tests/CMakeLists.txt
-@@ -116,3 +116,11 @@ add_x86_sample(test_x87_ftz_daz)
- # Invoked by the opt-in tracing regression, not the arithmetic phase matrix.
+@@ -119,6 +119,14 @@ add_x86_sample(test_x87_retranslate_mem)
  add_x86_sample(test_x87_trace_threads)
  add_x86_sample(test_x87_trace_freeze)
-+
+ 
 +add_x86_sample(test_precision_control)
 +
 +set(X86_SAMPLE_EXTRA_DEPS "${CMAKE_CURRENT_SOURCE_DIR}/pc24_cases.h")
@@ -1259,6 +1262,10 @@ index 88669bc..7d08a69 100644
 +unset(X86_SAMPLE_EXTRA_DEPS)
 +add_x86_sample(test_pc24_host_state)
 +add_x86_sample(test_rc_rounding)
++
+ # Host-side (arm64) check of the name-derived opcode maps against the pinned
+ # tables. Not an x86 sample: it links rosetta_core and runs natively.
+ add_executable(test_opcode_host_table host/test_opcode_host_table.cpp)
 diff --git a/tests/generate_pc24_cases.py b/tests/generate_pc24_cases.py
 new file mode 100644
 index 0000000..8b42c1f

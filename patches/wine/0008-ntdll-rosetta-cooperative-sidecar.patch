@@ -1,6 +1,6 @@
 Subject: ntdll: Add opt-in cooperative x87sidecar startup on macOS.
 
-Based on Wine 36b6a2cf679 and the cooperative protocol used by athei/wine
+Based on Wine 9f8c4ae4d35 and the cooperative protocol used by athei/wine
 (d8c13289d4dd9ed03063a1a5b8b7f4b333747f71). Unset ROSETTA_X87_PATH leaves
 normal loader behavior intact. An explicit path wraps each selected Wine
 loader through the sidecar without a privileged helper or system changes.

@@ -12,7 +12,7 @@ than selecting against fx_2_0. This argument never changes the context or
 the target used while parsing another function's body. The effect probe
 reflects native SDK output; Wine FX2 shader-state emission remains unsupported.
 
-Based on Wine 36b6a2cf679. Native SDKs 30 and 36 establish the expected
+Based on Wine 9f8c4ae4d35. Native SDKs 30 and 36 establish the expected
 success/failure and executable shader output. SDKs 37 and 43 verify the
 modern behavior. Run ./src/shell/tools/probes/smoke-shaders.sh for both architectures.
 

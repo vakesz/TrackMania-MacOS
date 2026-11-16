@@ -18,7 +18,7 @@ acquisition, polling and the extra fast-path yield on subsequent calls.
 The environment check remains per-call; process-init caching and performance
 measurement are deferred.
 
-Based on Wine 36b6a2cf679fb395f668a917b76537190e212d9c. Regression and timing probe:
+Based on Wine 9f8c4ae4d35c7ff4153267aba9618c026f5f5583. Regression and timing probe:
   WINEDARWINFASTWAIT=0 ./src/shell/tools/probes/smoke-sync.sh
   WINEDARWINFASTWAIT=1 ./src/shell/tools/probes/smoke-sync.sh
 
@@ -77,15 +77,15 @@ diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
 diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
 --- a/dlls/ntdll/unix/virtual.c
 +++ b/dlls/ntdll/unix/virtual.c
-@@ -4172,6 +4172,9 @@ struct thread_data *virtual_alloc_thread_data(void)
-         data->wait_fd[0] = -1;
-         data->wait_fd[1] = -1;
-         data->alert_fd   = -1;
+@@ -3742,6 +3742,9 @@ static struct thread_data *init_thread_data( void *ptr )
+     data->wait_fd[0] = -1;
+     data->wait_fd[1] = -1;
+     data->alert_fd   = -1;
 +#ifdef __APPLE__
-+        data->fast_wait_disabled = FALSE;
++    data->fast_wait_disabled = FALSE;
 +#endif
  #ifdef VALGRIND_STACK_REGISTER
-         VALGRIND_STACK_REGISTER( (char *)data + signal_stack_mask + 1, (char *)data + view->size );
+     VALGRIND_STACK_REGISTER( (char *)data + signal_stack_mask + 1, (char *)data + kernel_stack_size );
  #endif
 diff --git a/server/thread.c b/server/thread.c
 index bdf48c4bf8f..4896a510c13 100644

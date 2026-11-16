@@ -4,7 +4,9 @@
 # Two shapes exist:
 #  - Direct Inno Setup installers (TMNF, ESWC): downloaded, then run with an
 #    explicit /DIR. Silently, unless the registry marks the setup interactive
-#    (source_interactive): then the user clicks through its wizard. Pinned
+#    (source_interactive): then the user clicks through its wizard. A setup
+#    with source_patch runs from a modified copy next to the download
+#    (trackmania_mac.install.setup_patch), removed when the setup ends. Pinned
 #    official updates may follow, run silently, and then an overlay archive
 #    unpacked over the game folder (trackmania_mac.install.overlay), and
 #    the NX_COMPAT flag set on the registry's nx_compat files
@@ -151,9 +153,23 @@ run_interactive_installer() {
   if test -n "${TRACKMANIA_MAC_INNO_DIR:-}"; then
     flags+=("/DIR=$TRACKMANIA_MAC_INNO_DIR")
   fi
-  say "The $label setup opens in its own window. Click through its pages and keep the suggested folder. On the last page, don't start the game; the remaining files are installed after setup closes."
+  say "The $label setup opens in its own window. Click through its pages and keep the suggested folder. The remaining files are installed after setup closes."
   run_wine "$installer" "${flags[@]}" &
   TRACKMANIA_MAC_INSTALLER_PID=$!
+}
+
+# write_patched_setup INSTALLER STAGING — the source-patch component: write the
+# modified copy of the pinned setup into STAGING, a fresh *.inner folder that
+# remove_inno_staging deletes, and print its path. The download is only read.
+write_patched_setup() {
+  local installer="$1" staging="$2" copy
+  copy="${staging}/${installer##*/}"
+  rm -rf -- "$staging"
+  mkdir -p "$staging" || die "Cannot stage the modified setup."
+  TRACKMANIA_MAC_TITLE="$TRACKMANIA_MAC_TITLE" TRACKMANIA_MAC_TITLES_DIR="$TRACKMANIA_MAC_TITLES_DIR" \
+    trackmania_mac_python -m trackmania_mac.install.setup_patch apply "$installer" "$copy" \
+    || die "Could not prepare the $TRACKMANIA_MAC_TITLE_NAME setup. Run install again to download it again."
+  printf '%s\n' "$copy"
 }
 
 # unpack_inner_inno INSTALLER — prints the path of the extracted Inno Setup
@@ -372,22 +388,36 @@ install_game() {
   download_pinned_installer "$title_id"
   download_title_extras
   rm -f "$installer_log"
-  # Pin /DIR so the title installs where GAME_DIR points, whatever the
-  # installer's own default directory is.
+  # The subshell's EXIT trap removes a modified copy of the setup however the
+  # subshell ends; the trap does not outlive it.
+  (
+    setup_path="$installer_path"
+    if title_has source-patch; then
+      staging="${installer_path%.exe}.inner"
+      printf -v cleanup 'remove_inno_staging %q' "$staging"
+      # shellcheck disable=SC2064
+      trap "$cleanup" EXIT
+      setup_path="$(write_patched_setup "$installer_path" "$staging")" || exit "$?"
+    fi
+    # Pin /DIR so the title installs where GAME_DIR points, whatever the
+    # installer's own default directory is.
+    if test "${TRACKMANIA_MAC_TITLE_SOURCE_INTERACTIVE:-}" = true; then
+      TRACKMANIA_MAC_INNO_DIR="C:\\Program Files (x86)\\${TRACKMANIA_MAC_TITLE_GAME_DIR_NAME}" \
+        run_interactive_installer "$setup_path" "$TRACKMANIA_MAC_TITLE_NAME"
+      # A person drives this setup, so it gets longer than a silent one.
+      wait_inno_setup "$TRACKMANIA_MAC_INSTALLER_PID" "$installer_log" "$TRACKMANIA_MAC_TITLE_NAME" \
+        "${TRACKMANIA_MAC_SETUP_WIZARD_TIMEOUT:-3600}"
+      # Stops anything started from the setup's last page, should it offer one.
+      stop_prefix_processes
+    else
+      TRACKMANIA_MAC_INNO_DIR="C:\\Program Files (x86)\\${TRACKMANIA_MAC_TITLE_GAME_DIR_NAME}" \
+        run_released_installer "$setup_path" "$TRACKMANIA_MAC_TITLE_NAME"
+      wait_inno_setup "$TRACKMANIA_MAC_INSTALLER_PID" "$installer_log" "$TRACKMANIA_MAC_TITLE_NAME"
+    fi
+  ) || exit "$?"
   if test "${TRACKMANIA_MAC_TITLE_SOURCE_INTERACTIVE:-}" = true; then
-    TRACKMANIA_MAC_INNO_DIR="C:\\Program Files (x86)\\${TRACKMANIA_MAC_TITLE_GAME_DIR_NAME}" \
-      run_interactive_installer "$installer_path" "$TRACKMANIA_MAC_TITLE_NAME"
-    # A person drives this setup, so it gets longer than a silent one.
-    wait_inno_setup "$TRACKMANIA_MAC_INSTALLER_PID" "$installer_log" "$TRACKMANIA_MAC_TITLE_NAME" \
-      "${TRACKMANIA_MAC_SETUP_WIZARD_TIMEOUT:-3600}"
-    # Stops anything started from the setup's last page, such as the game.
-    stop_prefix_processes
     test -f "$GAME_EXE" \
       || die "$TRACKMANIA_MAC_TITLE_NAME setup closed without installing into $GAME_DIR. Run install again and keep the suggested folder."
-  else
-    TRACKMANIA_MAC_INNO_DIR="C:\\Program Files (x86)\\${TRACKMANIA_MAC_TITLE_GAME_DIR_NAME}" \
-      run_released_installer "$installer_path" "$TRACKMANIA_MAC_TITLE_NAME"
-    wait_inno_setup "$TRACKMANIA_MAC_INSTALLER_PID" "$installer_log" "$TRACKMANIA_MAC_TITLE_NAME"
   fi
   if title_has updates; then
     apply_official_updates

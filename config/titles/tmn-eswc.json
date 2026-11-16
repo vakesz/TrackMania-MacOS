@@ -20,6 +20,11 @@
   "source_sha256": "30873ab16e9f81645495002aa4c0416858db91a67f314e26e6533d5fe906095b",
   "source_size": 278695200,
   "source_interactive": true,
+  "source_patch": {
+    "header_sha256": "382ce14ac5e55b27d4f6a424adf502d8eb5da698b66d080ff7c3010a941606c1",
+    "edits": [{"offset": "0x3aed9", "before": "14", "after": "34"}],
+    "sha256_after": "c63708dc898d5ec5a9f15495910711887fb81064a09a4bb58d42cc10d2881fb9"
+  },
   "updates": [
     {
       "url": "https://archive.org/download/tm-nations-eswc-setup/tmnationseswc_175_to_179_setup.exe",
@@ -56,5 +61,5 @@
   "game_version": "1.8.0",
   "game_exe_sha256": "822def6627f020035ef0819cf9f85493e952a2efb450d23770b330311ad8109d",
   "requires_serial": false,
-  "notes": "Runs the official free setup, where you click through its pages, then adds the official 1.7.9 update and a community 1.8.0 build without StarForce copy protection, which Wine cannot run. It also marks three of its files as compatible with memory protection, which Wine needs to run the game at full speed. It then replaces the game's particle code with a faster version that draws the same picture."
+  "notes": "Runs the official free setup, where you click through its pages, from a copy whose last page no longer offers to start the game. It then adds the official 1.7.9 update and a community 1.8.0 build without StarForce copy protection, which Wine cannot run. It also marks three of its files as compatible with memory protection, which Wine needs to run the game at full speed. It then replaces the game's particle code with a faster version that draws the same picture."
 }

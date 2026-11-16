@@ -1,6 +1,6 @@
 Subject: winhttp: Preserve unignored certificate errors and isolate pooled policies.
 
-Based on Wine 36b6a2cf679fb395f668a917b76537190e212d9c, after 0010.
+Based on Wine 9f8c4ae4d35c7ff4153267aba9618c026f5f5583, after 0010.
 
 Mask only the categories explicitly ignored by the request before choosing an
 error. Keep the original certificate chain intact for SSL policy and callers.

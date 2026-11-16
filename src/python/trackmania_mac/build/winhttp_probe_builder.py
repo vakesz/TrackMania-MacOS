@@ -26,7 +26,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4]
-PIN = "36b6a2cf679fb395f668a917b76537190e212d9c"
+PIN = "9f8c4ae4d35c7ff4153267aba9618c026f5f5583"
 PATCH = "patches/wine/0010-winhttp-report-certificate-errors.patch"
 PATCHES = (PATCH, "patches/wine/0011-winhttp-preserve-unignored-certificate-errors.patch")
 PATCH_SCOPES = (("net.c", "request.c"), ("net.c", "request.c", "winhttp_private.h"))

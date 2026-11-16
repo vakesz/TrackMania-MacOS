@@ -19,7 +19,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-REVISION = "0b7c5e54dad37f6ed8374b91443e2d2083652452"
+REVISION = "052944fc613e187f5e238bfa362b411787045d6b"
 PATCHES = sorted((ROOT / "patches/x87sidecar").glob("*.patch"))
 
 HARNESS = r"""
@@ -268,6 +268,13 @@ class X87PatchTests(unittest.TestCase):
             self.skipTest("requires native arm64 macOS and clang++")
         if not (source / ".git").exists():
             self.skipTest("requires the pinned x87sidecar git checkout")
+        # A source prepared before a pin bump lacks the new revision until the next build.
+        pinned = subprocess.run(
+            ["git", "-C", str(source), "cat-file", "-e", REVISION + "^{commit}"],
+            capture_output=True,
+        )
+        if pinned.returncode != 0:
+            self.skipTest(f"{source} does not contain the pinned revision {REVISION}")
 
         with tempfile.TemporaryDirectory(prefix="x87-patch-test-") as directory:
             work = Path(directory)

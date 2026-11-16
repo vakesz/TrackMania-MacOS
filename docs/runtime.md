@@ -23,11 +23,12 @@ order to the exact revisions in `config/sources.json`.
 | D9VK 0003 | Correct promoted volume-texture destination slice stride | Manual GPU volume red/green and packed-format readback probe; no automated test |
 | D9VK 0004 | Preserve the eye vector in `texm3x3vspec` | Manual GPU volume/cube reflection check; no automated test |
 | MoltenVK 0001 | Reuse the dependency sources supplied in a source release | Source archive preparation |
-| x87sidecar 0001 | Scoped PC24/PC53 arithmetic and float-store rounding within a binary64-backed implementation, ported to 0b7c5e5 | Bit-exact numeric, allocator, host-state and interruption probes |
+| x87sidecar 0001 | Scoped PC24/PC53 arithmetic and float-store rounding within a binary64-backed implementation, ported to 052944f | Bit-exact numeric, allocator, host-state and interruption probes |
 | x87sidecar 0002 | Skip the scoped FPCR write when the guest rounds to nearest and the host FPCR already gives the same results | The same probes in all translator modes |
 | x87sidecar 0003 | Skip the f32 operand check for values loaded from a 32-bit float | The same probes in all translator modes |
 | x87sidecar 0004 | Run PC24 IR runs in native single precision, falling back to the exact body on any out-of-range value | The same probes with the fast bodies on and off (`X87_PC24_RUNS=0`) |
 | x87sidecar 0005 | In those single-precision bodies, read a register still in its 80-bit slot directly when it holds a normal f32 value or a zero, and give runs with one arithmetic operation a fast body too | `test_pc24_slot_reads` (every 80-bit encoding class read from a slot, against exact-rational results) in all translator modes |
+| x87sidecar 0006 | Add a PC24 switch (`TEST_PC24=1`) to upstream's cross-reply exactness test, so `fild m64` values kept exact through those single-precision bodies are checked | `test_x87_cross_reply_exact` under PC24 in all translator modes |
 
 The filename gaps are intentional. D9VK's two build patches were superseded by
 the pinned upstream update. Rejected experiments are not included in releases.
@@ -52,6 +53,11 @@ The verified PC24/PC53 rounding and float-store fixes do not provide general
 only run when every value is exactly an f32 and every result stays in the f32
 range; anything else continues in the exact binary64 body, so they compute
 the same results.
+Since 052944f an `fild m64` value that a run only stores with `fistp m64` or
+leaves on the stack keeps its integer bits in place of a binary64 value; 0004's
+bodies narrow and widen those bits exactly or leave for the exact body, so the
+integer still comes out bit for bit. Patch 0006 makes upstream's test check that
+under PC24.
 Patch 0005 reads a slot that holds anything other than a normal f32 value or a
 zero through the exact body as well. A possible follow-up would write the
 80-bit value straight into the slot when a run ends its reply, instead of
@@ -274,9 +280,10 @@ Forever engine's binary one, so the Forever seed above does not apply.
 
 After the NX_COMPAT step, install runs
 `python -m trackmania_mac.install.system_config seed GAME_DIR config/game-settings.json`,
-which writes a 200-byte file when the game folder has none. It holds only the
+which writes a 252-byte file when the game folder has none. It holds only the
 display node: the width and height from `config/game-settings.json` (1280x720),
-windowed, and Cpu/Gpu synchro set to "3 Frames". It never contains the
+windowed, Cpu/Gpu synchro set to "3 Frames", and the chunk `b01300d` with the
+tokens `1 True 0 3 3 3 3 3`. It never contains the
 per-install key (chunk `b005012`), and the game fills every other setting with
 its own default. An existing file, folder or symlink of that name is left as it
 is, so a file the launcher or the player wrote always wins. The file is written
@@ -291,6 +298,51 @@ because fullscreen changes the display mode, which blanked a second monitor in
 testing; TrackMania Settings can still switch to fullscreen. This is the game's
 own windowed mode, not the explorer virtual desktop that
 `TRACKMANIA_MAC_WINDOW_SIZE` selects.
+
+The `b01300d` chunk is there because, with only the first two chunks, the
+first start of a fresh install drew the stadium untextured (white), and the game
+then rewrote the file with `b01300d` holding `1 False 0 3 3 3 3 3`. After the
+player chose PC3 in the settings launcher, the file held `1 True 0 3 3 3 3 3`,
+the stadium was textured, and the game's benchmark file reported "Custom
+quality: Yes, Preset: None, Shader quality: PC3, Textures quality: PC3". Only
+the second token differed between the two states; what each token means is not
+known. PC2 shader quality draws the stadium untextured in this community build
+because it lacks the PC2 shader files, which is a known limit.
+
+On a scratch copy of an installed prefix, the game started with the 252-byte
+seed, rewrote the file in full (1192 bytes) and kept `b01300d` as
+`1 True 0 3 3 3 3 3`. The first start of a fresh install with this seed has not
+been looked at yet.
+
+### Nations ESWC launcher promo page
+
+Applies to: TrackMania Nations ESWC, settings sessions only (`--settings`).
+
+The settings launcher, `TmNationsESWCLauncher.exe`, asks
+`game.trackmanianations.com/patch/getlauncherparams.php` for launcher
+parameters. The server still answers, with a check period of 172800 seconds and
+a promo page for TrackMania United. On each answer the launcher opens that page
+in the browser, through Wine's winebrowser, and stores the period, the time of
+the check and the link under `HKCU\Software\Nadeo\TmNations`.
+
+The launcher asks the server when the stored last check is in the future or
+older than the stored period. Otherwise it does not contact the server and opens
+nothing. The last check is a FILETIME split into `Launcher_CheckLastDate1`
+(high) and `Launcher_CheckLastDate2` (low); the period,
+`Launcher_CheckPeriodSeconds`, is a signed 32-bit number of seconds.
+
+A settings session for the launcher therefore writes three REG_DWORD values
+before it starts: `Launcher_CheckPeriodSeconds` = `0x7fffffff` (about 68 years),
+`Launcher_CheckLastDate1` = `0x01d5c036` and `Launcher_CheckLastDate2` =
+`0x69050000` (2020-01-01 as the last check). Values user.reg already holds are
+not written again, as with the Forever launcher's graphics-card spoof. Without
+`--settings` nothing is written.
+
+On a scratch copy of an installed prefix with a logging stand-in for the
+browser, the launcher started winebrowser with the promo address when the date
+was stale and the server's period was stored. With the seed applied it did not
+start winebrowser within 45 seconds, and the three values stayed as seeded. The
+launcher opened the page on the previous runtime as well.
 
 ## Account creation over TLS 1.0
 
@@ -326,6 +378,49 @@ When you bump Wine or GnuTLS, run this test before release. A failure means the
 new build dropped TLS 1.0, SHA-1 signatures or one of the ciphers, which breaks
 account creation. Check the Wine `secur32` and `schannel` GnuTLS priority string
 and the GnuTLS build options first.
+
+## Nations ESWC setup without a launch option
+
+Applies to: titles whose registry entry sets `source_patch` (TrackMania Nations
+ESWC today).
+
+The official Nations ESWC setup ("TrackMania Nations ESWC 0.1.7.5", Inno Setup
+5.1.4) has to be clicked through. Its own licence page turns Next off until you
+accept, so a silent run stops at once (its log says "Failed to proceed to next
+wizard page; aborting."). Its last page has one option, "Launch TrackMania Nations
+ESWC", ticked by default. It starts `TmNationsESWCLauncher.exe` from the official
+0.1.7.5 build, which is protected by StarForce and cannot run under Wine. The game
+is not finished at that point either: the 1.7.9 update, the community build and the
+steps after it come once the setup has closed.
+
+So install runs a modified copy of Nadeo's setup, not the download itself. The copy
+differs in one byte: the flags of the setup's only [Run] entry go from `0x14`
+(`postinstall`, `skipifsilent`) to `0x34`, which adds `skipifnotsilent`. Inno Setup
+then leaves that entry out of an install you click through, so the last page shows
+its text and Finish, with no option to start anything. The licence page, the folder
+page and the rest of the setup are unchanged.
+
+`python -m trackmania_mac.install.setup_patch apply SETUP COPY` writes the copy. It
+reads the setup's header, decompresses its first block and checks the block's
+SHA-256 (`header_sha256`) and the byte it changes. It then writes every byte of the
+download up to its offset table, the header again with the changed block stored
+uncompressed, and a new offset table that points at it. The copy must have the
+registry's `sha256_after`. The module refuses anything it does not recognise, and
+then writes nothing: a download without the pinned hash, an unknown offset table or
+Inno Setup data version, a damaged block, a different header, a different byte or a
+different result.
+
+The download in the cache is unchanged and keeps its pinned hash; the module only
+reads it. The copy goes into a `TmNationsESWC_Setup.inner` folder next to the
+download and is removed when the setup ends, whether it finished, failed or was
+cancelled. If install is killed outright, the next install removes the folder before
+it writes a new copy. If the copy cannot be written, install stops and no setup runs.
+After the setup closes, install still stops every Wine process in the prefix.
+
+innoextract reads the copy and its file checksums pass, and Setup 5.1.4 under Wine
+loads the rebuilt header and starts its wizard. You still accept the setup's
+licence agreement, but the game's licence may not allow changing its setup. The
+registry holds only the offset and the old and new value of the one byte.
 
 ## Memory protection flag
 

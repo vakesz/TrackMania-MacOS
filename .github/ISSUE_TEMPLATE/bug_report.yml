@@ -5,9 +5,11 @@ body:
   - type: markdown
     attributes:
       value: |
-        In the TrackMania Mac app, select the title and choose **Create diagnostics report**.
-        It writes a redacted zip to `~/Library/TrackManiaMacOS/logs`; attach it below.
-        From a source checkout, `./src/shell/cli/trackmania-mac diagnostics` does the same.
+        In the app, choose **Help > Report a Problem...** (or **Report a Problem...** on a failed action).
+        It saves a redacted diagnostics zip, shows it in Finder and opens this form with the versions
+        and a short checks summary filled in. GitHub can't attach a file from a link, so drag the zip
+        into **Diagnostics report** below.
+        From a source checkout, `./src/shell/cli/trackmania-mac diagnostics` creates the zip and prints the form link.
         For a security problem, use the security policy instead of a public issue.
         Titles marked unsupported are not expected to run yet: please don't report that one doesn't work.
         Issues and pull requests that help one run are welcome.
@@ -38,10 +40,17 @@ body:
     validations:
       required: true
   - type: input
+    id: runtime
+    attributes:
+      label: Runtime version
+      description: Filled in by Report a Problem. Otherwise use the version shown by `trackmania-mac doctor`, or leave it empty.
+    validations:
+      required: false
+  - type: input
     id: system
     attributes:
       label: macOS version and Mac model
-      placeholder: e.g. macOS 15.1, M1 Pro
+      placeholder: e.g. macOS 15.1 (24B83), Apple M1 Pro
     validations:
       required: true
   - type: dropdown
@@ -60,6 +69,14 @@ body:
       description: Drag the diagnostics zip here. If you can't create one, paste the output of `./src/shell/cli/trackmania-mac doctor` instead.
     validations:
       required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Checks summary
+      description: Filled in by Report a Problem. The full output is in the diagnostics report.
+      render: text
+    validations:
+      required: false
   - type: textarea
     id: logs
     attributes:

@@ -189,6 +189,17 @@ class StorageTests(unittest.TestCase):
 
     # --- runtimes ----------------------------------------------------------
 
+    def test_launcher_runtime_of_a_title(self):
+        self.launcher("tmnf", RUNTIME=str(self.runtime_folder("0.4.0")))
+        relinked = self.launcher("tmu")
+        self.file(relinked / "VERSION", "0.3.0\n")
+        self.launcher("tmnf2", RUNTIME="relative/path")
+        support = self.data
+        self.assertEqual(storage.launcher_runtime(support, "tmnf"), "0.4.0")
+        self.assertEqual(storage.launcher_runtime(support, "tmu"), "0.3.0")
+        self.assertEqual(storage.launcher_runtime(support, "tmnf2"), "unknown")
+        self.assertIsNone(storage.launcher_runtime(support, "other"))
+
     def test_runtimes_in_use_and_the_current_one_stay(self):
         current = self.runtime_folder(CURRENT)
         pinned = self.runtime_folder("0.4.0")

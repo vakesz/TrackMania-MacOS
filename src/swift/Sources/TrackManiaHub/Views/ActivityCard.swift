@@ -35,8 +35,19 @@ struct ActivityCard: View {
                     ProgressView().progressViewStyle(.linear)
                 }
             }
-            if let path = run.reportPath {
-                Button("Show in Finder") { model.reveal(path: path) }
+            let reportable = model.reportableTitle(for: run)
+            if reportable != nil || run.reportPath != nil || run.reportFormURL != nil {
+                HStack {
+                    if let reportable {
+                        Button("Report a Problem…") { model.reportProblem(for: reportable) }
+                    }
+                    if let path = run.reportPath {
+                        Button("Show in Finder") { model.reveal(path: path) }
+                    }
+                    if let url = run.reportFormURL {
+                        Button("Open Report Form") { NSWorkspace.shared.open(url) }
+                    }
+                }
             }
             if !activity.log.isEmpty {
                 DisclosureGroup("Details", isExpanded: $showDetails) {

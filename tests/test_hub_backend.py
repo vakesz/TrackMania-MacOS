@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.parse
 import zipfile
 import unittest
 from unittest import mock
@@ -981,7 +982,8 @@ class HubBackendTests(unittest.TestCase):
                 mock.patch.dict(os.environ, {"HOME": str(home), "TRACKMANIA_MAC_TITLE": "tmu"}),
                 mock.patch.object(diagnostics.getpass, "getuser", return_value="alice"),
             ):
-                target = diagnostics.build("tmu", doctor_output=f"doctor says {home}\n")
+                with mock.patch.object(diagnostics, "_run", self._fake_run):
+                    target = diagnostics.build("tmu", doctor_output=f"doctor says {home}\n").path
             self.assertEqual(target.parent, logs)
             self.assertRegex(target.name, r"^diagnostics-tmu-\d{8}-\d{6}\.zip$")
             with zipfile.ZipFile(target) as archive:
@@ -1001,6 +1003,90 @@ class HubBackendTests(unittest.TestCase):
                 )
                 self.assertTrue(archive.read("logs/tmu-big.log").decode().endswith("END ~"))
                 self.assertEqual(json.loads(archive.read("snapshot.json"))["id"], "tmu")
+
+    SERIAL = "C02ZZ1234ABC"
+
+    @staticmethod
+    def _fake_run(command, timeout=20):
+        if command[0] == "/usr/bin/sw_vers" and "-productVersion" in command:
+            return "15.1\n"
+        if command[0] == "/usr/bin/sw_vers" and "-buildVersion" in command:
+            return "24B83\n"
+        return {
+            "/usr/sbin/sysctl": "Apple M1 Pro\n",
+            "/usr/sbin/ioreg": f'  | "IOPlatformSerialNumber" = "{HubBackendTests.SERIAL}"\n',
+            "/usr/bin/uname": "arm64\n",
+        }.get(command[0], "")
+
+    def _build_report(self, doctor_output, home_name="alice"):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        home = Path(directory.name).resolve() / home_name
+        (home / "Library/TrackManiaMacOS/logs").mkdir(parents=True)
+        with (
+            mock.patch.dict(os.environ, {"HOME": str(home), "TRACKMANIA_MAC_TITLE": "tmu"}),
+            mock.patch.object(diagnostics.getpass, "getuser", return_value=home_name),
+            mock.patch.object(diagnostics, "_run", self._fake_run),
+        ):
+            return home, diagnostics.build(
+                "tmu", doctor_output=doctor_output.replace("@HOME", str(home))
+            )
+
+    def test_diagnostics_form_url_fields(self):
+        doctor = "ok: fine\nwarning: gpu slow\nerror: no wine\nResult: 1 problem\n\n(doctor exit status 1)\n"
+        _home, report = self._build_report(doctor)
+        url = report.form_url
+        self.assertTrue(
+            url.startswith(diagnostics.ISSUE_FORM + "?template=bug_report.yml&version=")
+        )
+        self.assertNotIn("\n", url)
+        parsed = urllib.parse.urlsplit(url)
+        query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        self.assertEqual(list(query), ["template", "version", "runtime", "system", "doctor"])
+        self.assertEqual(query["runtime"], ["apps not installed"])
+        self.assertEqual(query["system"], ["macOS 15.1 (24B83), Apple M1 Pro"])
+        self.assertEqual(
+            query["doctor"][0].split("\n"),
+            [
+                "Title: tmu (TrackMania United Forever)",
+                "warning: gpu slow",
+                "error: no wine",
+                "Result: 1 problem",
+                "(doctor exit status 1)",
+            ],
+        )
+
+    def test_diagnostics_form_and_zip_hide_home_user_and_serial(self):
+        home, report = self._build_report(f"warning: @HOME/x alice {self.SERIAL}\n")
+        for text in (report.form_url, urllib.parse.unquote(report.form_url)):
+            self.assertNotIn(str(home), text)
+            self.assertNotIn("alice", text)
+            self.assertNotIn(self.SERIAL, text)
+        self.assertIn("%3Cserial%3E", report.form_url)
+        with zipfile.ZipFile(report.path) as archive:
+            for name in archive.namelist():
+                body = archive.read(name).decode()
+                self.assertNotIn(self.SERIAL, body, name)
+                self.assertNotIn("alice", body, name)
+            self.assertIn("<serial>", archive.read("doctor.txt").decode())
+            self.assertIn("Chip: Apple M1 Pro", archive.read("summary.txt").decode())
+            self.assertIn("Runtime: apps not installed", archive.read("summary.txt").decode())
+
+    def test_redact_serials_keeps_old_signature(self):
+        self.assertEqual(diagnostics.redact("a SN1 b", "", ""), "a SN1 b")
+        self.assertEqual(diagnostics.redact("a SN1 b", "", "", ["SN1"]), "a <serial> b")
+
+    def test_diagnostics_form_url_is_trimmed_to_the_limit(self):
+        doctor = "".join(f"warning: {'w' * 150} {index}\n" for index in range(40))
+        with mock.patch.object(diagnostics, "FORM_LINE_COUNT", 100):
+            _home, report = self._build_report(doctor)
+        self.assertLessEqual(len(report.form_url), diagnostics.FORM_URL_LIMIT)
+        lines = urllib.parse.parse_qs(urllib.parse.urlsplit(report.form_url).query)["doctor"][
+            0
+        ].split("\n")
+        self.assertTrue(lines[0].startswith("Title: tmu"))
+        self.assertEqual(lines[-1], diagnostics.MORE_NOTE)
+        self.assertGreater(len(lines), 2)
 
     def test_diagnostics_logs_are_per_title(self):
         with tempfile.TemporaryDirectory() as directory:

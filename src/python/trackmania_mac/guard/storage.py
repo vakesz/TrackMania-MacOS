@@ -284,6 +284,29 @@ def _launcher_version(path: Path) -> str:
     return project_version.read(path)
 
 
+def launcher_runtime(support: Path, title_id: str) -> typing.Optional[str]:
+    """The runtime version a title's installed launcher uses.
+
+    None when the title has no installed launcher, "unknown" when its settings cannot be read.
+    """
+    folder = support / "launchers" / title_id
+    for launcher in launchers(support):
+        if launcher.path != folder:
+            continue
+        if launcher.settings is None:
+            return "unknown"
+        recorded = launcher.settings.get("RUNTIME")
+        if recorded and recorded.startswith("/"):
+            return runtime_version_name(Path(recorded))
+        if recorded:
+            return "unknown"
+        try:
+            return _launcher_version(launcher.path)
+        except (OSError, project_version.VersionError):
+            return "unknown"
+    return None
+
+
 def runtimes_in_use(
     support: Path, current: str, found: typing.Sequence[Launcher]
 ) -> typing.Tuple[typing.List[Path], typing.Optional[str]]:

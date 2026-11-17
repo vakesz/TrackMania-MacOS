@@ -17,6 +17,9 @@ VERSION = project_version.read(ROOT)
 APP = ROOT / ".build/app/TrackMania Mac.app"
 ZIP = ROOT / ".build/dist" / f"TrackMania-Mac-{VERSION}.app.zip"
 PACKAGER = ROOT / "src/shell/tools/package-app.sh"
+# A cold CI runner compiles the hub and downloads a Python toolchain while the
+# other pytest workers run, which can take longer than three minutes.
+PACKAGE_TIMEOUT = 600
 RELEASE_ASSETS = ROOT / "config/release-assets.sha256"
 # The flat icon actool writes for systems older than macOS 26.
 ICON_SIZES = {
@@ -39,7 +42,7 @@ class HubPackageTests(unittest.TestCase):
             cwd=ROOT,
             text=True,
             capture_output=True,
-            timeout=180,
+            timeout=PACKAGE_TIMEOUT,
             env=env,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -66,7 +69,7 @@ class HubPackageTests(unittest.TestCase):
             cwd=ROOT,
             text=True,
             capture_output=True,
-            timeout=180,
+            timeout=PACKAGE_TIMEOUT,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 

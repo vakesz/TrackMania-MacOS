@@ -289,8 +289,9 @@ offered once a title's prefix exists. It writes one zip,
 `diagnostics-<id>-<stamp>.zip`, to the logs folder, and the report is meant to
 be attached to a bug report. It holds:
 
-- `summary.txt`: the project version, the title id, macOS version, machine
-  architecture and whether Rosetta is present.
+- `summary.txt`: the project version, the runtime the title's apps use, the
+  title id, macOS version, machine architecture, chip and whether Rosetta is
+  present.
 - `doctor.txt`: the output of `trackmania-mac doctor` for that title, with its exit
   status. A doctor that fails or runs longer than two minutes is recorded and
   does not stop the report.
@@ -298,8 +299,39 @@ be attached to a bug report. It holds:
 - `logs/`: up to the five most recent logs for that title only, each cut to its
   last 2 MiB.
 
-Every file has the home folder replaced by `~` and the user name by `<user>`
-before it is zipped.
+Every file has the home folder replaced by `~`, the user name by `<user>` and
+the Mac's serial number by `<serial>` before it is zipped.
+
+On success the action prints two lines, the second always last:
+
+```text
+Report form: https://github.com/vakesz/TrackMania-MacOS/issues/new?template=bug_report.yml&version=…&runtime=…&system=…&doctor=…
+Diagnostics report: /Users/me/Library/TrackManiaMacOS/logs/diagnostics-tmnf-20260101-120000.zip
+```
+
+The report form link opens the bug report form
+(`.github/ISSUE_TEMPLATE/bug_report.yml`) with these fields filled in, each
+redacted the same way as the zip:
+
+- `version`: the project version.
+- `runtime`: the runtime the title's installed apps use, or `apps not
+  installed`.
+- `system`: the macOS version and build and the chip.
+- `doctor`: the title, then only the doctor's `warning:`, `error:` and
+  `Result:` lines and its exit status. Lines are dropped from the end until
+  the whole link fits in 6,000 characters.
+
+### Report a problem
+
+**Help › Report a Problem…**, and the **Report a Problem…** button on the card
+of a failed action, run the `diagnostics` action for that title. When it
+finishes, the hub shows the zip in Finder and opens the report form link in
+the browser. GitHub can't attach a file through a link, so the form asks the
+reporter to drag the zip in. The hub opens only a link to this repository's
+`issues/new`. The Help menu item uses the selected title. When that title
+has no `diagnostics` action yet (no prefix), it opens the blank bug report
+form instead. **Save diagnostics report…** in Settings writes the same zip
+without opening the form.
 
 ## Settings
 

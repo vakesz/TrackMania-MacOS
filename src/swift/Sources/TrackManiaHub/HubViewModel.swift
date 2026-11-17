@@ -20,6 +20,10 @@ struct RunRecord: Equatable {
     var outcome: RunOutcome?
     /// Path parsed from a diagnostics run's "Diagnostics report:" line.
     var reportPath: String?
+    /// URL parsed from a diagnostics run's "Report form:" line.
+    var reportFormURL: URL?
+    /// True when Report a Problem started the run, so finishing it opens the form.
+    var opensReportForm = false
 }
 
 /// Console output and progress of the running action. Separate from `HubViewModel` so the
@@ -48,6 +52,7 @@ final class HubViewModel: ObservableObject {
     /// Output is applied in batches so curl's progress bar cannot make the UI stutter.
     static let flushInterval: Duration = .milliseconds(100)
     static let reportPrefix = "Diagnostics report: "
+    static let reportFormPrefix = "Report form: "
 
     @Published private(set) var snapshot: HubSnapshot?
     @Published private(set) var message: String?
@@ -140,7 +145,7 @@ final class HubViewModel: ObservableObject {
 
     /// `label` names the chosen dialog button in the activity card and notifications.
     func run(_ action: HubAction, for title: HubTitle, source: URL? = nil, runtime: RuntimeSource? = nil,
-             includeSaves: Bool = false, label: String? = nil) {
+             includeSaves: Bool = false, label: String? = nil, opensReportForm: Bool = false) {
         guard let backend, runningAction == nil else { return }
         if action.kind == .install || action.kind == .import { Notifier.requestAuthorizationOnce() }
         runningAction = action.id
@@ -150,7 +155,8 @@ final class HubViewModel: ObservableObject {
         activityTitleID = title.id
         cancelling = false
         let actionLabel = label ?? action.label
-        lastRun = RunRecord(titleID: title.id, actionID: action.id, actionLabel: actionLabel)
+        lastRun = RunRecord(titleID: title.id, actionID: action.id, actionLabel: actionLabel,
+                            opensReportForm: opensReportForm)
         let token = UUID()
         activityToken = token
         let handle = HubCommandHandle()
@@ -188,7 +194,11 @@ final class HubViewModel: ObservableObject {
         flushOutput()
         if outcome == .cancelled { enqueue("Cancelled.\n"); flushOutput() }
         lastRun?.outcome = outcome
-        if outcome == .succeeded { lastRun?.reportPath = Self.reportPath(in: output) }
+        if outcome == .succeeded {
+            lastRun?.reportPath = Self.reportPath(in: output)
+            lastRun?.reportFormURL = Self.reportFormURL(in: output)
+            if lastRun?.opensReportForm == true { presentReport() }
+        }
         // Every exit path, including cancellation, must leave the UI idle.
         runningAction = nil
         runningTitleID = nil
@@ -318,6 +328,54 @@ final class HubViewModel: ObservableObject {
 
     func run(for title: HubTitle) -> RunRecord? {
         lastRun?.titleID == title.id ? lastRun : nil
+    }
+}
+
+// MARK: Report a problem
+
+extension HubViewModel {
+    /// The backend's redacted form URL, accepted only for this repository's new-issue page.
+    static func reportFormURL(in output: String) -> URL? {
+        guard let line = output.split(whereSeparator: \.isNewline).reversed()
+            .first(where: { $0.hasPrefix(reportFormPrefix) }),
+            let url = URL(string: String(line.dropFirst(reportFormPrefix.count)).trimmingCharacters(in: .whitespaces)),
+            url.scheme == "https", url.host == HubLinks.repository.host,
+            url.path == HubLinks.repository.path + "/issues/new",
+            url.query?.isEmpty == false else { return nil }
+        return url
+    }
+
+    /// Reveals the saved report and opens the pre-filled form, or the blank one when the URL is unusable.
+    private func presentReport() {
+        if let path = lastRun?.reportPath { reveal(path: path) }
+        NSWorkspace.shared.open(lastRun?.reportFormURL ?? HubLinks.newIssue)
+    }
+
+    /// Runs diagnostics for `title`; the form opens when it finishes.
+    func reportProblem(for title: HubTitle) {
+        guard let action = title.diagnosticsAction else { return }
+        run(action, for: title, label: String(localized: "Report a problem"), opensReportForm: true)
+    }
+
+    /// Help menu entry: reports for the selected title, else opens the blank form.
+    func reportProblem() {
+        if let title = snapshot?.titles.first(where: { $0.id == selectedTitleID }), title.diagnosticsAction != nil {
+            reportProblem(for: title)
+        } else {
+            NSWorkspace.shared.open(HubLinks.newIssue)
+        }
+    }
+
+    /// The title whose failed run can offer Report a Problem.
+    static func reportableTitle(for run: RunRecord, in snapshot: HubSnapshot?, busy: Bool) -> HubTitle? {
+        guard !busy, case .failed = run.outcome,
+              let title = snapshot?.titles.first(where: { $0.id == run.titleID }),
+              title.diagnosticsAction != nil else { return nil }
+        return title
+    }
+
+    func reportableTitle(for run: RunRecord) -> HubTitle? {
+        Self.reportableTitle(for: run, in: snapshot, busy: runningAction != nil)
     }
 }
 

@@ -1,0 +1,269 @@
+Subject: vkd3d-shader: Emit "rep i#" for SM2/SM3 loops bounded by an int uniform.
+
+For "for (i = 0; i < n; ++i)" with an int uniform n, native compilers put n in
+an integer constant register and emit "rep i#", so the application sets the
+trip count. vkd3d already identifies n as the loop limiter, but then aborts
+with "Loops with user-defined limiter int uniform". TrackMania car skins are
+vs_2_0 and bound both light loops this way, so the vertex shader fails and the
+body is drawn with the material color and no skin.
+
+Give the limiter its own i# register, report it in the constant table as
+D3DXRS_INT4 with an integer default ({n, 0, 1, 0}, as native writes it), emit
+"rep" on that register and drop the per-iteration condition checks, which the
+counter now enforces. Limiters "rep" cannot take (a component other than x, or
+a non-integer type) are still reported as not implemented.
+
+Based on Wine 9f8c4ae4d35. Run ./src/shell/tools/probes/smoke-shaders.sh.
+
+diff --git a/libs/vkd3d/libs/vkd3d-shader/hlsl.h b/libs/vkd3d/libs/vkd3d-shader/hlsl.h
+index e1c44892e7..09e0512bb9 100644
+--- a/libs/vkd3d/libs/vkd3d-shader/hlsl.h
++++ b/libs/vkd3d/libs/vkd3d-shader/hlsl.h
+@@ -530,6 +530,10 @@ struct hlsl_ir_var
+      *   In SM4, uniforms don't use the field because they are located using the buffer's hlsl_reg
+      *     and the buffer_offset instead. */
+     struct hlsl_reg regs[HLSL_REGSET_LAST + 1];
++    /* SM1 integer constant register (i#) for a uniform that is the trip count
++     * of a loop emitted as "rep i#". The application sets it, so it is
++     * reported in the constant table with the D3DXRS_INT4 register set. */
++    struct hlsl_reg limiter_reg;
+ 
+     struct
+     {
+diff --git a/libs/vkd3d/libs/vkd3d-shader/hlsl_codegen.c b/libs/vkd3d/libs/vkd3d-shader/hlsl_codegen.c
+index a58f6051b6..d7af580455 100644
+--- a/libs/vkd3d/libs/vkd3d-shader/hlsl_codegen.c
++++ b/libs/vkd3d/libs/vkd3d-shader/hlsl_codegen.c
+@@ -8029,6 +8029,45 @@ static void sort_uniforms_by_bind_count(struct hlsl_ctx *ctx, enum hlsl_regset r
+     list_move_tail(&ctx->extern_vars, &sorted);
+ }
+ 
++static bool is_supported_loop_limiter(const struct hlsl_ir_loop *loop)
++{
++    const struct hlsl_type *type;
++
++    if (!loop->limiter || loop->limiter_component)
++        return false;
++
++    type = loop->limiter->data_type;
++    if (type->class != HLSL_CLASS_SCALAR && type->class != HLSL_CLASS_VECTOR)
++        return false;
++    return type->e.numeric.type == HLSL_TYPE_INT || type->e.numeric.type == HLSL_TYPE_UINT;
++}
++
++/* The application provides a limiter's trip count, so it gets its own i#
++ * register and no DEFI. Allocate these before the shared 255 counter. */
++static bool allocate_constint_registers_for_limiters(struct hlsl_ctx *ctx,
++        struct hlsl_ir_node *instr, void *context)
++{
++    struct register_allocator *allocator = (struct register_allocator *)context;
++    struct hlsl_ir_var *var;
++    struct hlsl_ir_loop *loop;
++
++    if (instr->type != HLSL_IR_LOOP)
++        return false;
++    loop = hlsl_ir_loop(instr);
++
++    if (!is_supported_loop_limiter(loop))
++        return false;
++
++    var = loop->limiter;
++    if (var->limiter_reg.allocated)
++        return false;
++
++    var->limiter_reg = allocate_register(ctx, allocator, 4, 4, 0, false, false, false);
++    TRACE("Allocated loop limiter %s to %s.\n", var->name,
++            debug_register(var->limiter_reg, hlsl_get_vector_type(ctx, HLSL_TYPE_INT, 4)));
++    return true;
++}
++
+ static bool allocate_constint_registers_for_loops(struct hlsl_ctx *ctx,
+         struct hlsl_ir_node *instr, void *context)
+ {
+@@ -8042,7 +8081,7 @@ static bool allocate_constint_registers_for_loops(struct hlsl_ctx *ctx,
+         return false;
+     loop = hlsl_ir_loop(instr);
+ 
+-    if (!loop->limiter)
++    if (!is_supported_loop_limiter(loop))
+     {
+         ctx->d3d255intconst = allocate_register(ctx, allocator, 4, 4, 0, false, false, false);
+         TRACE("Allocated D3D255INTCONST to %s.\n",
+@@ -8162,6 +8201,7 @@ static void allocate_const_registers(struct hlsl_ctx *ctx, struct hlsl_block *bo
+ 
+     allocate_sincos_const_registers(ctx, body, &allocator);
+ 
++    hlsl_transform_ir(ctx, allocate_constint_registers_for_limiters, body, &allocator_constint);
+     hlsl_transform_ir(ctx, allocate_constint_registers_for_loops, body, &allocator_constint);
+ 
+     vkd3d_free(allocator_constint.allocations);
+@@ -11641,7 +11681,7 @@ static void sm1_generate_vsir_instr_loop(struct hlsl_ctx *ctx,
+     struct vkd3d_shader_instruction *ins;
+     struct vsir_src_operand *src;
+ 
+-    if (loop->limiter)
++    if (loop->limiter && !is_supported_loop_limiter(loop))
+     {
+         hlsl_fixme(ctx, &instr->loc, "Loops with user-defined limiter int uniform.");
+         return;
+@@ -11653,7 +11693,10 @@ static void sm1_generate_vsir_instr_loop(struct hlsl_ctx *ctx,
+     vsir_src_operand_init(src, VSIR_REGISTER_CONSTINT, VSIR_DATA_I32, 1);
+     src->reg.dimension = VSIR_DIMENSION_VEC4;
+     src->swizzle = VKD3D_SHADER_NO_SWIZZLE;
+-    src->reg.idx[0].offset = ctx->d3d255intconst.id;
++    if (loop->limiter)
++        src->reg.idx[0].offset = loop->limiter->limiter_reg.id;
++    else
++        src->reg.idx[0].offset = ctx->d3d255intconst.id;
+ 
+     sm1_generate_vsir_block(ctx, &loop->body, program);
+ 
+@@ -12020,6 +12063,19 @@ static void sm1_sort_externs(struct hlsl_ctx *ctx)
+     list_move_tail(&ctx->extern_vars, &sorted);
+ }
+ 
++/* A pseudo register set after the HLSL ones, for the i# register of a loop
++ * limiter. */
++#define CTAB_REGSET_INT (HLSL_REGSET_LAST + 1)
++
++static bool ctab_has_entry(const struct hlsl_ir_var *var, unsigned int r)
++{
++    if (!var->is_uniform)
++        return false;
++    if (r == CTAB_REGSET_INT)
++        return var->limiter_reg.allocated;
++    return var->regs[r].allocated && var->last_read;
++}
++
+ static void ctab_write_uniforms(struct ctab_ctx *ctab)
+ {
+     size_t ctab_start, vars_offset, vars_start, creator_offset, offset;
+@@ -12030,9 +12086,9 @@ static void ctab_write_uniforms(struct ctab_ctx *ctab)
+ 
+     LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
+     {
+-        for (r = 0; r <= HLSL_REGSET_LAST; ++r)
++        for (r = 0; r <= CTAB_REGSET_INT; ++r)
+         {
+-            if (!var->is_uniform || !var->regs[r].allocated || !var->last_read)
++            if (!ctab_has_entry(var, r))
+                 continue;
+ 
+             ++uniform_count;
+@@ -12069,13 +12125,18 @@ static void ctab_write_uniforms(struct ctab_ctx *ctab)
+ 
+     LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
+     {
+-        for (r = 0; r <= HLSL_REGSET_LAST; ++r)
++        for (r = 0; r <= CTAB_REGSET_INT; ++r)
+         {
+-            if (!var->is_uniform || !var->regs[r].allocated || !var->last_read)
++            if (!ctab_has_entry(var, r))
+                 continue;
+ 
+             put_u32(buffer, 0); /* name */
+-            if (r == HLSL_REGSET_NUMERIC)
++            if (r == CTAB_REGSET_INT)
++            {
++                put_u32(buffer, vkd3d_make_u32(D3DXRS_INT4, var->limiter_reg.id));
++                put_u32(buffer, 1);
++            }
++            else if (r == HLSL_REGSET_NUMERIC)
+             {
+                 put_u32(buffer, vkd3d_make_u32(D3DXRS_FLOAT4, var->regs[r].id));
+                 put_u32(buffer, var->bind_count[r]);
+@@ -12096,12 +12157,12 @@ static void ctab_write_uniforms(struct ctab_ctx *ctab)
+     {
+         struct ctab_type_info *var_type_info = &ctab->type_info[var->data_type->type_id];
+ 
+-        for (r = 0; r <= HLSL_REGSET_LAST; ++r)
++        for (r = 0; r <= CTAB_REGSET_INT; ++r)
+         {
+             enum hlsl_sampler_dim sampler_dim = HLSL_SAMPLER_DIM_GENERIC;
+             size_t var_offset, name_offset;
+ 
+-            if (!var->is_uniform || !var->regs[r].allocated || !var->last_read)
++            if (!ctab_has_entry(var, r))
+                 continue;
+ 
+             /* Arrays can be used with multiple different dimensions.
+@@ -12127,7 +12188,24 @@ static void ctab_write_uniforms(struct ctab_ctx *ctab)
+             ctab_write_type(ctab, var->data_type, var->is_combined_sampler, sampler_dim, ctab_start);
+             set_u32(buffer, var_offset + 3 * sizeof(uint32_t), var_type_info->bytecode_offset - ctab_start);
+ 
+-            if (var->default_values)
++            if (var->default_values && r == CTAB_REGSET_INT)
++            {
++                unsigned int comp_count = hlsl_type_component_count(var->data_type);
++                uint32_t value[4] = {0, 0, 1, 0};
++                unsigned int default_value_offset;
++
++                /* SetDefaults() passes INT4 defaults to Set*ShaderConstantI()
++                 * as they are, so these are integers, not floats. Native
++                 * writes a scalar as {n, 0, 1, 0}: a "loop" counter with
++                 * start 0 and step 1. */
++                for (unsigned int k = 0; k < comp_count && k < 4; ++k)
++                    value[k] = var->default_values[k].number.u;
++                default_value_offset = bytecode_reserve_bytes(buffer, sizeof(value));
++                set_u32(buffer, var_offset + 4 * sizeof(uint32_t), default_value_offset - ctab_start);
++                for (unsigned int k = 0; k < 4; ++k)
++                    set_u32(buffer, default_value_offset + k * sizeof(uint32_t), value[k]);
++            }
++            else if (var->default_values)
+             {
+                 unsigned int reg_size = var->data_type->reg_size[HLSL_REGSET_NUMERIC];
+                 unsigned int comp_count = hlsl_type_component_count(var->data_type);
+@@ -16045,6 +16123,38 @@ static bool unroll_loops(struct hlsl_ctx *ctx, struct hlsl_ir_node *node, void *
+     return true;
+ }
+ 
++/* Remove this loop's own condition checks, including the copies placed before
++ * "continue" jumps, but not those of nested loops. */
++static void remove_loop_conditionals(struct hlsl_block *block)
++{
++    struct hlsl_ir_node *instr, *next;
++
++    LIST_FOR_EACH_ENTRY_SAFE(instr, next, &block->instrs, struct hlsl_ir_node, entry)
++    {
++        if (instr->type == HLSL_IR_IF)
++        {
++            struct hlsl_ir_if *iff = hlsl_ir_if(instr);
++
++            if (iff->is_loop_conditional)
++            {
++                list_remove(&instr->entry);
++                hlsl_free_instr(instr);
++                continue;
++            }
++            remove_loop_conditionals(&iff->then_block);
++            remove_loop_conditionals(&iff->else_block);
++        }
++        else if (instr->type == HLSL_IR_SWITCH)
++        {
++            struct hlsl_ir_switch *s = hlsl_ir_switch(instr);
++            struct hlsl_ir_switch_case *c;
++
++            LIST_FOR_EACH_ENTRY(c, &s->cases, struct hlsl_ir_switch_case, entry)
++                remove_loop_conditionals(&c->body);
++        }
++    }
++}
++
+ static bool identify_loop_limiters(struct hlsl_ctx *ctx, struct hlsl_ir_node *node, void *context)
+ {
+     struct hlsl_block *program = context;
+@@ -16060,6 +16170,14 @@ static bool identify_loop_limiters(struct hlsl_ctx *ctx, struct hlsl_ir_node *no
+     if (loop->unroll_type == HLSL_LOOP_FORCE_LOOP)
+         loop_unrolling_unroll_loop(ctx, program, loop, 255, true);
+ 
++    /* "rep i#" runs exactly n iterations, where n is the limiter, and every
++     * check of the loop condition was shown to be "k < n" for iteration k.
++     * The checks are redundant with the counter, so drop them. Limiters "rep"
++     * can't take (other components, non-integer types) keep the checks and
++     * are reported when the loop is emitted. */
++    if (is_supported_loop_limiter(loop))
++        remove_loop_conditionals(&loop->body);
++
+     return false;
+ }
+ 

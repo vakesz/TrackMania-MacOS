@@ -46,6 +46,7 @@ def build(output, baseline=False, arch="i386"):
             for name in (
                 "0001-vkd3d-shader-lower-texm3x3.patch",
                 "0006-vkd3d-hlsl-legacy-function-targets.patch",
+                "0012-vkd3d-shader-sm1-loop-limiter-registers.patch",
             )
         ]
     )

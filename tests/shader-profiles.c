@@ -218,6 +218,66 @@ static int test_tokens(void)
     puts("PASS: bounded binary shader token parser");
     return 0;
 }
+/* An int uniform bounding a loop is a "limiter": like native, the shader runs
+ * "rep i#" on an integer register the application sets, and the constant table
+ * reports it as INT4 with the native {n, 0, 1, 0} default. Other int uniforms
+ * read in the loop stay float registers. */
+static void test_loop_limiter(const char *profile)
+{
+    static const char src[] =
+        "int count = 2;\nint k = 3;\nfloat4 lights[2];\n"
+        "float4 main(float4 p : POSITION) : POSITION {\n"
+        "float4 a = 0;\nfor (int i = 0; i < count; ++i) a += lights[i] * k;\nreturn p + a;\n}";
+    ID3DXBuffer *b = NULL, *e = NULL;
+    ID3DXConstantTable *table = NULL;
+    D3DXCONSTANT_DESC count_desc, k_desc;
+    D3DXHANDLE handle;
+    UINT n;
+    int ok = 0, rep = 0;
+    HRESULT hr = compile(src, sizeof(src) - 1, NULL, NULL, "main", profile, compile_flags, &b, &e, &table);
+    ++cases;
+    if (SUCCEEDED(hr) && b && table
+            && (handle = ID3DXConstantTable_GetConstantByName(table, NULL, "count"))
+            && (n = 1, SUCCEEDED(ID3DXConstantTable_GetConstantDesc(table, handle, &count_desc, &n)))
+            && (handle = ID3DXConstantTable_GetConstantByName(table, NULL, "k"))
+            && (n = 1, SUCCEEDED(ID3DXConstantTable_GetConstantDesc(table, handle, &k_desc, &n))))
+    {
+        const INT *value = count_desc.DefaultValue;
+        DWORD t[4096];
+        int count = tokens(ID3DXBuffer_GetBufferPointer(b), ID3DXBuffer_GetBufferSize(b), t, 4096);
+        /* SM2+ tokens carry the instruction length in bits 24-27. */
+        for (int i = 1; i < count && t[i] != 0x0000ffff; i += 1 + ((t[i] >> 24) & 0xf))
+        {
+            DWORD op = t[i] & 0xffff, src0 = i + 1 < count ? t[i + 1] : 0;
+            DWORD type = ((src0 >> 28) & 7) | ((src0 >> 8) & 0x18);
+            if (op == D3DSIO_REP && type == D3DSPR_CONSTINT && (src0 & 0x7ff) == count_desc.RegisterIndex)
+                rep = 1;
+        }
+        ok = rep && count_desc.RegisterSet == D3DXRS_INT4 && count_desc.RegisterCount == 1
+                && value && value[0] == 2 && value[1] == 0 && value[2] == 1 && value[3] == 0
+                && k_desc.RegisterSet == D3DXRS_FLOAT4;
+        printf("loop limiter (%s): %08lx count=%u:%u k=%u rep=%d", profile, hr,
+                count_desc.RegisterSet, count_desc.RegisterIndex, k_desc.RegisterSet, rep);
+    }
+    else
+    {
+        printf("loop limiter (%s): %08lx", profile, hr);
+    }
+    if (!ok)
+    {
+        ++failures;
+        printf(" FAIL");
+    }
+    printf("\n");
+    if (e)
+    {
+        printf("%s\n", (char *)ID3DXBuffer_GetBufferPointer(e));
+        ID3DXBuffer_Release(e);
+    }
+    if (table) ID3DXConstantTable_Release(table);
+    if (b) ID3DXBuffer_Release(b);
+    fflush(stdout);
+}
 static void test(const char *name, const char *src, const char *profile, int expected)
 {
     ID3DXBuffer *b = NULL, *e = NULL;
@@ -290,6 +350,7 @@ int main(int argc, char **argv)
     {
         test("plain", RED, "ps_2_0", 0);
         test("reject legacy target", "ps_2_0 " RED, "ps_2_0", -1);
+        test_loop_limiter("vs_2_0");
         test("profile identifier remains a typedef", "typedef float ps_2_0;\nps_2_0 f(){return 1;}\n" RED, "ps_2_0", 0);
         printf("%u cases, %u failures\n", cases, failures);
         FreeLibrary(m);
@@ -332,6 +393,7 @@ int main(int argc, char **argv)
     test("vertex model 1", "vs_1_1 " POSITION "vs_2_0 " SCALED_POSITION, "vs_1_1", 0);
     test("vertex model 2", "vs_1_1 " POSITION "vs_2_0 " SCALED_POSITION, "vs_2_0", 1);
     test("vertex stage fallback", "vs " NEGATED_POSITION "vs_2_0 " SCALED_POSITION, "vs_1_1", 2);
+    test_loop_limiter("vs_2_0");
     printf("%u cases, %u failures\n", cases, failures);
     FreeLibrary(m);
     return failures ? 1 : 0;

@@ -20,6 +20,7 @@ order to the exact revisions in `config/sources.json`.
 | Wine 0009 | Disable audio capture on macOS, so the game never opens a microphone | Audio probes |
 | Wine 0010 | Preserve certificate rejection errors and report WinHTTP secure-failure callbacks | Sync/async local TLS controls and rejection cases in isolated DLL overlays, both architectures |
 | Wine 0011 | Preserve unignored certificate errors and prevent reuse under a different validation policy | Combined-error, pool-policy and fault-injected lifetime checks, both modes/architectures |
+| Wine 0012 | Compile SM2/SM3 loops bounded by an int uniform to `rep i#`, with the uniform in an integer register the game sets, so the car-skin vertex shader compiles | Shader probes |
 | D9VK 0003 | Correct promoted volume-texture destination slice stride | Manual GPU volume red/green and packed-format readback probe; no automated test |
 | D9VK 0004 | Preserve the eye vector in `texm3x3vspec` | Manual GPU volume/cube reflection check; no automated test |
 | MoltenVK 0001 | Reuse the dependency sources supplied in a source release | Source archive preparation |
@@ -34,10 +35,13 @@ The filename gaps are intentional. D9VK's two build patches were superseded by
 the pinned upstream update. Rejected experiments are not included in releases.
 
 The shader-profile probe also checks VS 1.1 declaration lengths; the former two
-failures were in the test parser. All 37 profile cases pass against the tested
-Wine compilers and native SDK 30. Explicit effect-target selection is corrected,
-but Wine's existing FX2 PixelShader assignment emission still blocks full effect
-output. That limitation is not hidden by the profile or GPU tests.
+failures were in the test parser. It has 38 profile cases against the tested
+Wine compilers and native SDK 30, including a vs_2_0 loop bounded by an
+int uniform, the form used by the car-skin light loops. That case checks for
+`rep` on the uniform's INT4 register and native's `{n, 0, 1, 0}` default. Explicit
+effect-target selection is corrected, but Wine's existing FX2 PixelShader
+assignment emission still blocks full effect output. That limitation is not
+hidden by the profile or GPU tests.
 
 ## Numeric limits
 

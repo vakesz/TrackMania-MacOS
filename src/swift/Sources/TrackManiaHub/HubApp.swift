@@ -49,12 +49,16 @@ struct HubCommands: Commands {
         CommandGroup(replacing: .help) {
             Button("Welcome Guide", action: showWelcome)
             Link("TrackMania Mac on GitHub", destination: HubLinks.repository)
+            Button("Report a Problem…") { model.reportProblem() }
+                .disabled(model.runningAction != nil)
         }
     }
 }
 
 enum HubLinks {
     static let repository = URL(string: "https://github.com/vakesz/TrackMania-MacOS")!
+    /// The blank bug report form.
+    static let newIssue = URL(string: "https://github.com/vakesz/TrackMania-MacOS/issues/new?template=bug_report.yml")!
     /// docs/tmuf-cd-key.md, rendered by GitHub.
     static let cdKeyHelp = URL(string: "https://github.com/vakesz/TrackMania-MacOS/blob/main/docs/tmuf-cd-key.md")!
 }

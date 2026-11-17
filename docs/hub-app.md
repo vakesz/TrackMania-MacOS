@@ -318,8 +318,9 @@ redacted the same way as the zip:
   installed`.
 - `system`: the macOS version and build and the chip.
 - `doctor`: the title, then only the doctor's `warning:`, `error:` and
-  `Result:` lines and its exit status. Lines are dropped from the end until
-  the whole link fits in 6,000 characters.
+  `Result:` lines and its exit status: at most 15 lines, each cut to 200
+  characters. Lines are dropped from the end, with a note that the rest is in
+  the report, until the whole link fits in 6,000 characters.
 
 ### Report a problem
 

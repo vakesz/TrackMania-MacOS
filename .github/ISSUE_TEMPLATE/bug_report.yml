@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        In the app, choose **Help > Report a Problem...** (or **Report a Problem...** on a failed action).
+        In the app, choose **Help › Report a Problem…** (or **Report a Problem…** on a failed action).
         It saves a redacted diagnostics zip, shows it in Finder and opens this form with the versions
         and a short checks summary filled in. GitHub can't attach a file from a link, so drag the zip
         into **Diagnostics report** below.
@@ -43,7 +43,7 @@ body:
     id: runtime
     attributes:
       label: Runtime version
-      description: Filled in by Report a Problem. Otherwise use the version shown by `trackmania-mac doctor`, or leave it empty.
+      description: Filled in by Report a Problem. Otherwise leave it empty.
     validations:
       required: false
   - type: input

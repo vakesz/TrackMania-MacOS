@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from hang_guard import SUBPROCESS_TIMEOUT
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -107,7 +108,7 @@ def assert_overlay_module(output, appdir):
         )
 
 
-def run(command, env, timeout=60):
+def run(command, env, timeout=SUBPROCESS_TIMEOUT):
     # Files avoid inherited pipes keeping communicate() alive after a Wine child
     # exits. Detached processes are stopped by prefix-scoped wineserver cleanup.
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8", dir=env["HOME"]) as output:
@@ -159,7 +160,9 @@ def cleanup_prefixes(runtime, scratch, root_identity, owned):
             continue
         for option in ("-k", "-w"):
             try:
-                code, output = run([runtime / "bin/wineserver", option], env, timeout=15)
+                code, output = run(
+                    [runtime / "bin/wineserver", option], env, timeout=SUBPROCESS_TIMEOUT
+                )
                 # -k returns 1 when no server is running. Always require -w to
                 # succeed, even if -k failed, before considering deletion.
                 if code not in ((0, 1) if option == "-k" else (0,)):
@@ -209,12 +212,14 @@ class LegacyTLS10Account(unittest.TestCase):
                 + ["-o", str(probe), "-lwininet"],
                 check=True,
                 capture_output=True,
-                timeout=60,
+                timeout=SUBPROCESS_TIMEOUT,
             )
             code, output = run([runtime / "bin/wine", "wineboot", "--init"], env, timeout=180)
             self.assertEqual(code, 0, output)
             port = url.rsplit(":", 1)[1].rstrip("/")
-            code, output = run([runtime / "bin/wine", probe, "127.0.0.1", port], env, timeout=60)
+            code, output = run(
+                [runtime / "bin/wine", probe, "127.0.0.1", port], env, timeout=SUBPROCESS_TIMEOUT
+            )
             self.assertEqual(code, 0, output)
             self.assertIn("HTTP 200", output)
             # The self-signed fixture must go through the game's retry path.

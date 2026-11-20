@@ -9,6 +9,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from hang_guard import SUBPROCESS_TIMEOUT
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src/python"))
 
@@ -263,7 +265,9 @@ class OverlayTests(unittest.TestCase):
             "tmn.dat",
         ]
         env = {"PATH": "/usr/bin:/bin", "PYTHONPATH": str(ROOT / "src/python")}
-        ok = subprocess.run(command, env=env, capture_output=True, text=True, timeout=60)
+        ok = subprocess.run(
+            command, env=env, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT
+        )
         self.assertEqual(ok.returncode, 0, ok.stderr)
         self.assertEqual((self.game / EXE).read_bytes(), b"new exe")
         bad = subprocess.run(
@@ -271,7 +275,7 @@ class OverlayTests(unittest.TestCase):
             env=env,
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=SUBPROCESS_TIMEOUT,
         )
         self.assertEqual(bad.returncode, 1)
         self.assertIn("error: Overlay archive SHA-256 mismatch", bad.stderr)

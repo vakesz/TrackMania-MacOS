@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
+from hang_guard import SUBPROCESS_TIMEOUT
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -89,7 +90,7 @@ class ProbeRunner(unittest.TestCase):
             ],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=SUBPROCESS_TIMEOUT,
         )
         self.assertEqual(result.returncode, 7)
         self.assertEqual(result.stdout, "probe output\n")
@@ -98,7 +99,7 @@ class ProbeRunner(unittest.TestCase):
                 [sys.executable, str(RUNNER), "5", directory + "/missing"],
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=SUBPROCESS_TIMEOUT,
             )
         self.assertEqual(result.returncode, 127)
         self.assertIn("cannot run probe", result.stderr)
@@ -108,7 +109,7 @@ class ProbeRunner(unittest.TestCase):
                     [sys.executable, str(RUNNER), timeout, sys.executable],
                     capture_output=True,
                     text=True,
-                    timeout=10,
+                    timeout=SUBPROCESS_TIMEOUT,
                 )
                 self.assertEqual(result.returncode, 2)
 
@@ -131,7 +132,7 @@ class ProbeRunner(unittest.TestCase):
                     env=env,
                     capture_output=True,
                     text=True,
-                    timeout=5,
+                    timeout=SUBPROCESS_TIMEOUT,
                 )
                 self.assertEqual(result.returncode, 124)
                 self.assertIn("exceeded 1 seconds", result.stderr)
@@ -140,14 +141,14 @@ class ProbeRunner(unittest.TestCase):
                 self.assertIsNone(survivor.poll())
             finally:
                 survivor.kill()
-                survivor.wait(timeout=5)
+                survivor.wait(timeout=SUBPROCESS_TIMEOUT)
 
     def test_success_also_cleans_up_descendants(self):
         result = subprocess.run(
             [sys.executable, str(RUNNER), "5", sys.executable, "-c", TREE],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=SUBPROCESS_TIMEOUT,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(result.stdout.strip().isdigit())
@@ -171,12 +172,12 @@ class ProbeRunner(unittest.TestCase):
                 try:
                     self.assertTrue(process.stdout.readline().strip().isdigit())
                     process.send_signal(sig)
-                    _, error = process.communicate(timeout=5)
+                    _, error = process.communicate(timeout=SUBPROCESS_TIMEOUT)
                     self.assertEqual(process.returncode, 128 + sig, error)
                 finally:
                     if process.poll() is None:
                         process.kill()
-                    process.communicate(timeout=10)
+                    process.communicate(timeout=SUBPROCESS_TIMEOUT)
 
 
 class SmokeScripts(unittest.TestCase):

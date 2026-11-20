@@ -3,6 +3,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from hang_guard import SUBPROCESS_TIMEOUT
 
 ROOT = Path(__file__).resolve().parents[1]
 COMMON = ROOT / "src/shell/lib/common.sh"
@@ -18,7 +19,7 @@ def bash(script, *args, home, **extra):
         env=env,
         text=True,
         capture_output=True,
-        timeout=20,
+        timeout=SUBPROCESS_TIMEOUT,
     )
 
 

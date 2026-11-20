@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 from trackmania_mac.guard import operation_guard as guard
+from hang_guard import SUBPROCESS_TIMEOUT
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "src/python/trackmania_mac/guard/operation_guard.py"
@@ -47,14 +48,14 @@ class Operations(unittest.TestCase):
             pass_fds=pass_fds,
             text=True,
             capture_output=True,
-            timeout=10,
+            timeout=SUBPROCESS_TIMEOUT,
             check=False,
         )
 
     def stop(self, process):
         if process.poll() is None:
             process.kill()
-        process.wait(timeout=5)
+        process.wait(timeout=SUBPROCESS_TIMEOUT)
         for stream in (process.stdin, process.stdout, process.stderr):
             if stream is not None:
                 stream.close()
@@ -144,7 +145,7 @@ class Operations(unittest.TestCase):
         guard.check_inactive(other)
         self.assertIsNone(holder.poll())
         self.assertEqual((path.read_bytes(), path.stat().st_ino), before)
-        holder.communicate("", timeout=5)
+        holder.communicate("", timeout=SUBPROCESS_TIMEOUT)
         guard.check_inactive(self.prefix)
         self.assertEqual((path.read_bytes(), path.stat().st_ino), before)
 
@@ -287,7 +288,7 @@ class Operations(unittest.TestCase):
         other.parent.mkdir()
         result = self.cli("run", other, sys.executable, "-c", "pass")
         self.assertEqual(result.returncode, 0, result.stderr)
-        first.communicate("", timeout=5)
+        first.communicate("", timeout=SUBPROCESS_TIMEOUT)
         self.assertEqual(first.returncode, 0)
         self.assertEqual(self.cli("run", self.prefix, sys.executable, "-c", "pass").returncode, 0)
 
@@ -339,7 +340,7 @@ class Operations(unittest.TestCase):
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         finally:
             os.close(fd)
-        first.communicate("", timeout=5)
+        first.communicate("", timeout=SUBPROCESS_TIMEOUT)
         self.assertEqual(first.returncode, 0)
         # Released with the operation, not held by anything it started.
         fd = os.open(guard.legacy_operation_lock_path(self.prefix), os.O_RDWR)
@@ -381,8 +382,8 @@ class Operations(unittest.TestCase):
         )
         time.sleep(0.6)
         self.assertIsNone(waiter.poll())
-        holder.communicate("", timeout=5)
-        out, err = waiter.communicate(timeout=8)
+        holder.communicate("", timeout=SUBPROCESS_TIMEOUT)
+        out, err = waiter.communicate(timeout=SUBPROCESS_TIMEOUT)
         self.assertEqual(waiter.returncode, 0, err)
         self.assertEqual(err.count("Waiting for the previous TrackMania session to finish"), 1)
 
@@ -497,7 +498,7 @@ class Operations(unittest.TestCase):
         other_home.mkdir()
         result = self.cli(*command, env=dict(self.env, HOME=str(other_home)))
         self.assertEqual(result.returncode, 0, result.stderr)
-        first.communicate("", timeout=5)
+        first.communicate("", timeout=SUBPROCESS_TIMEOUT)
         self.assertEqual(first.returncode, 0)
         path = self.home / "Library/TrackManiaMacOS/.app-install.lock"
         path.write_bytes(b"keep lock contents")
@@ -578,7 +579,7 @@ class Operations(unittest.TestCase):
         )
         self.wait_file(ready, process)
         process.send_signal(signal.SIGTERM)
-        stdout, stderr = process.communicate(timeout=8)
+        stdout, stderr = process.communicate(timeout=SUBPROCESS_TIMEOUT)
         self.assertEqual(process.returncode, 143, (stdout, stderr))
         self.assertEqual(self.cli("held", self.prefix, pass_fds=(fd,)).returncode, 0)
         with self.assertRaisesRegex(ValueError, "Another operation"):
@@ -615,7 +616,7 @@ class Operations(unittest.TestCase):
         )
         self.wait_file(ready, process)
         process.send_signal(signal.SIGTERM)
-        stdout, stderr = process.communicate(timeout=8)
+        stdout, stderr = process.communicate(timeout=SUBPROCESS_TIMEOUT)
         self.assertEqual(process.returncode, 143, (stdout, stderr))
         result = self.cli(
             "run",
@@ -796,7 +797,7 @@ class Operations(unittest.TestCase):
                 self.assertNotEqual(pgid, os.getpgrp())
                 started = time.monotonic()
                 process.send_signal(signum)
-                stdout, stderr = process.communicate(timeout=8)
+                stdout, stderr = process.communicate(timeout=SUBPROCESS_TIMEOUT)
                 self.assertEqual(process.returncode, 128 + signum, (stdout, stderr))
                 self.assertLess(time.monotonic() - started, 7)
                 self.assertEqual(received.read_text(), str(int(signum)))
@@ -854,7 +855,7 @@ class Operations(unittest.TestCase):
                 process = self.spawn(command)
                 self.wait_file(ready, process)
                 process.send_signal(signal.SIGTERM)
-                stdout, stderr = process.communicate(timeout=8)
+                stdout, stderr = process.communicate(timeout=SUBPROCESS_TIMEOUT)
                 self.assertEqual(process.returncode, 143, (stdout, stderr))
                 self.assertTrue(received.exists())
                 self.assertEqual(
@@ -1041,8 +1042,8 @@ class Reap(unittest.TestCase):
         count, output = self.reap()
         self.assertEqual(count, 2)
         self.assertEqual(output, "Stopped 2 Wine processes left behind by the installer.\n")
-        self.assertEqual(polite.wait(timeout=5), -signal.SIGTERM)
-        self.assertEqual(stubborn.wait(timeout=5), -signal.SIGKILL)
+        self.assertEqual(polite.wait(timeout=SUBPROCESS_TIMEOUT), -signal.SIGTERM)
+        self.assertEqual(stubborn.wait(timeout=SUBPROCESS_TIMEOUT), -signal.SIGKILL)
 
     def test_stops_a_holder_that_only_maps_a_deleted_server_file(self):
         # Installer leftovers hold nothing linked in the server directory, only
@@ -1051,7 +1052,7 @@ class Reap(unittest.TestCase):
         orphan = self.holder(directory / "tmpmap-0000beef", "mapped")
         count, _ = self.reap()
         self.assertEqual(count, 1)
-        self.assertEqual(orphan.wait(timeout=5), -signal.SIGKILL)
+        self.assertEqual(orphan.wait(timeout=SUBPROCESS_TIMEOUT), -signal.SIGKILL)
 
     def test_leaves_unrelated_processes_alone(self):
         directory = self.server_dir()
@@ -1061,7 +1062,7 @@ class Reap(unittest.TestCase):
         victim = self.holder(directory)
         count, _ = self.reap()
         self.assertEqual(count, 1)
-        victim.wait(timeout=5)
+        victim.wait(timeout=SUBPROCESS_TIMEOUT)
         self.assertIsNone(bystander.poll())
 
     def test_refuses_a_server_dir_that_is_not_private_or_is_a_symlink(self):
@@ -1110,12 +1111,12 @@ class Reap(unittest.TestCase):
             env=dict(env, PYTHONPATH=str(ROOT / "src/python")),
             text=True,
             capture_output=True,
-            timeout=15,
+            timeout=SUBPROCESS_TIMEOUT,
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Stopped 1 Wine processes", result.stdout)
-        victim.wait(timeout=5)
+        victim.wait(timeout=SUBPROCESS_TIMEOUT)
 
 
 if __name__ == "__main__":

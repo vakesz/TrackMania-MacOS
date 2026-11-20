@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+from hang_guard import SUBPROCESS_TIMEOUT
 
 ROOT = Path(__file__).resolve().parents[1]
 TITLES = ROOT / "config/titles"
@@ -179,7 +180,7 @@ class TitleRegistryTests(unittest.TestCase):
             cwd=ROOT,
             text=True,
             capture_output=True,
-            timeout=15,
+            timeout=SUBPROCESS_TIMEOUT,
             env={"PATH": "/usr/bin:/bin", "HOME": "/tmp"},
         )
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -207,7 +208,7 @@ class TitleRegistryTests(unittest.TestCase):
             cwd=ROOT,
             text=True,
             capture_output=True,
-            timeout=15,
+            timeout=SUBPROCESS_TIMEOUT,
             env={"PATH": "/usr/bin:/bin", "HOME": "/tmp/h", "TRACKMANIA_MAC_PREFIX": "/tmp/p"},
         )
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -253,7 +254,7 @@ class TitleRegistryTests(unittest.TestCase):
             cwd=ROOT,
             text=True,
             capture_output=True,
-            timeout=15,
+            timeout=SUBPROCESS_TIMEOUT,
             env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TRACKMANIA_MAC_CACHE": "/tmp/c"},
         )
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -274,7 +275,7 @@ class TitleRegistryTests(unittest.TestCase):
                 cwd=ROOT,
                 text=True,
                 capture_output=True,
-                timeout=60,
+                timeout=SUBPROCESS_TIMEOUT,
                 env={"PATH": "/usr/bin:/bin", "HOME": "/tmp"},
             )
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -295,7 +296,7 @@ class TitleRegistryTests(unittest.TestCase):
                     cwd=ROOT,
                     text=True,
                     capture_output=True,
-                    timeout=15,
+                    timeout=SUBPROCESS_TIMEOUT,
                     env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", **environment},
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -311,7 +312,7 @@ class TitleRegistryTests(unittest.TestCase):
             cwd=ROOT,
             text=True,
             capture_output=True,
-            timeout=15,
+            timeout=SUBPROCESS_TIMEOUT,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         title, game_exe, root = result.stdout.splitlines()
@@ -334,7 +335,7 @@ class TitleRegistryTests(unittest.TestCase):
                     cwd=ROOT,
                     text=True,
                     capture_output=True,
-                    timeout=15,
+                    timeout=SUBPROCESS_TIMEOUT,
                     env={
                         "PATH": "/usr/bin:/bin",
                         "HOME": "/tmp",
@@ -388,7 +389,7 @@ class TitleRegistryTests(unittest.TestCase):
                         cwd=ROOT,
                         text=True,
                         capture_output=True,
-                        timeout=15,
+                        timeout=SUBPROCESS_TIMEOUT,
                         env=env,
                     )
                     self.assertEqual(result.returncode, 0, result.stderr)
@@ -403,7 +404,7 @@ class TitleRegistryTests(unittest.TestCase):
                 cwd=ROOT,
                 text=True,
                 capture_output=True,
-                timeout=15,
+                timeout=SUBPROCESS_TIMEOUT,
                 env=dict(env, TRACKMANIA_MAC_APP=str(home / "Game.app")),
             )
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -423,7 +424,7 @@ class TitleRegistryTests(unittest.TestCase):
             cwd=ROOT,
             text=True,
             capture_output=True,
-            timeout=15,
+            timeout=SUBPROCESS_TIMEOUT,
             env={
                 "PATH": "/usr/bin:/bin",
                 "HOME": "/tmp",
@@ -471,7 +472,7 @@ class TitleRegistryTests(unittest.TestCase):
                     cwd=ROOT,
                     text=True,
                     capture_output=True,
-                    timeout=15,
+                    timeout=SUBPROCESS_TIMEOUT,
                     env={
                         "PATH": "/usr/bin:/bin",
                         "HOME": home,
@@ -509,7 +510,7 @@ class TitleRegistryTests(unittest.TestCase):
             cwd=ROOT,
             text=True,
             capture_output=True,
-            timeout=15,
+            timeout=SUBPROCESS_TIMEOUT,
             env={"PATH": "/usr/bin:/bin", "HOME": home, "TRACKMANIA_MAC_TITLE": "tmn-eswc"},
         )
 
@@ -562,7 +563,7 @@ class TitleRegistryTests(unittest.TestCase):
                     cwd=ROOT,
                     text=True,
                     capture_output=True,
-                    timeout=15,
+                    timeout=SUBPROCESS_TIMEOUT,
                     env={
                         "PATH": "/usr/bin:/bin",
                         "HOME": "/tmp",
@@ -620,7 +621,7 @@ class TitleRegistryTests(unittest.TestCase):
                     cwd=ROOT,
                     text=True,
                     capture_output=True,
-                    timeout=15,
+                    timeout=SUBPROCESS_TIMEOUT,
                     env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TRACKMANIA_MAC_TITLE": title.id},
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -652,7 +653,7 @@ class TitleRegistryTests(unittest.TestCase):
                     cwd=ROOT,
                     text=True,
                     capture_output=True,
-                    timeout=15,
+                    timeout=SUBPROCESS_TIMEOUT,
                     env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TRACKMANIA_MAC_TITLE": title.id},
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -664,7 +665,7 @@ class TitleRegistryTests(unittest.TestCase):
             cwd=ROOT,
             text=True,
             capture_output=True,
-            timeout=15,
+            timeout=SUBPROCESS_TIMEOUT,
             env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TRACKMANIA_MAC_TITLE": "tmnf"},
         )
         self.assertNotEqual(result.returncode, 0)
@@ -683,7 +684,7 @@ class TitleRegistryTests(unittest.TestCase):
                     cwd=ROOT,
                     text=True,
                     capture_output=True,
-                    timeout=15,
+                    timeout=SUBPROCESS_TIMEOUT,
                     env={
                         "PATH": "/usr/bin:/bin",
                         "HOME": "/tmp/trackmania-mac-no-home",
@@ -712,7 +713,7 @@ class TitleRegistryTests(unittest.TestCase):
             ["/bin/bash", str(ROOT / "src/shell/cli/trackmania-mac"), "titles"],
             text=True,
             capture_output=True,
-            timeout=15,
+            timeout=SUBPROCESS_TIMEOUT,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         for path in sorted(TITLES.glob("*.json")):
@@ -724,7 +725,7 @@ class TitleRegistryTests(unittest.TestCase):
             cwd=ROOT,
             text=True,
             capture_output=True,
-            timeout=15,
+            timeout=SUBPROCESS_TIMEOUT,
             env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TRACKMANIA_MAC_TITLE": "nope"},
         )
         self.assertNotEqual(result.returncode, 0)
@@ -1401,7 +1402,7 @@ class RegistryValidationTests(unittest.TestCase):
                 ],
                 cwd=ROOT,
                 capture_output=True,
-                timeout=15,
+                timeout=SUBPROCESS_TIMEOUT,
                 env={
                     "PATH": "/usr/bin:/bin",
                     "HOME": directory,
@@ -1433,7 +1434,7 @@ class RegistryValidationTests(unittest.TestCase):
                 cwd=ROOT,
                 text=True,
                 capture_output=True,
-                timeout=15,
+                timeout=SUBPROCESS_TIMEOUT,
                 env={
                     "PATH": "/usr/bin:/bin",
                     "HOME": directory,

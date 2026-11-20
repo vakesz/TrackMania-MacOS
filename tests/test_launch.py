@@ -10,6 +10,7 @@ import unittest
 from unittest import mock
 
 from trackmania_mac.app import launch
+from hang_guard import SUBPROCESS_TIMEOUT
 
 SCRIPT = Path(__file__).resolve().parents[1] / "src/python/trackmania_mac/app/launch.py"
 
@@ -56,7 +57,11 @@ class AppLaunch(unittest.TestCase):
 
     def cli(self, action="play", log=None):
         return subprocess.run(
-            self.command(action, log), env=self.env, capture_output=True, timeout=8, check=False
+            self.command(action, log),
+            env=self.env,
+            capture_output=True,
+            timeout=SUBPROCESS_TIMEOUT,
+            check=False,
         )
 
     def spawn(self):
@@ -73,7 +78,7 @@ class AppLaunch(unittest.TestCase):
     def stop(self, process):
         if process.poll() is None:
             process.kill()
-        process.wait(timeout=5)
+        process.wait(timeout=SUBPROCESS_TIMEOUT)
 
     def wait_file(self, path, process=None):
         deadline = time.monotonic() + 5
@@ -234,7 +239,7 @@ class AppLaunch(unittest.TestCase):
                     [sys.executable, str(SCRIPT), *args],
                     env=self.env,
                     capture_output=True,
-                    timeout=5,
+                    timeout=SUBPROCESS_TIMEOUT,
                     check=False,
                 )
                 self.assertEqual(result.returncode, 2)
@@ -277,7 +282,7 @@ class AppLaunch(unittest.TestCase):
         self.assertEqual(self.log.read_bytes(), before)
         self.assertFalse(self.backup(1).exists())
         release.touch()
-        self.assertEqual(first.wait(timeout=5), 0)
+        self.assertEqual(first.wait(timeout=SUBPROCESS_TIMEOUT), 0)
         self.stub()
         self.assertEqual(self.cli().returncode, 0)
         self.assertEqual(lock.stat().st_ino, inode)
@@ -307,7 +312,7 @@ class AppLaunch(unittest.TestCase):
                 process = self.spawn()
                 self.wait_file(ready, process)
                 process.send_signal(signum)
-                self.assertEqual(process.wait(timeout=5), 128 + signum)
+                self.assertEqual(process.wait(timeout=SUBPROCESS_TIMEOUT), 128 + signum)
                 self.assertEqual(received.read_text(), str(int(signum)))
                 self.assertIsNone(unrelated.poll())
                 self.assertTrue(

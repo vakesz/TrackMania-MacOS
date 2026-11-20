@@ -19,6 +19,7 @@ import unittest
 from unittest import mock
 import warnings
 from urllib.parse import urlsplit
+from hang_guard import SUBPROCESS_TIMEOUT
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -99,7 +100,7 @@ class TLSFixtures(unittest.TestCase):
                     ],
                     capture_output=True,
                     text=True,
-                    timeout=5,
+                    timeout=SUBPROCESS_TIMEOUT,
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 text = subprocess.check_output(
@@ -247,19 +248,22 @@ class TLSFixtures(unittest.TestCase):
                     if not select.select([process.stdout], [], [], 5)[0]:
                         # SIGABRT makes faulthandler dump every thread's stack, showing where it stalled.
                         process.send_signal(signal.SIGABRT)
-                        self.fail("no readiness line:\n" + process.communicate(timeout=5)[1])
+                        self.fail(
+                            "no readiness line:\n"
+                            + process.communicate(timeout=SUBPROCESS_TIMEOUT)[1]
+                        )
                     urls = json.loads(process.stdout.readline())
                     with connect(urls["valid"], trust(FIXTURES / "ca.pem")):
                         pass
                     process.send_signal(sig)
-                    output, error = process.communicate(timeout=5)
+                    output, error = process.communicate(timeout=SUBPROCESS_TIMEOUT)
                     self.assertEqual(process.returncode, 0, error)
                     self.assertEqual(output, "")
                     self.assert_ports_closed(urls)
                 finally:
                     if process.poll() is None:
                         process.kill()
-                    process.communicate(timeout=5)
+                    process.communicate(timeout=SUBPROCESS_TIMEOUT)
 
 
 class LegacyTLS10Server(unittest.TestCase):
@@ -488,7 +492,9 @@ class NetworkProbe(unittest.TestCase):
                             run.call_args_list,
                             [
                                 mock.call(
-                                    [Path("/runtime/bin/wineserver"), option], env, timeout=15
+                                    [Path("/runtime/bin/wineserver"), option],
+                                    env,
+                                    timeout=SUBPROCESS_TIMEOUT,
                                 )
                                 for option in ("-k", "-w")
                             ],
@@ -559,7 +565,7 @@ class NetworkProbe(unittest.TestCase):
                         env=env,
                         capture_output=True,
                         text=True,
-                        timeout=10,
+                        timeout=SUBPROCESS_TIMEOUT,
                     )
                     self.assertEqual(result.returncode, 0, result.stderr)
                     calls = [json.loads(line) for line in log.read_text().splitlines()]
@@ -596,7 +602,7 @@ class NetworkProbe(unittest.TestCase):
                         env={"PATH": directory, "HOME": directory},
                         capture_output=True,
                         text=True,
-                        timeout=5,
+                        timeout=SUBPROCESS_TIMEOUT,
                     )
                     self.assertEqual(result.returncode, 2, result.stderr)
                     self.assertNotIn("Missing", result.stderr)

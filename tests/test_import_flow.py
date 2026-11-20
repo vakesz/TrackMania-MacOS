@@ -3,6 +3,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from hang_guard import SUBPROCESS_TIMEOUT
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,7 +35,7 @@ class ImportFlowTests(unittest.TestCase):
             env=env,
             text=True,
             capture_output=True,
-            timeout=20,
+            timeout=SUBPROCESS_TIMEOUT,
         )
 
     def test_online_titles_refuse_import(self):

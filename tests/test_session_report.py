@@ -10,6 +10,7 @@ import unittest
 from unittest import mock
 
 from trackmania_mac.session import monitor, report
+from hang_guard import SUBPROCESS_TIMEOUT
 
 # One session: unknown until the helper reports, then menu, race (focus lost for a
 # while), finish. Wine's +fps lines, helper lines and monitor lines share one clock.
@@ -171,7 +172,7 @@ class StateHelperBuildTests(unittest.TestCase):
     def start(self):
         process = monitor.start_state_helper(self.cache, "the-prefix", str(self.wine))
         if process is not None:
-            self.assertEqual(process.wait(timeout=10), 0)
+            self.assertEqual(process.wait(timeout=SUBPROCESS_TIMEOUT), 0)
         return process
 
     def exe(self):

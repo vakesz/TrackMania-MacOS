@@ -11,6 +11,7 @@ import unittest
 
 from trackmania_mac.guard import operation_guard as guard
 from trackmania_mac.install import version as project_version
+from hang_guard import SUBPROCESS_TIMEOUT
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,7 +62,11 @@ class AppInstallTests(unittest.TestCase):
 
     def run_app(self, **overrides):
         return subprocess.run(
-            self.cli, env=dict(self.env, **overrides), text=True, capture_output=True, timeout=15
+            self.cli,
+            env=dict(self.env, **overrides),
+            text=True,
+            capture_output=True,
+            timeout=SUBPROCESS_TIMEOUT,
         )
 
     def snapshot(self):
@@ -114,7 +119,7 @@ class AppInstallTests(unittest.TestCase):
             self.assertIn("Another app installation", result.stderr)
             self.assertEqual(self.snapshot(), self.before)
             process.send_signal(signal.SIGTERM)
-            stdout, stderr = process.communicate(timeout=8)
+            stdout, stderr = process.communicate(timeout=SUBPROCESS_TIMEOUT)
             self.assertEqual(process.returncode, 143, (stdout, stderr))
             self.assertEqual(self.snapshot(), self.before)
             with self.assertRaisesRegex(ValueError, "Another operation"):
@@ -129,7 +134,7 @@ class AppInstallTests(unittest.TestCase):
         finally:
             if process.poll() is None:
                 process.send_signal(signal.SIGTERM)
-            process.communicate(timeout=8)
+            process.communicate(timeout=SUBPROCESS_TIMEOUT)
 
     def test_overlap_and_forged_token_preserve_existing_content(self):
         for overrides in (
@@ -159,7 +164,7 @@ class AppInstallTests(unittest.TestCase):
             pass_fds=(fd,),
             text=True,
             capture_output=True,
-            timeout=15,
+            timeout=SUBPROCESS_TIMEOUT,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("returned", result.stdout)
@@ -191,7 +196,9 @@ class AppInstallTests(unittest.TestCase):
         return env
 
     def run_env(self, env):
-        return subprocess.run(self.cli, env=env, text=True, capture_output=True, timeout=15)
+        return subprocess.run(
+            self.cli, env=env, text=True, capture_output=True, timeout=SUBPROCESS_TIMEOUT
+        )
 
     def test_titles_install_into_separate_launchers(self):
         support = self.home / "support"
@@ -278,7 +285,11 @@ class AppInstallTests(unittest.TestCase):
         entry.write_text(entry.read_text().replace("/usr/bin/osascript", str(alert)))
         # self.env's PATH has a python3; it must not be used as a fallback.
         result = subprocess.run(
-            ["/bin/bash", str(entry)], env=self.env, text=True, capture_output=True, timeout=15
+            ["/bin/bash", str(entry)],
+            env=self.env,
+            text=True,
+            capture_output=True,
+            timeout=SUBPROCESS_TIMEOUT,
         )
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("launcher support files are missing", alerts.read_text())
@@ -296,7 +307,11 @@ class AppInstallTests(unittest.TestCase):
         alert.chmod(0o755)
         entry.write_text(entry.read_text().replace("/usr/bin/osascript", str(alert)))
         result = subprocess.run(
-            ["/bin/bash", str(entry)], env=self.env, text=True, capture_output=True, timeout=15
+            ["/bin/bash", str(entry)],
+            env=self.env,
+            text=True,
+            capture_output=True,
+            timeout=SUBPROCESS_TIMEOUT,
         )
         return result, alerts.read_text() if alerts.exists() else ""
 
@@ -393,7 +408,7 @@ class AppRenameTests(unittest.TestCase):
             env=dict(self.env, **overrides),
             text=True,
             capture_output=True,
-            timeout=30,
+            timeout=SUBPROCESS_TIMEOUT,
         )
 
     @staticmethod

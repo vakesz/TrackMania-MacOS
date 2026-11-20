@@ -6,6 +6,7 @@ from pathlib import Path
 
 from trackmania_mac import legacy
 from trackmania_mac.app import launcher_config
+from hang_guard import SUBPROCESS_TIMEOUT
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,7 +36,7 @@ def shell(script: str, *arguments: str, locale: str = "C") -> subprocess.Complet
         ["/bin/bash", "-c", script, "_", *arguments],
         capture_output=True,
         env={"PATH": "/usr/bin:/bin", "LC_ALL": locale},
-        timeout=30,
+        timeout=SUBPROCESS_TIMEOUT,
     )
 
 

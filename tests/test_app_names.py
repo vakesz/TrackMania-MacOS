@@ -18,6 +18,7 @@ from trackmania_mac.app import names
 from trackmania_mac.guard import app_rename
 from trackmania_mac.hub import paths as hub_paths
 from trackmania_mac.hub import registry
+from hang_guard import SUBPROCESS_TIMEOUT
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -132,7 +133,7 @@ class NameFileTests(unittest.TestCase):
             env=dict(os.environ, PYTHONPATH=str(ROOT / "src/python"), TRACKMANIA_MAC_TITLE=title),
             text=True,
             capture_output=True,
-            timeout=30,
+            timeout=SUBPROCESS_TIMEOUT,
         )
 
     def test_export_prints_shell_assignments(self):
@@ -291,7 +292,7 @@ class RenameTests(unittest.TestCase):
                 env=dict(os.environ, PYTHONPATH=str(ROOT / "src/python")),
                 text=True,
                 capture_output=True,
-                timeout=30,
+                timeout=SUBPROCESS_TIMEOUT,
             )
 
         paths = (str(self.root), str(self.game), str(self.settings))

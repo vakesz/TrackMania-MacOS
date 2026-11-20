@@ -25,6 +25,7 @@ from trackmania_mac.install.runtime_manifest import (
     digest,
     verify_runtime,
 )
+from hang_guard import SUBPROCESS_TIMEOUT
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -107,7 +108,7 @@ elif args and Path(args[0]).name == 'trackmania-mac-session.exe':
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def shell(self, command, cwd=ROOT, timeout=15, **overrides):
+    def shell(self, command, cwd=ROOT, timeout=SUBPROCESS_TIMEOUT, **overrides):
         self.log.unlink(missing_ok=True)
         return subprocess.run(
             ["/bin/bash", "-euc", command],
@@ -338,7 +339,11 @@ elif args and Path(args[0]).name == 'trackmania-mac-session.exe':
             "PYTHONDONTWRITEBYTECODE": "1",
         }
         result = subprocess.run(
-            ["/bin/bash", str(entry)], env=env, text=True, capture_output=True, timeout=30
+            ["/bin/bash", str(entry)],
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=SUBPROCESS_TIMEOUT,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         log = self.home / "Library/TrackManiaMacOS/logs/play.log"

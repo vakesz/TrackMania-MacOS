@@ -19,6 +19,7 @@ from trackmania_mac.hub import run as hub_run
 from trackmania_mac.hub import paths as hub_paths
 from trackmania_mac.hub import diagnostics, registry, snapshot, state
 from trackmania_mac.install import version as project_version
+from hang_guard import SUBPROCESS_TIMEOUT
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,7 +82,7 @@ class HubBackendTests(unittest.TestCase):
             env=env,
             text=True,
             capture_output=True,
-            timeout=30,
+            timeout=SUBPROCESS_TIMEOUT,
         )
 
     def test_snapshot_uses_each_titles_own_paths_without_running_wine(self):
@@ -585,7 +586,7 @@ class HubBackendTests(unittest.TestCase):
                 env=env,
                 text=True,
                 capture_output=True,
-                timeout=30,
+                timeout=SUBPROCESS_TIMEOUT,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)["schema"], 3)

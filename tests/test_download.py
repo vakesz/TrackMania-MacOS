@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+from hang_guard import SUBPROCESS_TIMEOUT
 
 ROOT = Path(__file__).resolve().parents[1]
 BODY = b"installer bytes"
@@ -110,7 +111,7 @@ class InnoStaging(unittest.TestCase):
             env={"PATH": "/usr/bin:/bin", "HOME": str(home), "TRACKMANIA_MAC_TITLE": "tmu"},
             text=True,
             capture_output=True,
-            timeout=30,
+            timeout=SUBPROCESS_TIMEOUT,
         )
         return result, staging
 
@@ -182,7 +183,7 @@ class StopInstallerTree(unittest.TestCase):
             },
             text=True,
             capture_output=True,
-            timeout=60,
+            timeout=SUBPROCESS_TIMEOUT,
         )
         return result, time.monotonic() - started, pidfile
 
@@ -266,7 +267,7 @@ class InteractiveSetup(unittest.TestCase):
             env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "TRACKMANIA_MAC_TITLE": "tmn-eswc"},
             text=True,
             capture_output=True,
-            timeout=30,
+            timeout=SUBPROCESS_TIMEOUT,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         notice, *arguments = result.stdout.splitlines()
@@ -318,7 +319,7 @@ class LayeredInstall(unittest.TestCase):
             env={"PATH": "/usr/bin:/bin", "HOME": str(home), "TRACKMANIA_MAC_TITLE": "tmn-eswc"},
             text=True,
             capture_output=True,
-            timeout=30,
+            timeout=SUBPROCESS_TIMEOUT,
         )
         steps = home / "steps"
         return result, (steps.read_text().splitlines() if steps.exists() else []), home
@@ -536,7 +537,7 @@ class FinishPending(unittest.TestCase):
                 env={"PATH": "/usr/bin:/bin", "HOME": home, "TRACKMANIA_MAC_TITLE": "tmn-eswc"},
                 text=True,
                 capture_output=True,
-                timeout=30,
+                timeout=SUBPROCESS_TIMEOUT,
             )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((result.stdout, result.stderr), ("not pending\n", ""))
@@ -561,7 +562,7 @@ class UpdateStages(unittest.TestCase):
                 env={"PATH": "/usr/bin:/bin", "HOME": home, "TRACKMANIA_MAC_TITLE": "tmn-eswc"},
                 text=True,
                 capture_output=True,
-                timeout=30,
+                timeout=SUBPROCESS_TIMEOUT,
             )
 
     def test_a_pending_build_is_finished_by_install(self):

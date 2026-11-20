@@ -10,6 +10,7 @@ import unittest
 import zipfile
 
 from trackmania_mac.install import version as project_version
+from hang_guard import SUBPROCESS_TIMEOUT
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -146,7 +147,7 @@ class HubPackageTests(unittest.TestCase):
             ["plutil", "-lint", str(APP / "Contents/Info.plist")],
             text=True,
             capture_output=True,
-            timeout=20,
+            timeout=SUBPROCESS_TIMEOUT,
         )
         self.assertEqual(lint.returncode, 0, lint.stdout + lint.stderr)
 
@@ -156,7 +157,7 @@ class HubPackageTests(unittest.TestCase):
                 ["iconutil", "-c", "iconset", "-o", str(iconset), str(icon)],
                 text=True,
                 capture_output=True,
-                timeout=20,
+                timeout=SUBPROCESS_TIMEOUT,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual({path.name for path in iconset.iterdir()}, set(ICON_SIZES))
@@ -183,7 +184,7 @@ class HubPackageTests(unittest.TestCase):
                 [str(bundled_python), "-c", "import ssl, urllib.request, zipfile"],
                 text=True,
                 capture_output=True,
-                timeout=20,
+                timeout=SUBPROCESS_TIMEOUT,
                 env={"HOME": str(home), "PATH": str(tools), "PYTHONDONTWRITEBYTECODE": "1"},
             )
             self.assertEqual(
@@ -194,7 +195,7 @@ class HubPackageTests(unittest.TestCase):
                 cwd=launcher,
                 text=True,
                 capture_output=True,
-                timeout=20,
+                timeout=SUBPROCESS_TIMEOUT,
                 env={"HOME": str(home), "PATH": str(tools)},
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -215,7 +216,7 @@ class HubPackageTests(unittest.TestCase):
                 ],
                 text=True,
                 capture_output=True,
-                timeout=30,
+                timeout=SUBPROCESS_TIMEOUT,
                 env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
             )
             self.assertEqual(staged.returncode, 0, staged.stdout + staged.stderr)
@@ -228,7 +229,7 @@ class HubPackageTests(unittest.TestCase):
                 cwd=installed_support,
                 text=True,
                 capture_output=True,
-                timeout=20,
+                timeout=SUBPROCESS_TIMEOUT,
                 env={"HOME": str(home), "PATH": str(tools)},
             )
             self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
@@ -250,7 +251,7 @@ class HubPackageTests(unittest.TestCase):
                 ["unzip", "-q", str(ZIP), "-d", directory],
                 text=True,
                 capture_output=True,
-                timeout=60,
+                timeout=SUBPROCESS_TIMEOUT,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             subprocess.run(
@@ -281,7 +282,7 @@ class PackagerCommands(unittest.TestCase):
             ],
             text=True,
             capture_output=True,
-            timeout=30,
+            timeout=SUBPROCESS_TIMEOUT,
             env={"PATH": "/usr/bin:/bin"},
         )
         return result, result.stdout.split()
@@ -321,7 +322,7 @@ class PackagerCommands(unittest.TestCase):
             ],
             text=True,
             capture_output=True,
-            timeout=30,
+            timeout=SUBPROCESS_TIMEOUT,
             env={"PATH": "/usr/bin:/bin"},
         )
 
@@ -381,7 +382,7 @@ class ReleaseAssetsFile(unittest.TestCase):
             cwd=Path(tempfile.gettempdir()),
             text=True,
             capture_output=True,
-            timeout=30,
+            timeout=SUBPROCESS_TIMEOUT,
         )
         self.assertNotIn("improperly formatted", result.stderr)
         self.assertNotIn("no properly formatted", result.stderr)
@@ -403,7 +404,7 @@ class RuntimePinWriter(unittest.TestCase):
                 ],
                 text=True,
                 capture_output=True,
-                timeout=30,
+                timeout=SUBPROCESS_TIMEOUT,
                 env={"PATH": "/usr/bin:/bin", **env},
             )
             pin = launcher / "config/runtime-pin"

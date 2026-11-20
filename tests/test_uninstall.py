@@ -18,6 +18,7 @@ from unittest import mock
 from trackmania_mac.guard import operation_guard, uninstall
 from trackmania_mac.hub import registry
 from trackmania_mac.install import game_saves
+from hang_guard import SUBPROCESS_TIMEOUT
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1104,7 +1105,7 @@ class ShellUninstallTests(unittest.TestCase):
             stdin=subprocess.DEVNULL,
             text=True,
             capture_output=True,
-            timeout=60,
+            timeout=SUBPROCESS_TIMEOUT,
         )
 
     def test_include_saves_removes_one_title_and_nothing_nested_beside_it(self):
@@ -1264,7 +1265,7 @@ class ShellUninstallTests(unittest.TestCase):
                     },
                     text=True,
                     capture_output=True,
-                    timeout=30,
+                    timeout=SUBPROCESS_TIMEOUT,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(
@@ -1294,7 +1295,7 @@ class ShellUninstallTests(unittest.TestCase):
                     },
                     text=True,
                     capture_output=True,
-                    timeout=30,
+                    timeout=SUBPROCESS_TIMEOUT,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout.splitlines(), [str(path) for path, _ in extras])

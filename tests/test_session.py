@@ -14,6 +14,7 @@ from unittest import mock
 
 from trackmania_mac.guard import operation_guard as guard
 from trackmania_mac.session import supervisor as session
+from hang_guard import SUBPROCESS_TIMEOUT
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -238,7 +239,7 @@ class SessionTests(unittest.TestCase):
             env=dict(self.env, FAKE_SCENARIO=scenario, **env),
             text=True,
             capture_output=True,
-            timeout=8,
+            timeout=SUBPROCESS_TIMEOUT,
         )
 
     def spawn(self, command, env=None, **kwargs):
@@ -256,7 +257,7 @@ class SessionTests(unittest.TestCase):
     def reap(self, process):
         if process.poll() is None:
             process.kill()
-        process.communicate(timeout=5)
+        process.communicate(timeout=SUBPROCESS_TIMEOUT)
 
     def wait_file(self, name, process):
         path = self.home / name
@@ -329,7 +330,7 @@ class SessionTests(unittest.TestCase):
             cwd=str(neutral),
             text=True,
             capture_output=True,
-            timeout=8,
+            timeout=SUBPROCESS_TIMEOUT,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         invocation = json.loads((self.home / "invocation.json").read_text())
@@ -807,7 +808,7 @@ class SessionTests(unittest.TestCase):
             )
             self.wait_file("reg-ready", process)
             process.send_signal(signal.SIGTERM)
-            stdout, stderr = process.communicate(timeout=3)
+            stdout, stderr = process.communicate(timeout=SUBPROCESS_TIMEOUT)
             self.assertEqual(process.returncode, 143, (stdout, stderr))
             self.assertEqual(len(self.wine_calls()), 1)
             self.assertFalse((self.home / "invocation.json").exists())
@@ -1090,7 +1091,7 @@ class SessionTests(unittest.TestCase):
                     pass_fds=(fd,),
                     capture_output=True,
                     text=True,
-                    timeout=5,
+                    timeout=SUBPROCESS_TIMEOUT,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 with mock.patch.dict(os.environ, {guard.TOKEN: str(fd)}):
@@ -1123,7 +1124,7 @@ class SessionTests(unittest.TestCase):
         process = self.spawn(self.command(action="stop"), env=dict(self.env, FAKE_SCENARIO="hungk"))
         self.wait_file("server.jsonl", process)
         process.send_signal(signal.SIGINT)
-        stdout, stderr = process.communicate(timeout=3)
+        stdout, stderr = process.communicate(timeout=SUBPROCESS_TIMEOUT)
         self.assertEqual(process.returncode, 130, (stdout, stderr))
         self.assertEqual([call["option"] for call in self.server_calls()], ["-k"])
         self.assertIsNone(unrelated.poll())
@@ -1237,7 +1238,7 @@ class SessionTests(unittest.TestCase):
                     self.wait_file("signal-ready", process)
                     started = time.monotonic()
                     process.send_signal(signum)
-                    stdout, stderr = process.communicate(timeout=3)
+                    stdout, stderr = process.communicate(timeout=SUBPROCESS_TIMEOUT)
                     self.assertEqual(process.returncode, 128 + signum, (stdout, stderr))
                     self.assertLess(time.monotonic() - started, 1.5)
                     self.assertIsNone(unrelated.poll())
@@ -1271,7 +1272,7 @@ class SessionTests(unittest.TestCase):
         invocation = json.loads((self.home / "invocation.json").read_text())
         self.assertNotEqual(invocation["pgid"], process.pid)
         process.send_signal(signal.SIGTERM)
-        stdout, stderr = process.communicate(timeout=5)
+        stdout, stderr = process.communicate(timeout=SUBPROCESS_TIMEOUT)
         self.assertEqual(process.returncode, 143, (stdout, stderr))
         os.kill(int(game.read_text()), 0)
         self.assertEqual(self.server_calls(), [])

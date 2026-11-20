@@ -119,6 +119,7 @@ export TRACKMANIA_MAC_TEST_LOG="$CALL_LOG"
 : >"$CALL_LOG"
 help_output="$("${PROJECT_DIR}/src/shell/cli/trackmania-mac" help)"
 printf '%s\n' "$help_output" | grep -q 'directx.*June 2010 DirectX runtime'
+printf '%s\n' "$help_output" | grep -q 'rename-apps.*Rename the game and settings apps'
 
 doctor_status=0
 : >"$CALL_LOG"
@@ -447,6 +448,16 @@ test -e "$HOLDER_READY" || { echo 'the lock holder never took the prefix lock' >
 defaults_status=0
 "${PROJECT_DIR}/src/shell/cli/trackmania-mac" defaults --audio off >/dev/null 2>&1 || defaults_status=$?
 test "$defaults_status" = 75
+# rename-apps reports a mistake before it waits for any lock (status 1, not 75),
+# and an app path given explicitly (TRACKMANIA_MAC_APP here) turns it off.
+for arguments in '' 'A B' '--bogus' 'Mine'; do
+  rename_status=0
+  # shellcheck disable=SC2086 # Each case is a list of words.
+  rename_output="$("${PROJECT_DIR}/src/shell/cli/trackmania-mac" rename-apps $arguments 2>&1)" || rename_status=$?
+  test "$rename_status" = 1 || { echo "rename-apps $arguments exited $rename_status" >&2; exit 1; }
+done
+grep -Fq 'keep those names' <<<"$rename_output"
+test ! -e "${FAKE_ROOT}/app-name"
 pkill -P "$holder" 2>/dev/null || true
 kill "$holder" 2>/dev/null || true
 wait "$holder" 2>/dev/null || true

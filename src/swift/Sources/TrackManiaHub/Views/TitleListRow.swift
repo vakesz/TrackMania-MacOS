@@ -1,12 +1,24 @@
+import AppKit
 import SwiftUI
 
 extension HubTitle {
+    /// Text and tint of the support label. The system orange and green are too light to read as
+    /// text on their own tint in light mode, so light mode uses darker shades of them.
     var supportColor: Color {
         switch status {
-        case .supported: .green
-        case .provisional: .orange
+        case .supported: Self.supportedColor
+        case .provisional: Self.provisionalColor
         case .unsupported, .unknown: .secondary
         }
+    }
+
+    static let supportedColor = adaptive(light: NSColor(srgbRed: 0.10, green: 0.48, blue: 0.20, alpha: 1), dark: .systemGreen)
+    static let provisionalColor = adaptive(light: NSColor(srgbRed: 0.66, green: 0.30, blue: 0.00, alpha: 1), dark: .systemOrange)
+
+    private static func adaptive(light: NSColor, dark: NSColor) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+        })
     }
 }
 

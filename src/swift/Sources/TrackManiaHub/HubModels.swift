@@ -250,10 +250,12 @@ struct HubTitle: Decodable, Equatable, Identifiable {
     let actions: [HubAction]
     /// Defaults the game starts with; nil when the backend reports none for this title.
     let launchOptions: HubLaunchOptions?
+    /// Names of the installed apps; nil when the backend reports none (apps missing or older backend).
+    let appNames: HubAppNames?
 
     private enum CodingKeys: String, CodingKey {
         case id, name, shortName, status, releaseDate, notes, link, engine, kind, icon, iconSource, error
-        case requiresSerial, sourceSize, locations, sessionActive, state, apps, removal, actions, launchOptions
+        case requiresSerial, sourceSize, locations, sessionActive, state, apps, removal, actions, launchOptions, appNames
     }
 
     init(from decoder: Decoder) throws {
@@ -279,6 +281,7 @@ struct HubTitle: Decodable, Equatable, Identifiable {
         removal = (try? c.decodeIfPresent(HubRemoval.self, forKey: .removal)) ?? nil
         actions = c.lossyArray(HubAction.self, forKey: .actions)
         launchOptions = (try? c.decodeIfPresent(HubLaunchOptions.self, forKey: .launchOptions)) ?? nil
+        appNames = (try? c.decodeIfPresent(HubAppNames.self, forKey: .appNames)) ?? nil
     }
 
     init(id: String, name: String, shortName: String? = nil, status: TitleStatus = .supported,
@@ -286,13 +289,23 @@ struct HubTitle: Decodable, Equatable, Identifiable {
          iconSource: IconSource? = nil, error: String? = nil, requiresSerial: Bool? = nil,
          sourceSize: Int64? = nil, locations: HubLocations? = nil, sessionActive: Bool = false,
          state: HubInstallationState = .empty, apps: HubApps = HubApps(game: "", settings: ""),
-         removal: HubRemoval? = nil, actions: [HubAction] = [], launchOptions: HubLaunchOptions? = nil) {
+         removal: HubRemoval? = nil, actions: [HubAction] = [], launchOptions: HubLaunchOptions? = nil,
+         appNames: HubAppNames? = nil) {
         self.id = id; self.name = name; self.shortName = shortName; self.status = status
         self.releaseDate = releaseDate; self.notes = notes; self.link = link; self.engine = engine; self.kind = kind; self.icon = icon
         self.iconSource = iconSource; self.error = error; self.requiresSerial = requiresSerial
         self.sourceSize = sourceSize; self.locations = locations; self.sessionActive = sessionActive
         self.state = state; self.apps = apps; self.removal = removal; self.actions = actions
         self.launchOptions = launchOptions
+        self.appNames = appNames
+    }
+
+    /// Why the apps cannot be renamed now, else nil. The apps would be replaced while running.
+    var renameAppsLock: String? {
+        guard let appNames else { return nil }
+        if sessionActive { return String(localized: "Quit the game to rename its apps.") }
+        if !appNames.editable { return appNames.reason ?? String(localized: "The apps cannot be renamed now.") }
+        return nil
     }
 }
 

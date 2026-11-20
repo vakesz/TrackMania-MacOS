@@ -160,7 +160,12 @@ struct GameDefaultsSection: View {
     private var titles: [HubTitle] { model.snapshot?.gameDefaultTitles ?? [] }
 
     private var title: HubTitle? {
-        titles.first { $0.id == selectedID } ?? titles.first
+        Self.pickerTitle(in: titles, selectedID: selectedID, sidebarID: model.selectedTitleID)
+    }
+
+    /// The picked title, else the one selected in the sidebar, else the first.
+    static func pickerTitle(in titles: [HubTitle], selectedID: String?, sidebarID: String?) -> HubTitle? {
+        titles.first { $0.id == selectedID } ?? titles.first { $0.id == sidebarID } ?? titles.first
     }
 
     var body: some View {

@@ -74,7 +74,7 @@ final class HubUITests: XCTestCase {
             HubTitle(id: "x", name: "X", status: $0)
         }
         XCTAssertEqual(titles.map(\.supportLabel), ["Supported", "Provisional", "Unsupported", "Unsupported"])
-        XCTAssertEqual(titles.map(\.supportColor), [.green, .orange, .secondary, .secondary])
+        XCTAssertEqual(titles.map(\.supportColor), [HubTitle.supportedColor, HubTitle.provisionalColor, .secondary, .secondary])
     }
 
     func testDecodesNewFields() throws {

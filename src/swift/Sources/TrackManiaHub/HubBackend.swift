@@ -171,7 +171,8 @@ final class HubBackend: Sendable {
 
     static func runArguments(titleID: String, actionID: String, source: URL? = nil,
                              runtime: RuntimeSource? = nil, includeSaves: Bool = false,
-                             windowSize: String? = nil, audio: Bool? = nil, x87: Bool? = nil) -> [String] {
+                             windowSize: String? = nil, audio: Bool? = nil, x87: Bool? = nil,
+                             appName: String? = nil, resetAppName: Bool = false) -> [String] {
         var arguments = ["hub", "run", titleID, actionID]
         if let source {
             arguments += ["--source", source.path]
@@ -190,6 +191,13 @@ final class HubBackend: Sendable {
         }
         if let x87 {
             arguments += ["--x87", x87 ? "on" : "off"]
+        }
+        if let appName {
+            // One argument, so a name that starts with "-" cannot be read as an option.
+            arguments.append("--app-name=\(appName)")
+        }
+        if resetAppName {
+            arguments.append("--reset-app-name")
         }
         return arguments
     }
@@ -218,12 +226,14 @@ final class HubBackend: Sendable {
     func run(titleID: String, actionID: String, source: URL? = nil,
              runtime: RuntimeSource? = nil, includeSaves: Bool = false,
              windowSize: String? = nil, audio: Bool? = nil, x87: Bool? = nil,
+             appName: String? = nil, resetAppName: Bool = false,
              handle: HubCommandHandle = HubCommandHandle(),
              onOutput: @escaping @Sendable (String) -> Void = { _ in }) async throws -> HubCommandResult {
         let result = try await run(
             arguments: Self.runArguments(titleID: titleID, actionID: actionID, source: source,
                                          runtime: runtime, includeSaves: includeSaves,
-                                         windowSize: windowSize, audio: audio, x87: x87),
+                                         windowSize: windowSize, audio: audio, x87: x87,
+                                         appName: appName, resetAppName: resetAppName),
             handle: handle, onOutput: onOutput)
         guard result.status == 0 else { throw HubBackendError.commandFailed(result) }
         return result

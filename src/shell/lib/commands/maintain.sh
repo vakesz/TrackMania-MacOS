@@ -236,7 +236,7 @@ uninstall_game() {
   # The guard plans and removes in one process; this shell only asks and never
   # reads the plan back, so nothing in a path or an app can become a command.
   if test "$assume_yes" != true; then
-    trackmania_mac_python -m trackmania_mac.guard.uninstall plan ${plan_options[@]+"${plan_options[@]}"} \
+    trackmania_mac_python -m trackmania_mac.guard.uninstall plan --root "$TRACKMANIA_MAC_ROOT" ${plan_options[@]+"${plan_options[@]}"} \
       ${confirm_options[@]+"${confirm_options[@]}"} "${locations[@]}" \
       || status=$?
     case "$status" in
@@ -256,7 +256,7 @@ uninstall_game() {
   if test "$include_saves" = false; then
     sync_game_save_links || warn "Some saves could not be moved out of the game folder."
   fi
-  trackmania_mac_python -m trackmania_mac.guard.uninstall remove ${plan_options[@]+"${plan_options[@]}"} "${locations[@]}" \
+  trackmania_mac_python -m trackmania_mac.guard.uninstall remove --root "$TRACKMANIA_MAC_ROOT" ${plan_options[@]+"${plan_options[@]}"} "${locations[@]}" \
     || die "The uninstall did not finish. Run it again to remove what is left."
   say "The Wine runtime and downloads shared with other games were kept."
 }

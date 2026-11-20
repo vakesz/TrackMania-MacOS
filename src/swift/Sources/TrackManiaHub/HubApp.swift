@@ -67,4 +67,6 @@ enum HubDefaults {
     static let checkForUpdates = "checkForUpdatesAutomatically"
     static let didShowWelcome = "didShowWelcome"
     static let dismissedUpdate = "dismissedUpdateVersion"
+    /// The title selected in the sidebar, restored at the next launch.
+    static let selectedTitle = "selectedTitleID"
 }

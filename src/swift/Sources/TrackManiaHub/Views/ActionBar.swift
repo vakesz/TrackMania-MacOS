@@ -4,6 +4,7 @@ struct ActionBar: View {
     let title: HubTitle
     @ObservedObject var model: HubViewModel
     let perform: (HubAction) -> Void
+    var renameApps: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -82,6 +83,12 @@ struct ActionBar: View {
             if !groups.setup.isEmpty { Divider() }
             ForEach(groups.maintenance) { action in
                 Button(action.label) { perform(action) }.disabled(busy)
+            }
+            if title.appNames != nil {
+                let lock = title.renameAppsLock
+                Button("Rename apps…") { renameApps() }
+                    .disabled(busy || lock != nil)
+                    .help(lock ?? "")
             }
             if let location {
                 Button("Show in Finder") { model.reveal(path: location) }

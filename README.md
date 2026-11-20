@@ -13,7 +13,7 @@ and the other games are listed but unsupported (see
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/hub-dark.png">
-  <img src="docs/images/hub.png" alt="The TrackMania Mac hub app with Nations Forever selected, showing the Install button and setup checklist" width="900">
+  <img src="docs/images/hub.png" alt="The TrackMania Mac hub app with three installed games in the sidebar and Nations Forever selected, showing the Play button" width="900">
 </picture>
 
 This is an independent community project, not affiliated with Nadeo or Ubisoft.
@@ -259,6 +259,7 @@ example, `TRACKMANIA_MAC_TITLE=tmu make doctor` checks United Forever.
 | `./src/shell/cli/trackmania-mac migrate` | Move an install from an earlier release into the data folder (see [moving from an earlier release](#moving-from-an-earlier-release)) |
 | `./src/shell/cli/trackmania-mac uninstall` | Remove this game's prefix, apps, launcher, installer and logs after confirmation; add `--include-saves` to remove its saves too |
 | `./src/shell/cli/trackmania-mac defaults --window-size 1280x720 --audio off --x87 on` | Change the launch defaults this game's installed apps use (any of the three options) |
+| `./src/shell/cli/trackmania-mac rename-apps "My game"` | Rename this game's installed apps to "My game" and "My game Settings"; `--reset` restores the default names |
 | `./src/shell/cli/trackmania-mac clean downloads` | Remove cached downloads; `clean runtimes` removes runtimes no installed game uses, `clean logs` logs no game is writing |
 
 To force a fixed windowed size, set `TRACKMANIA_MAC_WINDOW_SIZE=1280x720` (any `WxH`).

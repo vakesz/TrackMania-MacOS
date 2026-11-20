@@ -41,6 +41,7 @@ The Swift interface is an adapter over four shell commands:
 trackmania-mac hub snapshot
 trackmania-mac hub run TITLE ACTION [--source ABSOLUTE_PATH] [--runtime download|build] [--include-saves]
 trackmania-mac hub run TITLE set-defaults [--window-size fullscreen|WxH] [--audio on|off] [--x87 on|off]
+trackmania-mac hub run TITLE rename-apps --app-name=NAME | --reset-app-name
 trackmania-mac hub migrate
 trackmania-mac hub clean downloads|runtimes|logs
 ```
@@ -54,7 +55,9 @@ another title's prefix or game path. Only the `install` and `install-platform`
 actions accept `--runtime`; it is the only way `run` sets `TRACKMANIA_MAC_RUNTIME_SOURCE`,
 which is never inherited from the hub's environment. Only the `uninstall`
 action accepts `--include-saves`, and only `set-defaults` accepts
-`--window-size`, `--audio` and `--x87` (see [Settings](#settings)). `migrate` and
+`--window-size`, `--audio` and `--x87` (see [Settings](#settings)), and only
+`rename-apps` accepts `--app-name` or `--reset-app-name`, exactly one of them
+(see [App names](#app-names)). `migrate` and
 `clean` are the commands that are not per title.
 
 `run`, `migrate` and `clean` print plain progress lines on stdout. They exit
@@ -116,8 +119,8 @@ that title. It
 removes the title's prefix, its two app wrappers (only our own, marked with
 `.trackmania-mac-app` or an earlier release's marker, and carrying the title's
 current or earlier bundle identifier), its launcher support
-directory, its cached installer, its logs and diagnostics reports, and its
-extracted icon. It keeps the saves folder, `saves/<id>` in the data
+directory, its cached installer, its logs and diagnostics reports, its
+extracted icon and, last, its `app-name` file (see [App names](#app-names)). It keeps the saves folder, `saves/<id>` in the data
 folder, which is the prefix's Windows Documents folder. `--include-saves` removes
 only that folder, and only at its default location; save folder names overlap
 between titles, so a custom or shared folder is never removed.
@@ -407,6 +410,42 @@ the app lock, so it exits with status 75 while the game runs. The change
 applies the next time the game starts. Installing or updating the apps keeps
 the recorded defaults; a `TRACKMANIA_MAC_WINDOW_SIZE`, `_AUDIO`, `_X87` or
 `_RENDERER` set in the environment of that install wins.
+
+### App names
+
+Each title entry carries `appNames`, the names of its installed Game and
+Settings apps, or `null` unless both apps are installed:
+
+```json
+"appNames": {"name": "TMU", "default": "TrackMania United Forever", "custom": true,
+             "game": "TMU.app", "settings": "TMU Settings.app", "editable": true, "reason": null}
+```
+
+`name` is the Game app's name without `.app` and `default` the registry's.
+`custom` is `true` when the title's `app-name` file sets the names, including a
+file that is not valid. `editable` follows the same rule as
+`launchOptions.editable`, and `reason` says why the apps can't be renamed, or
+that a recorded name is not valid and should be reset. The snapshot does not
+say whether the game is running; the hub disables renaming while it is.
+
+`trackmania-mac hub run TITLE rename-apps --app-name=NAME` runs
+`trackmania-mac rename-apps --name=NAME` for that title, which names the apps
+`NAME.app` and `NAME Settings.app`. `--reset-app-name` runs
+`trackmania-mac rename-apps --reset`, which gives them the registry's names
+again; a name equal to the registry's (ignoring case) counts as a reset. A name
+is trimmed and must be at most 64 characters, must not contain `/`, `:` or
+control characters, must not start with a dot and must not end in `.app`. It
+can't be a name another title's apps have or would have, or the name of
+anything else already in the apps folder. The command holds the title's prefix
+lock and the app lock, so it exits with status 75 while the game runs.
+
+The apps are moved, not written again, so a Dock item usually keeps working;
+then their bundle names and the paths the launcher records are updated. The
+name is kept in `games/<id>/app-name` in the data folder, one line. Reinstalling
+the apps or Update writes them under that name, and uninstalling the title
+removes the file after the apps. A `TRACKMANIA_MAC_APP` or
+`TRACKMANIA_MAC_SETTINGS_APP` set in the environment ignores the file, and
+`rename-apps` then refuses to run.
 
 ## Packaging and signing
 

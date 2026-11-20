@@ -13,7 +13,7 @@ and the other games are listed but unsupported (see
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/hub-dark.png">
-  <img src="docs/images/hub.png" alt="The TrackMania Mac hub app with Nations Forever selected, showing the Install button and setup checklist" width="900">
+  <img src="docs/images/hub.png" alt="The TrackMania Mac hub app with three installed games in the sidebar and Nations Forever selected, showing the Play button" width="900">
 </picture>
 
 This is an independent community project, not affiliated with Nadeo or Ubisoft.

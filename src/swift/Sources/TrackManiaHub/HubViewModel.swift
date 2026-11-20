@@ -61,7 +61,11 @@ final class HubViewModel: ObservableObject {
     @Published private(set) var activityTitleID: String?
     @Published private(set) var lastRun: RunRecord?
     @Published private(set) var cancelling = false
-    @Published var selectedTitleID: String?
+    @Published var selectedTitleID: String? {
+        didSet {
+            if let selectedTitleID { defaults.set(selectedTitleID, forKey: HubDefaults.selectedTitle) }
+        }
+    }
     /// True while `trackmania-mac hub migrate` moves files of an earlier release.
     @Published private(set) var migrating = false
     /// Why the last move did not finish; cleared when a new one starts.
@@ -87,8 +91,10 @@ final class HubViewModel: ObservableObject {
     private var migrationAttempted = false
 
     private let backend: HubBackend?
+    private let defaults: UserDefaults
 
-    init(backend: HubBackend? = nil) {
+    init(backend: HubBackend? = nil, defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         if let backend {
             self.backend = backend
         } else {
@@ -126,14 +132,21 @@ final class HubViewModel: ObservableObject {
         }
     }
 
-    private func apply(_ snapshot: HubSnapshot) {
+    /// Keeps a selection that is still in the snapshot; else the stored one if present; else the default.
+    static func resolvedSelection(current: String?, stored: String?, in titles: [HubTitle]) -> String? {
+        if let current, titles.contains(where: { $0.id == current }) { return current }
+        if let stored, titles.contains(where: { $0.id == stored }) { return stored }
+        return titles.defaultSelection?.id
+    }
+
+    func apply(_ snapshot: HubSnapshot) {
         self.snapshot = snapshot
         if Self.shouldMigrate(snapshot, attempted: migrationAttempted, busy: migrating || runningAction != nil) {
             migrate()
         }
-        if selectedTitleID == nil || !snapshot.titles.contains(where: { $0.id == selectedTitleID }) {
-            selectedTitleID = snapshot.titles.defaultSelection?.id
-        }
+        let resolved = Self.resolvedSelection(
+            current: selectedTitleID, stored: defaults.string(forKey: HubDefaults.selectedTitle), in: snapshot.titles)
+        if resolved != selectedTitleID { selectedTitleID = resolved }
         if !snapshot.skippedTitles.isEmpty {
             let count = snapshot.skippedTitles.count
             activityTitleID = selectedTitleID

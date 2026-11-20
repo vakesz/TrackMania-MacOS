@@ -351,5 +351,146 @@ class AppInstallTests(unittest.TestCase):
         self.assertEqual((self.app / "Contents/Resources/AppIcon.icns").read_bytes(), b"icns-game")
 
 
+class AppRenameTests(unittest.TestCase):
+    """trackmania-mac rename-apps with the default locations in a scratch HOME."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="trackmania-mac-rename-", dir="/private/tmp")
+        self.addCleanup(temporary.cleanup)
+        self.home = Path(temporary.name).resolve()
+        self.project = self.home / "project"
+        self.project.mkdir()
+        for name in ("src", "config"):
+            shutil.copytree(ROOT / name, self.project / name)
+        shutil.copy2(ROOT / "pyproject.toml", self.project / "pyproject.toml")
+        tools = self.home / "tools"
+        tools.mkdir()
+        (tools / "python3").symlink_to(sys.executable)
+        self.apps = self.home / "apps"
+        self.data = self.home / "Library/TrackManiaMacOS"
+        self.root = self.data / "games/tmu"
+        prefix = self.root / "prefix"
+        prefix.mkdir(parents=True)
+        (prefix / ".trackmania-mac-prefix").write_text("tmu:1\n")
+        self.env = dict(
+            HOME=str(self.home),
+            PATH=str(tools) + ":" + os.environ["PATH"],
+            PYTHONDONTWRITEBYTECODE="1",
+            TRACKMANIA_MAC_TITLE="tmu",
+            TRACKMANIA_MAC_APPS_DIR=str(self.apps),
+            TRACKMANIA_MAC_X87="off",
+        )
+        self.game = self.apps / "TrackMania United Forever.app"
+        self.settings = self.apps / "TrackMania United Settings.app"
+        self.config = self.data / "launchers/tmu/config/installation.sh"
+        result = self.cli("app")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.game.is_dir() and self.settings.is_dir())
+
+    def cli(self, *arguments, **overrides):
+        return subprocess.run(
+            ["/bin/bash", str(self.project / "src/shell/cli/trackmania-mac"), *arguments],
+            env=dict(self.env, **overrides),
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+
+    @staticmethod
+    def plist(app):
+        return plistlib.loads((app / "Contents/Info.plist").read_bytes())
+
+    def recorded(self, key):
+        prefix = f'if test -z "${{TRACKMANIA_MAC_{key}:-}}"; then export TRACKMANIA_MAC_{key}='
+        for line in self.config.read_text().splitlines():
+            if line.startswith(prefix):
+                return line[len(prefix) : -len("; fi")]
+        return None
+
+    def test_rename_keeps_the_bundles_and_survives_a_reinstall(self):
+        inodes = (os.stat(self.game).st_ino, os.stat(self.settings).st_ino)
+        (self.game / "keep").write_text("game")
+        result = self.cli("rename-apps", "TMU")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Renamed the apps to TMU and TMU Settings.", result.stdout)
+        game, settings = self.apps / "TMU.app", self.apps / "TMU Settings.app"
+        self.assertFalse(self.game.exists() or self.settings.exists())
+        self.assertEqual((os.stat(game).st_ino, os.stat(settings).st_ino), inodes)
+        self.assertEqual((game / "keep").read_text(), "game")
+        self.assertEqual(self.plist(game)["CFBundleName"], "TMU")
+        self.assertEqual(self.plist(settings)["CFBundleName"], "TMU Settings")
+        self.assertEqual(self.plist(game)["CFBundleIdentifier"], "local.trackmania-mac.tmu.game")
+        self.assertEqual(
+            self.plist(settings)["CFBundleIdentifier"], "local.trackmania-mac.tmu.settings"
+        )
+        self.assertEqual((self.root / "app-name").read_text(), "TMU\n")
+        self.assertEqual(self.recorded("APP"), str(game).replace(" ", "\\ "))
+        self.assertEqual(self.recorded("SETTINGS_APP"), str(settings).replace(" ", "\\ "))
+
+        result = self.cli("rename-apps", "--name=TMU")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("already named TMU", result.stdout)
+
+        # Reinstalling the apps writes them at the custom names.
+        result = self.cli("app")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            sorted(path.name for path in self.apps.iterdir()), sorted([game.name, settings.name])
+        )
+        self.assertEqual(os.stat(game).st_ino, inodes[0])
+
+        result = self.cli("rename-apps", "--reset")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.game.is_dir() and self.settings.is_dir())
+        self.assertFalse(game.exists() or (self.root / "app-name").exists())
+        self.assertEqual(self.plist(self.game)["CFBundleName"], "TrackMania United Forever")
+        self.assertEqual(self.recorded("APP"), str(self.game).replace(" ", "\\ "))
+
+    def test_the_default_name_counts_as_reset(self):
+        self.assertEqual(self.cli("rename-apps", "Mine").returncode, 0)
+        result = self.cli("rename-apps", "trackmania united forever")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.game.is_dir() and self.settings.is_dir())
+        self.assertFalse((self.root / "app-name").exists())
+
+    def test_refusals_change_nothing(self):
+        (self.apps / "Taken.app").mkdir()
+        cases = [
+            (("rename-apps", "Taken"), {}, "already exists"),
+            (("rename-apps", "TrackMania"), {}, "TrackMania Nations Forever uses the name"),
+            (("rename-apps", "a/b"), {}, "cannot contain"),
+            (("rename-apps", "X.app"), {}, "Leave out .app"),
+            (("rename-apps",), {}, "Give one new name"),
+            (("rename-apps", "A", "B"), {}, "Give one new name"),
+            (("rename-apps", "--bogus"), {}, "Unknown option"),
+            (("rename-apps", "X"), {"TRACKMANIA_MAC_APP": str(self.game)}, "keep those names"),
+        ]
+        for arguments, overrides, message in cases:
+            with self.subTest(arguments=arguments, overrides=overrides):
+                result = self.cli(*arguments, **overrides)
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn(message, result.stderr)
+                self.assertTrue(self.game.is_dir() and self.settings.is_dir())
+                self.assertFalse((self.root / "app-name").exists())
+
+    def test_a_held_prefix_refuses_with_the_busy_status(self):
+        fd = guard.acquire(self.root / "prefix")
+        self.addCleanup(os.close, fd)
+        result = self.cli("rename-apps", "TMU", TRACKMANIA_MAC_LOCK_WAIT="0")
+        self.assertEqual(result.returncode, 75, result.stderr)
+        self.assertTrue(self.game.is_dir())
+        self.assertFalse((self.root / "app-name").exists())
+
+    def test_uninstall_removes_renamed_apps_and_then_the_name(self):
+        self.assertEqual(self.cli("rename-apps", "TMU").returncode, 0)
+        result = self.cli("uninstall", "--yes")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(list(self.apps.iterdir()), [])
+        self.assertFalse((self.root / "app-name").exists())
+        lines = result.stdout.splitlines()
+        removed = [line for line in lines if line.startswith("Removed ")]
+        self.assertTrue(removed[-1].endswith("/app-name"), removed)
+
+
 if __name__ == "__main__":
     unittest.main()

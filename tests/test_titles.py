@@ -1,9 +1,11 @@
 import json
+import os
 import re
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 TITLES = ROOT / "config/titles"
@@ -357,6 +359,58 @@ class TitleRegistryTests(unittest.TestCase):
                 self.assertTrue(
                     settings_app.endswith("/" + data["settings_app_name"]), settings_app
                 )
+
+    def test_shell_and_hub_agree_on_custom_app_names(self):
+        registry = load_registry()
+        from trackmania_mac.hub import paths as hub_paths
+
+        script = '. src/shell/lib/common.sh; printf "%s\\n" "$TRACKMANIA_MAC_APP" "$TRACKMANIA_MAC_SETTINGS_APP"'
+        with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
+            home = Path(directory)
+            apps = home / "Applications"
+            root = home / "Library/TrackManiaMacOS/games/tmu"
+            root.mkdir(parents=True)
+            env = {
+                "PATH": "/usr/bin:/bin",
+                "HOME": str(home),
+                "TRACKMANIA_MAC_TITLE": "tmu",
+                "TRACKMANIA_MAC_APPS_DIR": str(apps),
+            }
+            title = registry.get("tmu", TITLES)
+            for content, expected in (
+                ("My TMU\n", ("My TMU.app", "My TMU Settings.app")),
+                ("bad/name\n", (title.app_name, title.settings_app_name)),
+            ):
+                with self.subTest(content=content):
+                    (root / "app-name").write_text(content)
+                    result = subprocess.run(
+                        ["/bin/bash", "-euc", script],
+                        cwd=ROOT,
+                        text=True,
+                        capture_output=True,
+                        timeout=15,
+                        env=env,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    shell = tuple(result.stdout.splitlines())
+                    self.assertEqual(shell, tuple(str(apps / name) for name in expected))
+                    with mock.patch.dict(os.environ, env):
+                        computed = hub_paths.compute(title)
+                    self.assertEqual(shell, (str(computed.app), str(computed.settings_app)))
+            # An app path given explicitly turns the file off.
+            result = subprocess.run(
+                ["/bin/bash", "-euc", script],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                timeout=15,
+                env=dict(env, TRACKMANIA_MAC_APP=str(home / "Game.app")),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                result.stdout.splitlines(),
+                [str(home / "Game.app"), str(home / title.settings_app_name)],
+            )
 
     def test_tmnf_source_override_does_not_change_other_title_cache_paths(self):
         result = subprocess.run(

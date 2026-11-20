@@ -625,11 +625,13 @@ class HubBackendTests(unittest.TestCase):
                 )
                 self.assertFalse(title["sessionActive"])
                 self.assertIsNone(title["launchOptions"])  # no launcher installed
+                self.assertIsNone(title["appNames"])  # no apps installed
             self.assertEqual(set(data["storage"]), {"downloads", "runtimes", "logs", "error"})
             self.assertEqual(data["storage"]["runtimes"]["current"], project_version.read(ROOT))
             self.assertEqual(data["storage"]["downloads"], {"bytes": 0, "items": []})
         placeholder = snapshot._error_placeholder("broken", "bad")
         self.assertIsNone(placeholder["launchOptions"])
+        self.assertIsNone(placeholder["appNames"])
         self.assertIsNone(placeholder["removal"])
         self.assertEqual(placeholder["locations"], {})
         self.assertIsNone(placeholder["sourceSize"])
@@ -844,6 +846,155 @@ class HubBackendTests(unittest.TestCase):
         (launcher / ".trackmania-mac-launcher").unlink()
         config.write_text(config.read_text().replace("echo surprise\n", ""))
         self.assertFalse(snapshot.title_payload(tmnf)["launchOptions"]["editable"])
+
+    def write_apps(self, title_id, base=None):
+        """Our two wrappers of TITLE_ID in the apps folder, named after BASE if given."""
+        title = registry.get(title_id)
+        apps = Path(os.environ["TRACKMANIA_MAC_APPS_DIR"])
+        if base is None:
+            names = (title.app_name, title.settings_app_name)
+        else:
+            names = (f"{base}.app", f"{base} Settings.app")
+        for name, identifier in zip(names, (title.bundle_id_game, title.bundle_id_settings)):
+            contents = apps / name / "Contents"
+            (contents / "MacOS").mkdir(parents=True)
+            (contents / ".trackmania-mac-app").touch()
+            with (contents / "Info.plist").open("wb") as stream:
+                plistlib.dump(
+                    {"CFBundleIdentifier": identifier, "CFBundleExecutable": "TrackManiaMac"},
+                    stream,
+                )
+            (contents / "MacOS/TrackManiaMac").write_text("#!/bin/bash\n")
+            (contents / "MacOS/TrackManiaMac").chmod(0o755)
+        return [apps / name for name in names]
+
+    def test_app_names_follow_the_installed_apps_and_launcher(self):
+        apps = Path(os.environ["HOME"]) / "Applications"
+        tmu = registry.get("tmu")
+        with mock.patch.dict(os.environ, TRACKMANIA_MAC_APPS_DIR=str(apps)):
+            self.assertIsNone(snapshot.title_payload(tmu)["appNames"])
+            self.write_apps("tmu")
+            self.write_launcher("tmu", {})
+            payload = snapshot.title_payload(tmu)
+            self.assertEqual(
+                payload["appNames"],
+                {
+                    "name": "TrackMania United Forever",
+                    "default": "TrackMania United Forever",
+                    "custom": False,
+                    "game": "TrackMania United Forever.app",
+                    "settings": "TrackMania United Settings.app",
+                    "editable": True,
+                    "reason": None,
+                },
+            )
+            # A launcher this hub did not install: shown, not editable.
+            launcher = Path(os.environ["HOME"]) / "Library/TrackManiaMacOS/launchers/tmu"
+            (launcher / ".trackmania-mac-launcher").unlink()
+            names = snapshot.title_payload(tmu)["appNames"]
+            self.assertFalse(names["editable"])
+            self.assertIn("not installed by this hub", names["reason"])
+            (launcher / ".trackmania-mac-launcher").touch()
+
+            # Custom names: the apps, the probes and the removal follow the file.
+            shutil.rmtree(apps)
+            game, settings = self.write_apps("tmu", base="TMU")
+            root = Path(os.environ["HOME"]) / "Library/TrackManiaMacOS/games/tmu"
+            root.mkdir(parents=True)
+            (root / "app-name").write_text("TMU\n")
+            payload = snapshot.title_payload(tmu)
+            self.assertEqual(payload["apps"], {"game": str(game), "settings": str(settings)})
+            self.assertTrue(payload["state"]["gameApp"]["ready"])
+            self.assertTrue(payload["state"]["settingsApp"]["ready"])
+            self.assertEqual(
+                (payload["appNames"]["name"], payload["appNames"]["custom"]), ("TMU", True)
+            )
+            self.assertEqual(payload["appNames"]["game"], "TMU.app")
+            self.assertEqual(payload["appNames"]["settings"], "TMU Settings.app")
+            removal = {item["kind"]: item["path"] for item in payload["removal"]["items"]}
+            self.assertEqual(removal["game-app"], str(game))
+
+            # A name file that is not valid: the registry names apply again.
+            (root / "app-name").write_text("bad/name\n")
+            payload = snapshot.title_payload(tmu)
+            self.assertIsNone(payload["appNames"])
+            self.assertEqual(payload["apps"]["game"], str(apps / tmu.app_name))
+            shutil.rmtree(apps)
+            self.write_apps("tmu")
+            names = snapshot.title_payload(tmu)["appNames"]
+            self.assertEqual((names["custom"], names["editable"]), (True, True))
+            self.assertIn("Reset it", names["reason"])
+            # Without a launcher the apps cannot be renamed.
+            shutil.rmtree(launcher)
+            names = snapshot.title_payload(tmu)["appNames"]
+            self.assertFalse(names["editable"])
+
+    def test_rename_apps_runs_the_rename_command(self):
+        apps = Path(os.environ["HOME"]) / "Applications"
+        with mock.patch.dict(os.environ, TRACKMANIA_MAC_APPS_DIR=str(apps)):
+            self.write_apps("tmu")
+            self.write_launcher("tmu", {})
+            for arguments, expected in (
+                ({"app_name": "-My game"}, ["rename-apps", "--name=-My game"]),
+                ({"reset_app_name": True}, ["rename-apps", "--reset"]),
+            ):
+                with (
+                    self.subTest(arguments=arguments),
+                    mock.patch.object(
+                        hub_run.os, "execve", side_effect=KeyboardInterrupt
+                    ) as execve,
+                    self.assertRaises(KeyboardInterrupt),
+                ):
+                    hub_run.run("tmu", "rename-apps", None, **arguments)
+                command, env = execve.call_args.args[1], execve.call_args.args[2]
+                self.assertTrue(command[1].endswith("src/shell/cli/trackmania-mac"))
+                self.assertEqual(command[2:], expected)
+                self.assertEqual(env["TRACKMANIA_MAC_TITLE"], "tmu")
+
+    def test_rename_apps_flags_are_checked(self):
+        apps = Path(os.environ["HOME"]) / "Applications"
+        with mock.patch.dict(os.environ, TRACKMANIA_MAC_APPS_DIR=str(apps)):
+            self.write_apps("tmu")
+            self.write_launcher("tmu", {})
+            broken = self.write_launcher("tm-canyon", {})
+            self.write_apps("tm-canyon")
+            (broken / ".trackmania-mac-launcher").unlink()
+            cases = [
+                ("tmu", "doctor", {"app_name": "X"}, "does not accept --app-name"),
+                ("tmu", "install-apps", {"reset_app_name": True}, "does not accept --app-name"),
+                ("tmu", "rename-apps", {}, "exactly one"),
+                ("tmu", "rename-apps", {"app_name": "X", "reset_app_name": True}, "exactly one"),
+                ("tmu", "rename-apps", {"app_name": "X.app"}, "Leave out .app"),
+                ("tmnf", "rename-apps", {"app_name": "X"}, "no installed apps"),
+                ("tm-canyon", "rename-apps", {"app_name": "X"}, "not installed by this hub"),
+            ]
+            for title_id, action, arguments, message in cases:
+                with (
+                    self.subTest(title=title_id, action=action, arguments=arguments),
+                    mock.patch.object(hub_run, "available_action_ids", return_value={action}),
+                    mock.patch.object(hub_run.os, "execve") as execve,
+                    mock.patch("sys.stderr", new_callable=io.StringIO) as stderr,
+                    self.assertRaises(SystemExit) as raised,
+                ):
+                    hub_run.run(title_id, action, None, **arguments)
+                execve.assert_not_called()
+                self.assertEqual(raised.exception.code, 1)
+                self.assertTrue(stderr.getvalue().startswith("error: "), stderr.getvalue())
+                self.assertIn(message, stderr.getvalue())
+
+    def test_cli_parses_rename_flags(self):
+        from trackmania_mac.hub import __main__ as hub_main
+
+        with mock.patch.object(hub_main.hub_run, "run", side_effect=SystemExit(0)) as run:
+            with self.assertRaises(SystemExit):
+                hub_main.main(["run", "tmu", "rename-apps", "--app-name=-x y"])
+        self.assertEqual(run.call_args.kwargs["app_name"], "-x y")
+        self.assertIs(run.call_args.kwargs["reset_app_name"], False)
+        with mock.patch.object(hub_main.hub_run, "run", side_effect=SystemExit(0)) as run:
+            with self.assertRaises(SystemExit):
+                hub_main.main(["run", "tmu", "rename-apps", "--reset-app-name"])
+        self.assertIsNone(run.call_args.kwargs["app_name"])
+        self.assertIs(run.call_args.kwargs["reset_app_name"], True)
 
     def test_set_defaults_runs_the_defaults_command(self):
         self.write_launcher("tmnf", {})

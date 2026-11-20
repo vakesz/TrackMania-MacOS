@@ -13,6 +13,7 @@ What a title owns:
 - its two app wrappers, only when they carry our app marker (this release's
   or an earlier one's) and this title's bundle identifier, current or earlier;
 - its launcher support directory, cached installer, logs and extracted icon;
+- its `app-name` file (custom app names), last of all;
 - tombstones a previous, interrupted uninstall left beside any of these.
 
 Never removed: a title root (`games/<id>` in the data folder holds its
@@ -40,6 +41,7 @@ import unicodedata
 from pathlib import Path
 
 from trackmania_mac import legacy, markers
+from trackmania_mac.app import names
 from trackmania_mac.hub import paths as hub_paths
 from trackmania_mac.hub import registry
 from trackmania_mac.install import game_saves
@@ -394,10 +396,17 @@ def leftover_entries(directory: Path, name: str, kind: str) -> typing.List[Entry
     return entries
 
 
-def app_entry(value: str, title: registry.Title, kind: str) -> typing.Optional[Entry]:
-    """Remove only our complete wrapper for this title; anything else is kept."""
+def app_entry(
+    value: str, title: registry.Title, kind: str, root: typing.Optional[Path] = None
+) -> typing.Optional[Entry]:
+    """Remove only our complete wrapper for this title; anything else is kept.
+
+    Its name is the one the title's app-name file in ROOT (the title root by
+    default) gives, else the registry's.
+    """
     path = _plain_absolute(value, "app")
-    expected = title.app_name if kind == "game-app" else title.settings_app_name
+    current = names.effective(title, root if root is not None else hub_paths.title_root(title.id))
+    expected = current.game if kind == "game-app" else current.settings
     if path.name != expected:
         raise ValueError("App path {} does not end in {}".format(path, expected))
     if not os.path.lexists(path):
@@ -544,6 +553,16 @@ def icon_entry(title: registry.Title, support: Path) -> typing.Optional[Entry]:
     if path.is_symlink() or not _regular_file(path):
         return _keep("icon", path, "not a regular file")
     return _remove("icon", managed_paths.safe_path(str(path)))
+
+
+def app_name_entry(root: Path) -> typing.Optional[Entry]:
+    """The title's app-name file (trackmania_mac.app.names), a plain file only."""
+    path = root / names.FILE
+    if not os.path.lexists(path):
+        return None
+    if path.is_symlink() or not _regular_file(path):
+        return _keep("app-name", path, "not a regular file")
+    return _remove("app-name", path.parent.resolve(strict=True) / path.name)
 
 
 def _external_saves(prefix: Path, userdata: Path, warnings: typing.List[str]) -> typing.List[Entry]:
@@ -777,6 +796,7 @@ def plan(
     include_saves: bool = False,
     warnings: typing.Optional[typing.List[str]] = None,
     move_game_saves: bool = False,
+    root: typing.Optional[str] = None,
 ) -> typing.List[Entry]:
     """Validate every path and return what to remove and what is kept, in removal order.
 
@@ -784,10 +804,13 @@ def plan(
     uncertain. The caller must hold the prefix and app operation locks.
     MOVE_GAME_SAVES (for the confirmation only, never for a removal) lists
     saves still in the live prefix's game folder as kept instead of refusing.
+    ROOT is the title root that holds its app-name file (the default one when
+    None); that file goes last, so the apps can always be found until they are gone.
     """
     warnings = warnings if warnings is not None else []
     title, titles = load_titles()
     home = Path.home().resolve()
+    root_path = _plain_absolute(root, "root") if root is not None else title_root(title, home)
     app_path = _plain_absolute(app, "app")
     settings_path = _plain_absolute(settings_app, "app")
     if not _same(app_path.parent, settings_path.parent) and (
@@ -801,7 +824,7 @@ def plan(
     )
     entries: typing.List[Entry] = []
     for value, kind in ((app, "game-app"), (settings_app, "settings-app")):
-        entry = app_entry(value, title, kind)
+        entry = app_entry(value, title, kind, root_path)
         if entry is not None:
             entries.append(entry)
     entry = launcher_entry(launcher, support_path, title)
@@ -822,6 +845,9 @@ def plan(
     entries += cache_entries(title, cache_path)
     entries += log_entries(title, home)
     entry = icon_entry(title, support_path)
+    if entry is not None:
+        entries.append(entry)
+    entry = app_name_entry(root_path)
     if entry is not None:
         entries.append(entry)
     entries = [
@@ -1024,7 +1050,7 @@ def preview(title: registry.Title, paths: "TitlePaths") -> dict:
     if os.path.lexists(paths.prefix) and owned_prefix() and not _mount_point(paths.prefix):
         add("prefix", paths.prefix)
     for value, kind in ((paths.app, "game-app"), (paths.settings_app, "settings-app")):
-        entry = attempt(app_entry, str(value), title, kind)
+        entry = attempt(app_entry, str(value), title, kind, paths.root)
         if entry is not None and entry.verb == "remove":
             add(kind, value)
     entry = attempt(launcher_entry, str(paths.launcher), paths.support.resolve(), title)
@@ -1078,6 +1104,8 @@ def main(argv: typing.Optional[typing.List[str]] = None) -> int:
     parser.add_argument("--include-saves", action="store_true")
     # plan only: the shell moves game-folder saves after the confirmation.
     parser.add_argument("--move-game-saves", action="store_true")
+    # The title root holding the app-name file; the default root without it.
+    parser.add_argument("--root", default=None)
     for name in ("prefix", "userdata", "app", "settings_app", "launcher", "support", "cache"):
         parser.add_argument(name)
     args = parser.parse_args(argv)
@@ -1096,6 +1124,7 @@ def main(argv: typing.Optional[typing.List[str]] = None) -> int:
             include_saves=args.include_saves,
             warnings=warnings,
             move_game_saves=args.move_game_saves,
+            root=args.root,
         )
         for warning in warnings:
             shown = warning if _printable(warning) else repr(warning)

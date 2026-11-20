@@ -25,6 +25,8 @@ def main(argv=None) -> int:
     sub_run.add_argument("--include-saves", action="store_true")
     for flag in hub_run.LAUNCH_FLAGS:
         sub_run.add_argument(flag, default=None)
+    sub_run.add_argument("--app-name", default=None)
+    sub_run.add_argument("--reset-app-name", action="store_true")
     sub_clean = subparsers.add_parser(
         "clean", help="Remove cached downloads, unused runtimes or logs not in use"
     )
@@ -58,6 +60,8 @@ def main(argv=None) -> int:
                 "--audio": arguments.audio,
                 "--x87": arguments.x87,
             },
+            app_name=arguments.app_name,
+            reset_app_name=arguments.reset_app_name,
         )
     except registry.RegistryError as error:
         print(f"error: {error}", file=sys.stderr)

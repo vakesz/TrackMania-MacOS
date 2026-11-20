@@ -46,6 +46,13 @@ for _trackmania_mac_name in "${TRACKMANIA_MAC_LOCATION_SETTINGS[@]}"; do
 done
 unset _trackmania_mac_name
 readonly TRACKMANIA_MAC_EXPLICIT_PATHS
+# App paths given the same way. They turn off the title's app-name file
+# (trackmania_mac.app.names) and so renaming the apps (rename-apps).
+TRACKMANIA_MAC_EXPLICIT_APPS=""
+if test -n "${TRACKMANIA_MAC_APP+x}" || test -n "${TRACKMANIA_MAC_SETTINGS_APP+x}"; then
+  TRACKMANIA_MAC_EXPLICIT_APPS=1
+fi
+readonly TRACKMANIA_MAC_EXPLICIT_APPS
 # Launch options an installed launcher records (install_app). One given by the
 # environment (or this launcher's own config) is the user's choice; for the others
 # install_app keeps what the launcher it replaces recorded, so reinstalling the
@@ -172,8 +179,21 @@ if test -w /Applications; then
 else
   : "${TRACKMANIA_MAC_APPS_DIR:=${HOME}/Applications}"
 fi
-: "${TRACKMANIA_MAC_APP:=${TRACKMANIA_MAC_APPS_DIR}/${TRACKMANIA_MAC_TITLE_APP_NAME}}"
-: "${TRACKMANIA_MAC_SETTINGS_APP:=$(dirname "$TRACKMANIA_MAC_APP")/${TRACKMANIA_MAC_TITLE_SETTINGS_APP_NAME}}"
+# The title's app-name file in its root renames both apps; only Python reads it,
+# and only when it exists and no app path was given (src/python/trackmania_mac/app/names.py,
+# which hub/paths.py uses as well).
+_trackmania_mac_app_file="" _trackmania_mac_settings_app_file=""
+if test -z "$TRACKMANIA_MAC_EXPLICIT_APPS" && test -n "$TRACKMANIA_MAC_TITLE_APP_NAME" \
+  && { test -e "${TRACKMANIA_MAC_ROOT}/app-name" || test -L "${TRACKMANIA_MAC_ROOT}/app-name"; }; then
+  _trackmania_mac_app_names="$(TRACKMANIA_MAC_TITLE="$TRACKMANIA_MAC_TITLE" TRACKMANIA_MAC_TITLES_DIR="$TRACKMANIA_MAC_TITLES_DIR" \
+    trackmania_mac_python -m trackmania_mac.app.names export "$TRACKMANIA_MAC_ROOT")" \
+    || die "Cannot read the app names in ${TRACKMANIA_MAC_ROOT}/app-name"
+  eval "$_trackmania_mac_app_names"
+  unset _trackmania_mac_app_names
+fi
+: "${TRACKMANIA_MAC_APP:=${TRACKMANIA_MAC_APPS_DIR}/${_trackmania_mac_app_file:-$TRACKMANIA_MAC_TITLE_APP_NAME}}"
+: "${TRACKMANIA_MAC_SETTINGS_APP:=$(dirname "$TRACKMANIA_MAC_APP")/${_trackmania_mac_settings_app_file:-$TRACKMANIA_MAC_TITLE_SETTINGS_APP_NAME}}"
+unset _trackmania_mac_app_file _trackmania_mac_settings_app_file
 : "${TRACKMANIA_MAC_LAUNCHER:=${TRACKMANIA_MAC_SUPPORT}/launchers/${TRACKMANIA_MAC_TITLE}}"
 # "fullscreen" (the default) launches the game directly so it uses its own
 # display mode, set in TrackMania Settings. A WxH value instead runs it inside

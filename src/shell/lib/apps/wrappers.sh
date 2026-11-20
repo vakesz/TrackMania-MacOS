@@ -524,7 +524,7 @@ launcher_entry_points() {
 # uses this title's (moved) launcher at its new folder and the new log folder.
 relink_wrapper() {
   local app="$1" action="$2" identifier="$3" module="$4" cli="$5" legacy_identifier="${6:-}"
-  local contents entry candidate found="" icon="" line python current executable
+  local contents entry candidate found="" line python current executable
   contents="${app}/Contents"
   test -e "$app" || test -L "$app" || return 0
   current="$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "${contents}/Info.plist" 2>/dev/null)" || current=""
@@ -562,9 +562,18 @@ relink_wrapper() {
     && test "$executable" = "$WRAPPER_EXECUTABLE" && test ! -e "${contents}/MacOS/${LEGACY_WRAPPER_EXECUTABLE}"; then
     return 0
   fi
-  if test -f "${contents}/Resources/AppIcon.icns" && test ! -L "${contents}/Resources/AppIcon.icns"; then
+  rewrite_wrapper "$app" "$action" "$identifier" "$module" "$cli"
+}
+
+# rewrite_wrapper APP ACTION IDENTIFIER MODULE CLI — write one of our wrappers
+# again in place, named after its folder, for this title's launcher at the
+# release it came from (MODULE and CLI from launcher_entry_points), keeping its icon.
+rewrite_wrapper() {
+  local app="$1" action="$2" identifier="$3" module="$4" cli="$5" icon=""
+  local artwork="${1}/Contents/Resources/AppIcon.icns"
+  if test -f "$artwork" && test ! -L "$artwork"; then
     icon="$(mktemp "${TMPDIR:-/tmp}/trackmania-mac-icon.XXXXXX")" || icon=""
-    test -z "$icon" || cp "${contents}/Resources/AppIcon.icns" "$icon" || icon=""
+    test -z "$icon" || cp "$artwork" "$icon" || icon=""
   fi
   TRACKMANIA_MAC_VERSION="$(launcher_version "$TRACKMANIA_MAC_LAUNCHER")" \
     write_app "$app" "$(basename "$app" .app)" "$action" "$identifier" "$icon" "$module" "$cli"
@@ -652,4 +661,74 @@ launcher_defaults() {
     say "$label for $TRACKMANIA_MAC_TITLE_NAME: ${LAUNCHER_DEFAULTS[index + 1]}"
   done
   say "The new settings apply the next time the game starts."
+}
+
+# --- Renaming the apps ---------------------------------------------------------
+# trackmania-mac rename-apps NAME|--name=NAME|--reset gives this title's Game and
+# Settings apps the names NAME gives ("NAME" and "NAME Settings"), or the
+# registry's again. The hub runs it through `hub run TITLE rename-apps`.
+# src/python/trackmania_mac/guard/app_rename.py checks and moves the apps and
+# records the name in the title's app-name file; this shell only takes the locks
+# and brings the bundles and the launcher's recorded paths up to date.
+
+# parse_rename_apps ARGS — set RENAME_APPS_ARGUMENT to the guard's --name=NAME
+# or --reset, or die. The name itself is checked by the guard.
+RENAME_APPS_ARGUMENT=""
+parse_rename_apps() {
+  test "$#" -eq 1 || die "Give one new name, or --reset (trackmania-mac rename-apps NAME|--reset)."
+  case "$1" in
+    --reset) RENAME_APPS_ARGUMENT=--reset ;;
+    --name=*) RENAME_APPS_ARGUMENT="$1" ;;
+    -*) die "Unknown option: $1 (use NAME, --name=NAME or --reset)" ;;
+    *) RENAME_APPS_ARGUMENT="--name=$1" ;;
+  esac
+}
+
+# rename_apps ARGS — the rename-apps command, holding the prefix lock (so a
+# running game blocks it) and the app lock install_app takes.
+rename_apps() {
+  local config="${TRACKMANIA_MAC_LAUNCHER}/config/installation.sh" entry_points module cli result
+  local _trackmania_mac_renamed_app="" _trackmania_mac_renamed_settings_app="" _trackmania_mac_renamed=""
+  if test "${TRACKMANIA_MAC_APP_OPERATION_FD+x}" != x; then
+    trackmania_mac_python -m trackmania_mac.guard.operation_guard app-run "$TRACKMANIA_MAC_PREFIX" \
+      /bin/bash "${TRACKMANIA_MAC_PROJECT_DIR}/src/shell/cli/trackmania-mac" rename-apps "$@"
+    return $?
+  fi
+  trackmania_mac_python -m trackmania_mac.guard.operation_guard app-held "$TRACKMANIA_MAC_PREFIX" \
+    || die "Invalid app operation lock."
+  parse_rename_apps "$@"
+  if test -L "$TRACKMANIA_MAC_LAUNCHER" || ! test -d "$TRACKMANIA_MAC_LAUNCHER" \
+    || ! has_marker "$TRACKMANIA_MAC_LAUNCHER" "$LAUNCHER_MARKER" "$LEGACY_LAUNCHER_MARKER" \
+    || ! test -f "$config"; then
+    die "The $TRACKMANIA_MAC_TITLE_NAME apps are not installed. Install them from the hub first."
+  fi
+  test ! -L "${TRACKMANIA_MAC_LAUNCHER}/config" \
+    || die "The launcher settings folder is a symlink: ${TRACKMANIA_MAC_LAUNCHER}/config"
+  launcher_config_settings "$config" >/dev/null \
+    || die "The $TRACKMANIA_MAC_TITLE_NAME launch settings are not in the expected form. Reinstall the apps from the hub."
+  entry_points="$(launcher_entry_points "$TRACKMANIA_MAC_LAUNCHER")" \
+    || die "The $TRACKMANIA_MAC_TITLE_NAME apps are from a release too old to rename; reinstall them from the hub."
+  IFS=$'\t' read -r module cli <<<"$entry_points"
+  result="$(TRACKMANIA_MAC_TITLE="$TRACKMANIA_MAC_TITLE" TRACKMANIA_MAC_TITLES_DIR="$TRACKMANIA_MAC_TITLES_DIR" \
+    trackmania_mac_python -m trackmania_mac.guard.app_rename rename "$TRACKMANIA_MAC_ROOT" \
+    "$TRACKMANIA_MAC_APP" "$TRACKMANIA_MAC_SETTINGS_APP" "$RENAME_APPS_ARGUMENT")" \
+    || exit 1
+  # The guard prints shell-quoted assignments of these three names only.
+  eval "$result"
+  test -n "$_trackmania_mac_renamed_app" && test -n "$_trackmania_mac_renamed_settings_app" \
+    || die "The rename did not report the new app paths."
+  if test "$_trackmania_mac_renamed" != 1; then
+    say "The apps are already named $(basename "$_trackmania_mac_renamed_app" .app)."
+    return 0
+  fi
+  # The apps work from here on: a bundle name or recorded path left behind only
+  # looks wrong, and the next reinstall of the apps replaces it.
+  (rewrite_wrapper "$_trackmania_mac_renamed_app" play "$TRACKMANIA_MAC_TITLE_BUNDLE_ID_GAME" "$module" "$cli" >/dev/null) \
+    || warn "Could not update the name inside $_trackmania_mac_renamed_app."
+  (rewrite_wrapper "$_trackmania_mac_renamed_settings_app" configure "$TRACKMANIA_MAC_TITLE_BUNDLE_ID_SETTINGS" \
+    "$module" "$cli" >/dev/null) \
+    || warn "Could not update the name inside $_trackmania_mac_renamed_settings_app."
+  update_launcher_config "$config" APP "$_trackmania_mac_renamed_app" SETTINGS_APP "$_trackmania_mac_renamed_settings_app" \
+    || warn "Could not record the new app paths in $config. Reinstall the apps from the hub."
+  say "Renamed the apps to $(basename "$_trackmania_mac_renamed_app" .app) and $(basename "$_trackmania_mac_renamed_settings_app" .app)."
 }

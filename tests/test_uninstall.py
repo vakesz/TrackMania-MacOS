@@ -306,6 +306,58 @@ class GuardPlanTests(unittest.TestCase):
         # Removal order: apps first, so a half-removed game cannot be launched.
         self.assertEqual(removed[0], self.fx.apps / title.app_name)
 
+    def rename_apps(self, title_id, base):
+        """Move the title's installed apps to BASE's names and record BASE."""
+        title = TITLES[title_id]
+        game, settings = self.fx.apps / f"{base}.app", self.fx.apps / f"{base} Settings.app"
+        (self.fx.apps / title.app_name).rename(game)
+        (self.fx.apps / title.settings_app_name).rename(settings)
+        (self.fx.root(title_id) / "app-name").write_text(base + "\n")
+        return game, settings
+
+    def test_renamed_apps_are_removed_and_then_the_name(self):
+        for include_saves in (False, True):
+            with self.subTest(include_saves=include_saves):
+                self.fx.install("tmu")
+                game, settings = self.rename_apps("tmu", "TMU")
+                name = self.fx.root("tmu") / "app-name"
+                arguments = dict(app=str(game), settings_app=str(settings))
+                entries = self.plan("tmu", include_saves=include_saves, **arguments)
+                removed = self.removed(entries)
+                self.assertEqual(removed[:2], [game, settings])
+                self.assertEqual(removed[-1], name)
+                self.assertEqual(entries[-1].kind, "app-name")
+                uninstall.remove(entries, report=lambda line: None)
+                self.assertFalse(game.exists() or settings.exists() or name.exists())
+                self.assertTrue(self.fx.root("tmu").is_dir())
+                shutil.rmtree(self.fx.data / "saves", ignore_errors=True)
+                shutil.rmtree(self.fx.support / "launchers")
+
+    def test_app_names_must_match_the_recorded_name(self):
+        self.fx.install("tmu")
+        game, settings = self.rename_apps("tmu", "TMU")
+        title = TITLES["tmu"]
+        with self.assertRaisesRegex(ValueError, "does not end in TMU.app"):
+            self.plan("tmu", settings_app=str(settings))
+        with self.assertRaisesRegex(ValueError, "does not end in TMU Settings.app"):
+            self.plan("tmu", app=str(game))
+        # Another root's name file does not apply.
+        other = self.home / "elsewhere"
+        other.mkdir()
+        entries = self.plan("tmu", root=str(other))
+        self.assertNotIn(self.fx.apps / title.app_name, self.removed(entries))
+        self.assertNotIn("app-name", [entry.kind for entry in entries])
+
+    def test_app_name_symlink_is_kept(self):
+        self.fx.install("tmu")
+        target = self.home / "target"
+        target.write_text("TMU\n")
+        (self.fx.root("tmu") / "app-name").symlink_to(target)
+        kept = self.kept(self.plan("tmu"))
+        self.assertEqual(kept[self.fx.root("tmu") / "app-name"].reason, "not a regular file")
+        # A name file that is not valid leaves the registry names in force.
+        self.assertIn(self.fx.apps / TITLES["tmu"].app_name, self.removed(self.plan("tmu")))
+
     def test_logs_match_exact_names_only(self):
         self.fx.install("tm-canyon", saves=False, apps=False)
         for name in ("tm-canyon-play.log", "tm-canyon-play.log.3", "tm-play.log", "play.log"):
@@ -1303,6 +1355,17 @@ class PreviewTests(unittest.TestCase):
         kinds = [item["kind"] for item in self.preview("tmnf")["items"]]
         self.assertNotIn("prefix", kinds)
         self.assertNotIn("game-app", kinds)
+
+    def test_preview_lists_renamed_apps(self):
+        self.fx.install("tmu")
+        title = TITLES["tmu"]
+        (self.fx.apps / title.app_name).rename(self.fx.apps / "TMU.app")
+        (self.fx.apps / title.settings_app_name).rename(self.fx.apps / "TMU Settings.app")
+        (self.fx.root("tmu") / "app-name").write_text("TMU\n")
+        items = {item["kind"]: item["path"] for item in self.preview("tmu")["items"]}
+        self.assertEqual(items["game-app"], str(self.fx.apps / "TMU.app"))
+        self.assertEqual(items["settings-app"], str(self.fx.apps / "TMU Settings.app"))
+        self.assertNotIn("app-name", items)
 
 
 if __name__ == "__main__":

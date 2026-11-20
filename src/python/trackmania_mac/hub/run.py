@@ -9,6 +9,8 @@ TRACKMANIA_MAC_RUNTIME_ARCHIVE and TRACKMANIA_MAC_RUNTIME_SHA256 are never inher
 Only uninstall accepts --include-saves, which also removes the title's saves.
 Only set-defaults accepts --window-size, --audio and --x87; it records them in
 the title's installed launcher (trackmania-mac defaults), which checks them.
+Only rename-apps accepts --app-name NAME or --reset-app-name, exactly one of
+them; it renames the title's installed apps (trackmania-mac rename-apps).
 No action runs while files of an earlier release wait to move; `migrate` moves
 them (trackmania-mac migrate), and it and `clean` (trackmania-mac clean) are the
 only commands that are not per title.
@@ -21,6 +23,7 @@ import pathlib
 import sys
 import typing
 
+from trackmania_mac.app import names as app_names
 from trackmania_mac.guard import relocate
 
 from . import paths as hub_paths
@@ -123,6 +126,8 @@ def run(
     runtime: typing.Optional[str] = None,
     include_saves: bool = False,
     launch_options: typing.Optional[typing.Dict[str, str]] = None,
+    app_name: typing.Optional[str] = None,
+    reset_app_name: bool = False,
 ) -> typing.NoReturn:
     title = registry.get(title_id)  # Registry-level validation with a precise message.
     options = {flag: value for flag, value in (launch_options or {}).items() if value is not None}
@@ -149,9 +154,21 @@ def run(
         die(f"Action {action_id} does not accept --include-saves.")
     if options and action_id != "set-defaults":
         die(f"Action {action_id} does not accept --window-size, --audio or --x87.")
+    if (app_name is not None or reset_app_name) and action_id != "rename-apps":
+        die(f"Action {action_id} does not accept --app-name or --reset-app-name.")
+    if action_id == "rename-apps":
+        if (app_name is not None) == reset_app_name:
+            die("Give exactly one of --app-name and --reset-app-name.")
+        if app_name is not None:
+            try:
+                app_names.validate(app_name)
+            except ValueError as error:
+                die(str(error))
     _require_moved()
     if action_id == "set-defaults":
         _set_defaults(title, options)
+    if action_id == "rename-apps":
+        _rename_apps(title, app_name)
     availability = available_action_ids(title)
     if action_id not in availability:
         die(
@@ -197,4 +214,18 @@ def _set_defaults(title: registry.Title, options: typing.Dict[str, str]) -> typi
     for flag in LAUNCH_FLAGS:
         if flag in options:
             argv += [flag, options[flag]]
+    _exec(_project_script("src", "shell", "cli", hub_paths.CLI_NAME), argv, title.id)
+
+
+def _rename_apps(title: registry.Title, name: typing.Optional[str]) -> typing.NoReturn:
+    """Rename the title's installed apps to NAME, or back to the registry's for None."""
+    payload = hub_snapshot.contained_payload(title)
+    if payload.get("error"):
+        die(f"Title {title.id} has a problem: {payload['error']}")
+    current = payload.get("appNames")
+    if current is None:
+        die(f"{title.name} has no installed apps yet. Install them first.")
+    if not current["editable"]:
+        die(current["reason"])
+    argv = ["rename-apps", "--reset" if name is None else f"--name={name}"]
     _exec(_project_script("src", "shell", "cli", hub_paths.CLI_NAME), argv, title.id)

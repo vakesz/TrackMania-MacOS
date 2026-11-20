@@ -1136,6 +1136,25 @@ class ShellRelinkTests(Base):
         self.assertEqual(self.assert_launchable(contents), markers.WRAPPER_EXECUTABLE)
         self.assertTrue((contents / "MacOS" / legacy.WRAPPER_EXECUTABLE).is_file())
 
+    def test_renamed_wrappers_are_relinked_at_their_names(self):
+        # The app-name file (trackmania_mac.app.names) names the wrappers relink-apps updates.
+        root = self.legacy.data / "games/tmnf"
+        root.mkdir(parents=True)
+        (root / "app-name").write_text("Mine\n")
+        for old, new in (
+            ("TrackMania Nations Forever.app", "Mine.app"),
+            ("TrackMania Settings.app", "Mine Settings.app"),
+        ):
+            (self.apps / old).rename(self.apps / new)
+        result = self.run_migrate()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for name, log in (("Mine.app", "play.log"), ("Mine Settings.app", "configure.log")):
+            contents = self.apps / name / "Contents"
+            wrapper = (contents / "MacOS" / markers.WRAPPER_EXECUTABLE).read_text()
+            self.assertIn(quoted(str(self.legacy.data / "logs" / log)), wrapper)
+            info = plistlib.loads((contents / "Info.plist").read_bytes())
+            self.assertEqual(info["CFBundleName"], name[: -len(".app")])
+
     def test_a_wrapper_using_another_launcher_is_left_alone(self):
         wrapper = self.apps / "TrackMania Settings.app/Contents/MacOS" / legacy.WRAPPER_EXECUTABLE
         wrapper.write_text("#!/bin/bash\npython_bin=/elsewhere/python3\n")

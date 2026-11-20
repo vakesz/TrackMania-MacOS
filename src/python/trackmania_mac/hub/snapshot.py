@@ -10,7 +10,8 @@ action: a fresh install would otherwise start beside the old one.
 
 `storage` (trackmania_mac.guard.storage) sizes what the Settings window can clean,
 and each title's `launchOptions` are the game defaults its installed launcher
-records; both are read without running anything.
+records; both are read without running anything. `appNames` are the names of
+its installed apps, which `rename-apps` changes (trackmania_mac.app.names).
 """
 
 from __future__ import annotations
@@ -171,6 +172,44 @@ def launch_options(launcher: pathlib.Path) -> typing.Optional[dict]:
     return options
 
 
+NO_LAUNCHER = "The launcher support files are missing. " + REINSTALL
+
+
+def app_names(
+    paths: hub_paths.TitlePaths,
+    items: typing.Dict[str, state.Probe],
+    options: typing.Optional[dict],
+) -> typing.Optional[dict]:
+    """The installed apps' names, or None unless both apps are installed.
+
+    They may change (`rename-apps`) under the same condition as the game
+    defaults: a launcher this hub installed whose settings are in the expected
+    form. A running game is for the client to check.
+    """
+    if not (items["gameApp"].ready and items["settingsApp"].ready):
+        return None
+    reason: typing.Optional[str]
+    if options is None:
+        editable, reason = False, NO_LAUNCHER
+    else:
+        editable = bool(options["editable"])
+        reason = None if editable else options["reason"]
+    if paths.app_name_problem is not None:
+        reason = "The recorded app name is not valid ({}). Reset it here.".format(
+            paths.app_name_problem
+        )
+    return {
+        "name": paths.app_base,
+        "default": paths.app_base_default,
+        # An app-name file that is not valid counts too, so Reset can remove it.
+        "custom": paths.app_name_custom or paths.app_name_problem is not None,
+        "game": paths.app.name,
+        "settings": paths.settings_app.name,
+        "editable": editable,
+        "reason": reason,
+    }
+
+
 def _link(title: registry.Title) -> typing.Optional[dict]:
     """The title's related page, or None; the registry sets both fields or neither."""
     if not title.link_url or not title.link_label:
@@ -187,6 +226,7 @@ def title_payload(
     # Fails safe: any probe error reads as inactive, which hides Stop game.
     active = state.session_active(resolved.prefix)
     removal = uninstall.preview(title, resolved)
+    options = launch_options(resolved.launcher)
     return {
         "id": title.id,
         "name": title.name,
@@ -207,7 +247,8 @@ def title_payload(
         "state": {name: probe.payload() for name, probe in items.items()},
         "apps": {"game": str(resolved.app), "settings": str(resolved.settings_app)},
         "removal": removal,
-        "launchOptions": launch_options(resolved.launcher),
+        "launchOptions": options,
+        "appNames": app_names(resolved, items, options),
         "actions": _actions(title, items, active, uninstall.removable(removal)),
     }
 
@@ -237,6 +278,7 @@ def contained_payload(title: registry.Title) -> dict:
             "apps": {"game": "", "settings": ""},
             "removal": None,
             "launchOptions": None,
+            "appNames": None,
             "actions": [],
         }
 
@@ -263,6 +305,7 @@ def _error_placeholder(title_id: str, message: str) -> dict:
             "apps": {"game": "", "settings": ""},
             "removal": None,
             "launchOptions": None,
+            "appNames": None,
             "actions": [],
         }
     )

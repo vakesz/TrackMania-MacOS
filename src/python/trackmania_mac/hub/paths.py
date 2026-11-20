@@ -12,6 +12,7 @@ import os
 import pathlib
 import typing
 
+from trackmania_mac.app import names as app_names
 from trackmania_mac.install import version as project_version
 
 from . import registry
@@ -96,6 +97,12 @@ class TitlePaths(typing.NamedTuple):
     game_dir: pathlib.Path
     game_exe: pathlib.Path
     launcher_exe: pathlib.Path
+    # The Game app's name without ".app", the registry's, whether the title's
+    # app-name file sets it, and why that file is ignored (trackmania_mac.app.names).
+    app_base: str = ""
+    app_base_default: str = ""
+    app_name_custom: bool = False
+    app_name_problem: typing.Optional[str] = None
 
     @property
     def icon(self) -> pathlib.Path:
@@ -144,8 +151,10 @@ def compute(title: registry.Title) -> TitlePaths:
     else:
         apps_dir = pathlib.Path.home() / "Applications"
 
-    app = apps_dir / title.app_name
-    settings_app = app.parent / title.settings_app_name
+    # The title's app-name file renames both apps; common.sh reads it the same way.
+    current = app_names.effective(title, root)
+    app = apps_dir / current.game
+    settings_app = app.parent / current.settings
     launcher = support / "launchers" / title.id
 
     game_dir = prefix / "drive_c" / "Program Files (x86)" / title.game_dir_name
@@ -164,6 +173,10 @@ def compute(title: registry.Title) -> TitlePaths:
         game_dir=game_dir,
         game_exe=game_dir / title.game_exe,
         launcher_exe=game_dir / title.launcher_exe,
+        app_base=current.base,
+        app_base_default=app_names.default_base(title),
+        app_name_custom=current.custom,
+        app_name_problem=current.problem,
     )
 
 

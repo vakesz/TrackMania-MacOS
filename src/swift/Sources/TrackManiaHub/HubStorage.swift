@@ -136,6 +136,47 @@ struct HubStorage: Decodable, Equatable {
     }
 }
 
+/// The base name of a title's installed apps, as the backend reports it. Changed only through
+/// `hub run TITLE rename-apps`; the backend validates names.
+struct HubAppNames: Decodable, Equatable {
+    /// The current base name: the game app is "<name>.app", Settings "<name> Settings.app".
+    let name: String
+    /// The registry's base name, which Reset restores.
+    let defaultName: String
+    let custom: Bool
+    let game: String
+    let settings: String
+    let editable: Bool
+    let reason: String?
+
+    init(name: String, defaultName: String, custom: Bool = false, game: String = "", settings: String = "",
+         editable: Bool = true, reason: String? = nil) {
+        self.name = name
+        self.defaultName = defaultName
+        self.custom = custom
+        self.game = game
+        self.settings = settings
+        self.editable = editable
+        self.reason = reason
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, defaultName = "default", custom, game, settings, editable, reason
+    }
+
+    /// Throws (so the title reports no names) when a name is unreadable; the rest is unaffected.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        defaultName = try c.decode(String.self, forKey: .defaultName)
+        custom = (try? c.decodeIfPresent(Bool.self, forKey: .custom)) ?? false
+        game = (try? c.decodeIfPresent(String.self, forKey: .game)) ?? ""
+        settings = (try? c.decodeIfPresent(String.self, forKey: .settings)) ?? ""
+        editable = (try? c.decodeIfPresent(Bool.self, forKey: .editable)) ?? false
+        reason = try? c.decodeIfPresent(String.self, forKey: .reason)
+    }
+}
+
 /// What the game starts with, as the backend reports it. Changed only through
 /// `hub run TITLE set-defaults`.
 struct HubLaunchOptions: Decodable, Equatable {

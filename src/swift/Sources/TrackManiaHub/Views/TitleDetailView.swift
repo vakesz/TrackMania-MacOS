@@ -7,6 +7,7 @@ struct TitleDetailView: View {
     @AppStorage(HubDefaults.dismissedUpdate) private var dismissedUpdate = ""
     @State private var runtimeChoiceAction: HubAction?
     @State private var uninstallAction: HubAction?
+    @State private var renameTarget: HubAppNames?
 
     var body: some View {
         ScrollView {
@@ -15,7 +16,7 @@ struct TitleDetailView: View {
                     UpdateBanner(info: info) { dismissedUpdate = info.tag }
                 }
                 HeroHeaderView(title: title)
-                ActionBar(title: title, model: model, perform: perform)
+                ActionBar(title: title, model: model, perform: perform) { renameTarget = title.appNames }
                 if title.showsNotesFirst { notes }
                 if let run = model.run(for: title) {
                     ActivityCard(run: run, model: model, activity: model.activity)
@@ -33,6 +34,9 @@ struct TitleDetailView: View {
             .padding(32)
             .frame(maxWidth: 780, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .top)
+        }
+        .sheet(item: $renameTarget) { names in
+            RenameAppsSheet(names: names) { model.renameApps(title: title, to: $0) }
         }
         .confirmationDialog(
             "Install the Wine runtime",

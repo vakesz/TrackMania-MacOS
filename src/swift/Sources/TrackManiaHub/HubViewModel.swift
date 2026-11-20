@@ -132,13 +132,6 @@ final class HubViewModel: ObservableObject {
         }
     }
 
-    /// Keeps a selection that is still in the snapshot; else the stored one if present; else the default.
-    static func resolvedSelection(current: String?, stored: String?, in titles: [HubTitle]) -> String? {
-        if let current, titles.contains(where: { $0.id == current }) { return current }
-        if let stored, titles.contains(where: { $0.id == stored }) { return stored }
-        return titles.defaultSelection?.id
-    }
-
     func apply(_ snapshot: HubSnapshot) {
         self.snapshot = snapshot
         if Self.shouldMigrate(snapshot, attempted: migrationAttempted, busy: migrating || runningAction != nil) {
@@ -158,7 +151,8 @@ final class HubViewModel: ObservableObject {
 
     /// `label` names the chosen dialog button in the activity card and notifications.
     func run(_ action: HubAction, for title: HubTitle, source: URL? = nil, runtime: RuntimeSource? = nil,
-             includeSaves: Bool = false, label: String? = nil, opensReportForm: Bool = false) {
+             includeSaves: Bool = false, label: String? = nil, opensReportForm: Bool = false,
+             appName: String? = nil, resetAppName: Bool = false) {
         guard let backend, runningAction == nil else { return }
         if action.kind == .install || action.kind == .import { Notifier.requestAuthorizationOnce() }
         runningAction = action.id
@@ -177,6 +171,7 @@ final class HubViewModel: ObservableObject {
         message = nil
         resetLog()
         let flags = (runtime.map { " --runtime \($0.rawValue)" } ?? "") + (includeSaves ? " --include-saves" : "")
+            + (appName.map { " --app-name=\($0)" } ?? "") + (resetAppName ? " --reset-app-name" : "")
         enqueue("$ trackmania-mac hub run \(title.id) \(action.id)\(flags)\n")
         Task { [weak self] in
             guard let self else { return }
@@ -184,7 +179,8 @@ final class HubViewModel: ObservableObject {
             var output = ""
             do {
                 output = try await backend.run(titleID: title.id, actionID: action.id, source: source, runtime: runtime,
-                                               includeSaves: includeSaves, handle: handle) { [weak self] chunk in
+                                               includeSaves: includeSaves, appName: appName,
+                                               resetAppName: resetAppName, handle: handle) { [weak self] chunk in
                     Task { @MainActor [weak self] in
                         guard self?.activityToken == token else { return }
                         self?.enqueue(chunk)
@@ -389,6 +385,28 @@ extension HubViewModel {
 
     func reportableTitle(for run: RunRecord) -> HubTitle? {
         Self.reportableTitle(for: run, in: snapshot, busy: runningAction != nil)
+    }
+}
+
+// MARK: Selection
+
+extension HubViewModel {
+    /// Keeps a selection that is still in the snapshot; else the stored one if present; else the default.
+    static func resolvedSelection(current: String?, stored: String?, in titles: [HubTitle]) -> String? {
+        if let current, titles.contains(where: { $0.id == current }) { return current }
+        if let stored, titles.contains(where: { $0.id == stored }) { return stored }
+        return titles.defaultSelection?.id
+    }
+}
+
+// MARK: Rename apps
+
+extension HubViewModel {
+    /// Renames the installed apps of `title`; `nil` restores the default name. The result shows in
+    /// the title's activity card, and the backend validates the name.
+    func renameApps(title: HubTitle, to name: String?) {
+        let action = HubAction(id: "rename-apps", label: String(localized: "Rename apps"), kind: .apps)
+        run(action, for: title, appName: name, resetAppName: name == nil)
     }
 }
 

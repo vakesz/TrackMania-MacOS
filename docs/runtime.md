@@ -614,6 +614,15 @@ never writes that file for this title, and an uninstall removes it with the
 prefix even when saves are kept, so the key has to be registered again after a
 new install.
 
+Full screen and windowed mode are chosen in the game launcher. In full screen
+the game removes its window's title bar and frame and asks for the display
+mode, which the Wine mac driver does not change, so full screen at a resolution
+below the screen's shows as an undecorated window of that size at the top left
+of the screen. In windowed mode the game never changes its window style, so the
+window keeps a normal title bar, but the window is always 640x480: the game
+sizes it once when it starts and never resizes it. On an M1 Pro a race ran at
+about 110 to 160 fps in a 640x480 window.
+
 ## Troubleshooting
 
 Start with `make doctor`, which checks the title in `TRACKMANIA_MAC_TITLE` (default

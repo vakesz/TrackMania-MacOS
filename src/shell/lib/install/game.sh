@@ -13,7 +13,8 @@
 #    (trackmania_mac.install.pe_flags), the game executable patched
 #    (trackmania_mac.install.exe_patch), then the registry's default settings
 #    file written into the game folder when none exists
-#    (trackmania_mac.install.system_config). Each finished update is recorded in
+#    (trackmania_mac.install.system_config); apply_title_layers runs these
+#    steps, and import runs them after a retail setup too. Each finished update is recorded in
 #    drive_c/trackmania-mac-updates.done and not run again, because an official
 #    updater refuses to run twice; an install that only lacks the NX_COMPAT
 #    flag or the patch gets just the steps after the overlay.
@@ -270,17 +271,25 @@ apply_official_updates() {
 # apply_overlay — unpack the pinned overlay over the game folder, remove the
 # files it makes obsolete, and write the game executable last.
 apply_overlay() {
-  local archive remove=() name names=()
+  local archive options=() name names=()
   archive="$(_cache_download_path "$TRACKMANIA_MAC_TITLE" "$TRACKMANIA_MAC_TITLE_OVERLAY_URL")"
-  # The registry allows only plain file names here, so splitting on spaces is exact.
+  # The registry allows only plain file names in remove and skip paths, so
+  # splitting on spaces is exact. The root is one value and may hold spaces.
   read -r -a names <<<"${TRACKMANIA_MAC_TITLE_OVERLAY_REMOVE:-}"
   for name in ${names[@]+"${names[@]}"}; do
-    remove+=(--remove "$name")
+    options+=(--remove "$name")
   done
+  read -r -a names <<<"${TRACKMANIA_MAC_TITLE_OVERLAY_SKIP:-}"
+  for name in ${names[@]+"${names[@]}"}; do
+    options+=(--skip "$name")
+  done
+  if test -n "${TRACKMANIA_MAC_TITLE_OVERLAY_ROOT:-}"; then
+    options+=(--root "$TRACKMANIA_MAC_TITLE_OVERLAY_ROOT")
+  fi
   say "Adding the $TRACKMANIA_MAC_TITLE_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION game files"
   trackmania_mac_python -m trackmania_mac.install.overlay apply "$archive" \
     "$TRACKMANIA_MAC_TITLE_OVERLAY_SHA256" "$GAME_DIR" --last "$TRACKMANIA_MAC_TITLE_GAME_EXE" \
-    ${remove[@]+"${remove[@]}"} \
+    ${options[@]+"${options[@]}"} \
     || die "Could not add the $TRACKMANIA_MAC_TITLE_NAME game files."
 }
 
@@ -325,6 +334,42 @@ verify_installed_game() {
   fi
 }
 
+# title_is_layered — true when steps follow the title's base setup: pinned
+# updates, an overlay or the NX_COMPAT flag. Each is safe to repeat, so an
+# install or import that stopped after its setup finishes without it.
+title_is_layered() {
+  title_has updates || title_has overlay || title_has nx-compat
+}
+
+# finish_after_overlay — the steps after the overlay (the NX_COMPAT flag, the
+# executable patch, the default settings file), then the pinned-executable check.
+# The flag step runs whenever the title has it: an earlier run may have stopped
+# after the executable but before the other files, and files that have the flag
+# are left as they are.
+finish_after_overlay() {
+  if title_has nx-compat; then
+    apply_nx_compat
+  fi
+  if title_has game-exe-patch; then
+    apply_game_exe_patch
+  fi
+  seed_game_system_config
+  verify_installed_game "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256" "$TRACKMANIA_MAC_TITLE_SHORT_NAME"
+}
+
+# apply_title_layers — every step after the base setup: the pinned updates not
+# yet recorded, the overlay, then finish_after_overlay. The downloads must be
+# verified first (download_title_extras).
+apply_title_layers() {
+  if title_has updates; then
+    apply_official_updates
+  fi
+  if title_has overlay; then
+    apply_overlay
+  fi
+  finish_after_overlay
+}
+
 install_game() {
   local title_id="$TRACKMANIA_MAC_TITLE" installer_path installer_log
   local kind="$TRACKMANIA_MAC_TITLE_INSTALLER"
@@ -349,34 +394,14 @@ install_game() {
       # either way: it may have stopped after the executable but before the
       # other files, and it leaves files that have the flag as they are.
       say "Finishing the $TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION installation at $GAME_DIR"
-      if title_has nx-compat; then
-        apply_nx_compat
-      fi
-      if title_has game-exe-patch; then
-        apply_game_exe_patch
-      fi
-      seed_game_system_config
-      verify_installed_game "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256" "$TRACKMANIA_MAC_TITLE_SHORT_NAME"
+      finish_after_overlay
       say "Installed $TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION at $GAME_DIR"
-    elif title_has updates || title_has overlay || title_has nx-compat; then
+    elif title_is_layered; then
       # A layered install stopped after its setup: repeat the steps after it,
       # which are safe to repeat and need no clicks, instead of the setup.
       say "Finishing the $TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION installation at $GAME_DIR"
       download_title_extras
-      if title_has updates; then
-        apply_official_updates
-      fi
-      if title_has overlay; then
-        apply_overlay
-      fi
-      if title_has nx-compat; then
-        apply_nx_compat
-      fi
-      if title_has game-exe-patch; then
-        apply_game_exe_patch
-      fi
-      seed_game_system_config
-      verify_installed_game "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256" "$TRACKMANIA_MAC_TITLE_SHORT_NAME"
+      apply_title_layers
       say "Installed $TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION at $GAME_DIR"
     else
       say "$TRACKMANIA_MAC_TITLE_SHORT_NAME is already installed at $GAME_DIR"
@@ -419,20 +444,7 @@ install_game() {
     test -f "$GAME_EXE" \
       || die "$TRACKMANIA_MAC_TITLE_NAME setup closed without installing into $GAME_DIR. Run install again and keep the suggested folder."
   fi
-  if title_has updates; then
-    apply_official_updates
-  fi
-  if title_has overlay; then
-    apply_overlay
-  fi
-  if title_has nx-compat; then
-    apply_nx_compat
-  fi
-  if title_has game-exe-patch; then
-    apply_game_exe_patch
-  fi
-  seed_game_system_config
-  verify_installed_game "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256" "$TRACKMANIA_MAC_TITLE_SHORT_NAME"
+  apply_title_layers
   say "Installed $TRACKMANIA_MAC_TITLE_SHORT_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION at $GAME_DIR"
 }
 

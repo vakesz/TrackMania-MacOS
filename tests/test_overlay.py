@@ -5,7 +5,9 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import stat
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -248,6 +250,117 @@ class OverlayTests(unittest.TestCase):
         self.apply(self.standard())
         self.assertFalse(stale.exists())
         self.assertTrue(other.is_dir())
+
+    def zip_archive(self, entries, name="overlay.zip"):
+        """entries: (name, data or None for a folder, Unix mode or None, compression)."""
+        path = self.root / name
+        with zipfile.ZipFile(path, "w") as archive:
+            for entry_name, data, mode, method in entries:
+                info = zipfile.ZipInfo(entry_name)
+                info.compress_type = method
+                if mode is not None:
+                    info.create_system = overlay.ZIP_UNIX
+                    info.external_attr = mode << 16
+                archive.writestr(info, b"" if data is None else data)
+        return path, hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def zip_standard(self, root="Windows 10 patch"):
+        deflate = zipfile.ZIP_DEFLATED
+        return [
+            (root + "/", None, stat.S_IFDIR | 0o755, zipfile.ZIP_STORED),
+            (root + "/readme.txt", b"read me", stat.S_IFREG | 0o644, deflate),
+            (root + "/d3d9.dll", b"proxy", stat.S_IFREG | 0o644, deflate),
+            (root + "/" + EXE, b"new exe", stat.S_IFREG | 0o644, deflate),
+            (root + "/GameData/", None, stat.S_IFDIR | 0o755, zipfile.ZIP_STORED),
+            (root + "/GameData/Track.Gbx", b"track", None, deflate),
+        ]
+
+    def apply_zip(self, entries, root="Windows 10 patch", skip=("d3d9.dll", "readme.txt"), **kw):
+        path, digest = self.zip_archive(entries)
+        overlay.apply(str(path), digest, str(self.game), EXE, kw.get("remove", ()), root, skip)
+
+    def test_unpacks_a_zip_from_its_root_folder_without_the_skipped_files(self):
+        (self.game / "tms.dat").write_bytes(b"protected")
+        self.apply_zip(self.zip_standard(), remove=["tms.dat"])
+        self.assertEqual((self.game / EXE).read_bytes(), b"new exe")
+        self.assertEqual((self.game / "GameData/Track.Gbx").read_bytes(), b"track")
+        for name in ("d3d9.dll", "readme.txt", "Windows 10 patch", "tms.dat"):
+            self.assertFalse((self.game / name).exists(), name)
+        self.assertEqual(stat.S_IMODE((self.game / EXE).stat().st_mode), overlay.FILE_MODE)
+        self.assertEqual(self.staging_left(), [])
+
+    def test_a_tar_also_takes_a_root_folder_and_skipped_files(self):
+        entries = [
+            dir_entry("top"),
+            file_entry("top/" + EXE, b"new exe"),
+            file_entry("top/d3d9.dll", b"proxy"),
+        ]
+        path, digest = self.archive(entries)
+        overlay.apply(str(path), digest, str(self.game), EXE, (), "top", ["d3d9.dll"])
+        self.assertEqual(sorted(os.listdir(self.game)), [EXE])
+
+    def test_the_format_is_told_by_content_not_by_name(self):
+        path, digest = self.zip_archive(self.zip_standard(root="r"), name="overlay.tar.gz")
+        overlay.apply(str(path), digest, str(self.game), EXE, (), "r", ["d3d9.dll"])
+        self.assertTrue((self.game / "readme.txt").is_file())
+
+    def test_refuses_unsafe_zip_entries(self):
+        good = self.zip_standard()
+        root = "Windows 10 patch/"
+        deflate = zipfile.ZIP_DEFLATED
+        cases = {
+            "files or folders": [(root + "link", b"/etc", stat.S_IFLNK | 0o777, deflate)],
+            "files or folders ": [(root + "fifo", b"", stat.S_IFIFO | 0o644, deflate)],
+            "files or folders  ": [(root + "x", b"", stat.S_IFDIR | 0o755, deflate)],
+            "permissions": [(root + "s.exe", b"x", stat.S_IFREG | 0o4755, deflate)],
+            "Unsupported overlay compression": [(root + "b.dat", b"x", None, zipfile.ZIP_BZIP2)],
+            "Python files": [(root + "skip.PY", b"x", None, deflate)],
+            "outside Windows 10 patch": [("other.txt", b"x", None, deflate)],
+            "Unsafe overlay path": [(root + "../x", b"x", None, deflate)],
+        }
+        for message, extra in cases.items():
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ValueError, message.strip()):
+                    self.apply_zip(good + extra)
+                self.assertEqual(os.listdir(self.game), [])
+
+    def test_refuses_an_encrypted_zip_entry(self):
+        path, _ = self.zip_archive(self.zip_standard())
+        data = bytearray(path.read_bytes())
+        # Set the encryption flag of the first entry in its central directory record.
+        central = data.index(b"PK\x01\x02")
+        data[central + 8] |= 0x1
+        path.write_bytes(bytes(data))
+        digest = hashlib.sha256(bytes(data)).hexdigest()
+        with self.assertRaisesRegex(ValueError, "encrypted"):
+            overlay.apply(str(path), digest, str(self.game), EXE, (), "Windows 10 patch", ())
+
+    def test_skipped_files_must_be_in_the_archive_and_never_the_last_file(self):
+        with self.assertRaisesRegex(ValueError, "should skip"):
+            self.apply_zip(self.zip_standard(), skip=["missing.dll"])
+        with self.assertRaisesRegex(ValueError, "should skip"):
+            self.apply_zip(self.zip_standard(), skip=["GameData"])
+        with self.assertRaisesRegex(ValueError, "cannot skip"):
+            self.apply_zip(self.zip_standard(), skip=[EXE])
+        self.assertEqual(os.listdir(self.game), [])
+
+    def test_a_corrupt_zip_entry_writes_nothing(self):
+        stored = [entry[:3] + (zipfile.ZIP_STORED,) for entry in self.zip_standard()]
+        path, _ = self.zip_archive(stored)
+        data = path.read_bytes().replace(b"new exe", b"bad exe")
+        path.write_bytes(data)
+        digest = hashlib.sha256(data).hexdigest()
+        with self.assertRaises(zipfile.BadZipFile):
+            overlay.apply(str(path), digest, str(self.game), EXE, (), "Windows 10 patch", ())
+        self.assertEqual(os.listdir(self.game), [])
+        self.assertEqual(self.staging_left(), [])
+
+    def test_a_zip_counts_toward_the_size_and_entry_limits(self):
+        big = [("Windows 10 patch/big.bin", b"\0" * 100000, None, zipfile.ZIP_DEFLATED)]
+        with self.assertRaisesRegex(ValueError, "times its own size"):
+            self.apply_zip(self.zip_standard() + big)
+        with mock.patch.object(overlay, "MAX_ENTRIES", 3), self.assertRaises(ValueError):
+            self.apply_zip(self.zip_standard())
 
     def test_command_line_reports_errors(self):
         path, digest = self.archive(self.standard())

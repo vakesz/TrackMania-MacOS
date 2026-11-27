@@ -18,12 +18,25 @@ from unittest import mock
 from trackmania_mac.hub import run as hub_run
 from trackmania_mac.hub import paths as hub_paths
 from trackmania_mac.hub import diagnostics, registry, snapshot, state
+from trackmania_mac.install import system_config
 from trackmania_mac.install import version as project_version
 from hang_guard import SUBPROCESS_TIMEOUT
 
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "src/shell/cli/trackmania-mac"
+# A synthetic key in the shape the Sunrise eXtreme launcher registers; never a real one.
+FAKE_SUNRISE_KEY = "TEST0-FAKE0-KEY00-00000"
+
+
+def sunrise_system_config(key):
+    """A text Default.SystemConfig.Gbx whose key chunk 0x0B005012 holds KEY."""
+    chunk = system_config._chunk
+    tokens = ["b005000", "0", "1", "0"]
+    tokens += chunk("b005012", ["", "", key, "False", "0"])
+    tokens += chunk("b005020", ["False"] + chunk("b013001", ["800", "600"]) + ["facade01"])
+    tokens += ["facade01", ""]
+    return system_config.TEXT_2006_HEADER + "\r\n".join(tokens).encode("ascii")
 
 
 class HubBackendTests(unittest.TestCase):
@@ -127,8 +140,10 @@ class HubBackendTests(unittest.TestCase):
             self.assertEqual(eswc["kind"], "online")
             self.assertEqual(eswc["sourceSize"], 278695200 + 19194902 + 67468269)
             self.assertEqual(titles["tmnf"]["sourceSize"], None)
-            # A retail title downloads only its updates; without any, nothing.
-            self.assertEqual(titles["tm-sunrise-extreme"]["sourceSize"], 417826835 + 21567628)
+            # A retail title downloads only its updates and overlay; without any, nothing.
+            self.assertEqual(
+                titles["tm-sunrise-extreme"]["sourceSize"], 417826835 + 21567628 + 135814066
+            )
             self.assertEqual(titles["tm-sunrise-extreme"]["kind"], "disk-image")
             self.assertEqual(titles["tm-original"]["sourceSize"], None)
             self.assertEqual(
@@ -158,7 +173,24 @@ class HubBackendTests(unittest.TestCase):
             done.write_text(title.updates[0].sha256 + "\n")
             self.assertFalse(game_state()["ready"])
             done.write_text("".join(update.sha256 + "\n" for update in title.updates))
-            self.assertEqual(game_state(), {"ready": True, "note": "Installed"})
+            # The overlay and NX_COMPAT steps end with the pinned executable.
+            unfinished = game_state()
+            self.assertFalse(unfinished["ready"])
+            self.assertIn("remaining install steps are not finished", unfinished["note"])
+            with mock.patch.dict(os.environ, HOME=str(home)):
+                paths = hub_paths.compute(title)
+                prefix = paths.prefix
+                pinned = title._replace(game_exe_sha256=hashlib.sha256(b"").hexdigest())
+                self.assertTrue(state._game_ready(pinned, paths, prefix).ready)
+                # A retail title without an overlay or the flag needs no pin.
+                plain = title._replace(overlay=None, nx_compat=())
+                self.assertTrue(state._game_ready(plain, paths, prefix).ready)
+
+            # Importing again finishes the steps, so the hub offers it.
+            result = self.run_hub("snapshot", home=home)
+            titles = {entry["id"]: entry for entry in json.loads(result.stdout)["titles"]}
+            actions = [action["id"] for action in titles["tm-sunrise-extreme"]["actions"]]
+            self.assertNotIn("install-apps", actions)
 
     def test_updates_done_log_name_matches_the_shell(self):
         game_sh = (ROOT / "src/shell/lib/install/game.sh").read_text()
@@ -228,6 +260,43 @@ class HubBackendTests(unittest.TestCase):
             self.assertEqual(cd_key, {"ready": True, "note": "CD key present"})
             # The snapshot reports only whether a key exists, never the key.
             self.assertNotIn(placeholder, result.stdout)
+
+    def test_cd_key_gate_reads_the_key_registered_in_the_sunrise_settings_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            game = home / "Library/TrackManiaMacOS/games/tm-sunrise-extreme/prefix/drive_c"
+            game = game / "Program Files (x86)/TrackMania Sunrise"
+            game.mkdir(parents=True)
+            settings = game / "Default.SystemConfig.Gbx"
+
+            def snapshot_text():
+                result = self.run_hub("snapshot", home=home)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                return result.stdout
+
+            def cd_key():
+                titles = {t["id"]: t for t in json.loads(snapshot_text())["titles"]}
+                return titles["tm-sunrise-extreme"]["state"].get("cdKey")
+
+            # Not installed yet: no CD key item.
+            self.assertIsNone(cd_key())
+            (game / "TmSunrise.exe").touch()
+            # The launcher writes the file on its first run.
+            self.assertEqual(cd_key(), {"ready": False, "note": "CD key required"})
+            settings.write_bytes(sunrise_system_config(""))
+            self.assertEqual(cd_key(), {"ready": False, "note": "CD key required"})
+            settings.write_bytes(sunrise_system_config(FAKE_SUNRISE_KEY))
+            self.assertEqual(cd_key(), {"ready": True, "note": "CD key present"})
+            # The snapshot reports only whether a key exists, never the key.
+            self.assertNotIn(FAKE_SUNRISE_KEY, snapshot_text())
+            # A Nadeo.ini key does not count for this title, nor a symlinked file.
+            settings.unlink()
+            (game / "Nadeo.ini").write_text("[TmForever]\nInstallKey=K-1\n")
+            self.assertEqual(cd_key(), {"ready": False, "note": "CD key required"})
+            real = game / "real.Gbx"
+            real.write_bytes(sunrise_system_config(FAKE_SUNRISE_KEY))
+            settings.symlink_to(real)
+            self.assertEqual(cd_key(), {"ready": False, "note": "CD key required"})
 
     def test_cd_key_gate_accepts_a_key_registered_in_the_game_launcher(self):
         # The retail launcher's Register key stores the key in the player's
@@ -1225,6 +1294,43 @@ class HubBackendTests(unittest.TestCase):
             return home, diagnostics.build(
                 "tmu", doctor_output=doctor_output.replace("@HOME", str(home))
             )
+
+    def test_diagnostics_never_carry_a_registered_key(self):
+        # The zip holds the summary, doctor output, snapshot and log tails; no
+        # game-folder file, so neither kind of stored key can reach it.
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        home = Path(directory.name).resolve() / "alice"
+        (home / "Library/TrackManiaMacOS/logs").mkdir(parents=True)
+        nadeo_key = "TEST-NADEO-INSTALLKEY-0000"
+        pkey = b"TEST-PKEY-0000"
+        games = home / "Library/TrackManiaMacOS/games"
+        sunrise = games / "tm-sunrise-extreme/prefix/drive_c/Program Files (x86)/TrackMania Sunrise"
+        united = games / "tmu/prefix/drive_c/Program Files (x86)/TmUnitedForever"
+        for folder, exe in ((sunrise, "TmSunrise.exe"), (united, "TmForever.exe")):
+            folder.mkdir(parents=True)
+            (folder / exe).touch()
+        (sunrise / "Default.SystemConfig.Gbx").write_bytes(sunrise_system_config(FAKE_SUNRISE_KEY))
+        (united / "Nadeo.ini").write_text(f"[TmForever]\nInstallKey={nadeo_key}\n")
+        config = home / "Library/TrackManiaMacOS/saves/tmu/TrackMania/Config"
+        config.mkdir(parents=True)
+        (config / "pkey.dat").write_bytes(pkey)
+        for title_id in ("tm-sunrise-extreme", "tmu"):
+            with (
+                self.subTest(title=title_id),
+                mock.patch.dict(os.environ, {"HOME": str(home), "TRACKMANIA_MAC_TITLE": title_id}),
+                mock.patch.object(diagnostics.getpass, "getuser", return_value="alice"),
+                mock.patch.object(diagnostics, "_run", self._fake_run),
+            ):
+                report = diagnostics.build(title_id, doctor_output="Result: ready to play\n")
+                with zipfile.ZipFile(report.path) as archive:
+                    snapshot_json = json.loads(archive.read("snapshot.json"))
+                    self.assertTrue(snapshot_json["state"]["cdKey"]["ready"])
+                    for name in archive.namelist():
+                        body = archive.read(name)
+                        for secret in (FAKE_SUNRISE_KEY.encode(), nadeo_key.encode(), pkey):
+                            self.assertNotIn(secret, body, name)
+                self.assertNotIn(FAKE_SUNRISE_KEY, urllib.parse.unquote(report.form_url))
 
     def test_diagnostics_form_url_fields(self):
         doctor = "ok: fine\nwarning: gpu slow\nerror: no wine\nResult: 1 problem\n\n(doctor exit status 1)\n"

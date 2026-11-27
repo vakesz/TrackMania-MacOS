@@ -33,6 +33,14 @@ is not ready, the hub shows Play disabled with "CD key required" and a link to
 Titles without the item, such as Nations Forever, are never gated. The gate is
 in the hub only; the Game app and `trackmania-mac play` don't check the key.
 
+A title with `cd_key_in_system_config` (Sunrise eXtreme) carries the same
+`cdKey` item. Its launcher stores the registered key in the text
+`Default.SystemConfig.Gbx` in the game folder, as the third value of the
+settings chunk 0x0B005012, which is empty until a key is registered. The item
+is ready when that value is not empty. The hub reads the file only to check
+this, never through a symlink, and the snapshot never includes the key. No
+installer step writes this file for the title, so the key is never replaced.
+
 ## Backend contract
 
 The Swift interface is an adapter over four shell commands:
@@ -227,7 +235,7 @@ is now `local.trackmania-mac.hub`.
 | United Forever (`tmu`) | pinned official retail installer; asks for a serial key | Competition Patch and CoreMod | supported |
 | Original (`tm-original`) | user-owned retail disk image or setup executable | its own game executable | unsupported |
 | Sunrise (`tm-sunrise`) | user-owned retail disk image or setup executable | its own game executable | unsupported |
-| Sunrise eXtreme (`tm-sunrise-extreme`) | user-owned retail Sunrise disk image or setup executable, then the pinned official eXtreme 1.5.0 update and 1.5.1 patch | its own game executable | unsupported |
+| Sunrise eXtreme (`tm-sunrise-extreme`) | user-owned retail Sunrise disk image or setup executable, then the pinned official eXtreme 1.5.0 update and 1.5.1 patch and a community StarForce-free build; asks for a serial key | its own game executable | provisional |
 | TrackMania 2 Canyon (`tm-canyon`) | pinned official ManiaPlanet trial | its own game executable | unsupported |
 | Turbo (`tm-turbo`) | existing Steam game folder | its own game executable | unsupported |
 | Nations ESWC (`tmn-eswc`) | pinned official free installer (you click through its setup), official 1.7.9 update and community StarForce-free 1.8.0 build | its own game executable | provisional |
@@ -290,6 +298,14 @@ order, and each one that finishes is recorded in
 game state says the updates are not finished and the hub offers the retail
 installer again: choose the same setup file, and the import skips the setup
 and runs only the updates that are not recorded yet.
+
+A retail title may also have an overlay and files to mark with the memory
+protection flag (Sunrise eXtreme: a community build without StarForce, then six
+files, see `docs/runtime.md`). The import runs them after the updates and then
+checks the game executable against the registry's pinned build. Until the
+executable is that build, the game state says the remaining install steps are
+not finished and the hub offers the retail installer again; that import skips
+the setup too and repeats only the steps after it.
 
 The hub keeps the sequence explicit: it offers shared-platform setup until the
 runtime, prefix, DirectX and renderer are ready; it then offers import. Once

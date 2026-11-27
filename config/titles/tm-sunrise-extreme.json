@@ -4,7 +4,7 @@
   "short_name": "TMSX",
   "engine": "tmf-classic",
   "installer": "disk-image",
-  "status": "unsupported",
+  "status": "provisional",
   "release_date": "2005-11-14",
   "app_name": "TrackMania Sunrise eXtreme.app",
   "settings_app_name": "TrackMania Sunrise eXtreme Settings.app",
@@ -31,6 +31,32 @@
       "size": 21567628
     }
   ],
-  "requires_serial": false,
-  "notes": "Use the CLI import command to inspect a retail Sunrise disk image, then run its copied TmSunriseSetup.exe interactively in the managed prefix. When the setup closes, the official eXtreme 1.5.0 update and the 1.5.1 patch (from an archive.org mirror, checked by hash) run silently. The update expects Sunrise 1.4.6. The game is protected by StarForce, which Wine cannot run, so it is not expected to start. Serial keys are entered in the game and never stored."
+  "overlay": {
+    "url": "https://archive.org/download/tm-sunrise-extreme-update/TrackmaniaSunriseExtreme_Win10Patch.zip",
+    "sha256": "de3ec4cce962ba2d1283bb37fb7458c53be684355fadaf79bcab597d3411f883",
+    "size": 135814066,
+    "root": "Windows 10 patch",
+    "skip": ["d3d9.dll", "readme.txt"],
+    "remove": ["tms.exe", "tms.dll", "tms.dat", "tms.msg", "tmsunrise.dll", "tmsunrise.dat"]
+  },
+  "nx_compat": ["TmSunrise.exe", "TmSunriseLauncher.exe", "binkw32.dll", "unicows.dll", "m4d.dll", "msvcr71.dll"],
+  "game_save_dirs": [
+    "GameData/Profiles",
+    "GameData/Scores",
+    "GameData/Custom",
+    "GameData/Tracks/Challenges/My Challenges",
+    "GameData/Tracks/Challenges/Downloaded",
+    "GameData/Tracks/Campaigns/My Campaigns",
+    "GameData/Tracks/Campaigns/Downloaded",
+    "GameData/Tracks/Replays/My Replays",
+    "GameData/Tracks/Replays/Autosaves",
+    "GameData/Tracks/Replays/CreatedGhosts",
+    "GameData/Tracks/Replays/MediaTrackerGhosts",
+    "GameData/Tracks/Replays/Downloaded"
+  ],
+  "game_version": "1.5.1",
+  "game_exe_sha256": "37d8158c92480918d4b3cccae22620d1cb8fb0e65b1cc3f346cfb0dcc7dfecce",
+  "requires_serial": true,
+  "cd_key_in_system_config": true,
+  "notes": "Installs from your own Sunrise disc: import its TmSunriseSetup.exe and click through the setup. The official eXtreme 1.5.0 update and 1.5.1 patch then run silently, and a community build without StarForce copy protection, which Wine cannot run, replaces the game files. Six game files are then marked as compatible with memory protection, which Wine needs to run the game at full speed. Enter your CD key with Register player key; Play stays off until the game has it."
 }

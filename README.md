@@ -84,8 +84,8 @@ rate overlay enabled (`DXVK_HUD=fps,frametimes`).
 | Nations Forever (`tmnf`) | free download from Nadeo | supported |
 | United Forever (`tmu`) | official retail installer (needs your serial key); starts with Competition Patch | supported |
 | Original (`tm-original`) | your own retail disc image or setup file | unsupported |
-| Sunrise (`tm-sunrise`) | your own retail disc image or setup file | unsupported |
-| Sunrise eXtreme (`tm-sunrise-extreme`) | your own retail Sunrise disc image or setup file, then the official eXtreme update | unsupported |
+| Sunrise (`tm-sunrise`) | your own retail disc image or setup file; use Sunrise eXtreme to play | unsupported |
+| Sunrise eXtreme (`tm-sunrise-extreme`) | your own retail Sunrise disc image or setup file (needs your serial key), then the official eXtreme update and a community build without StarForce | provisional |
 | TrackMania 2 Canyon (`tm-canyon`) | official ManiaPlanet trial | unsupported |
 | Turbo (`tm-turbo`) | your existing Steam game folder | unsupported |
 | Nations ESWC (`tmn-eswc`) | official free installer, its 1.7.9 update and a community 1.8.0 build without StarForce | provisional |

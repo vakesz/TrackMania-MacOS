@@ -6,13 +6,15 @@
 # never stored. An import does not change a title's registry status; it stays
 # provisional or unsupported until user media is inventoried.
 #
-# A retail title with pinned official updates (the updates component) gets
-# them after its setup, run silently by apply_official_updates from
-# install/game.sh: they are downloaded and verified before the setup, so a
-# failed download costs no clicks, and each finished update is recorded in
-# drive_c/trackmania-mac-updates.done. When the game is already installed, an
-# import of such a title skips the setup and runs only the updates not yet
-# recorded, which finishes an import whose updates stopped.
+# A retail title with steps after its setup (title_is_layered: pinned official
+# updates, an overlay, the NX_COMPAT flag) gets them from apply_title_layers in
+# install/game.sh: the downloads are verified before the setup, so a failed
+# download costs no clicks, the updates run silently, and each finished update
+# is recorded in drive_c/trackmania-mac-updates.done. When the game is already
+# installed, an import of such a title skips the setup: it does nothing when the
+# executable is the pinned build, sets only the NX_COMPAT flag when that is all
+# that is left, and otherwise repeats the steps (the updates not yet recorded,
+# the overlay, the flag), which finishes an import that stopped.
 
 # shellcheck source=src/shell/lib/apps/icons.sh
 . "${TRACKMANIA_MAC_PROJECT_DIR}/src/shell/lib/apps/icons.sh"
@@ -65,23 +67,35 @@ import_source() {
       rm -rf "$mount"
       ;;
     *.exe|*.EXE)
-      if title_has updates; then
+      if title_has updates || title_has overlay; then
         download_title_extras
       fi
-      if title_has updates && test -f "$GAME_EXE"; then
-        say "$TRACKMANIA_MAC_TITLE_NAME is already installed at $GAME_DIR; applying the remaining official updates."
+      if title_is_layered && test -f "$GAME_EXE"; then
+        if test -n "${TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256:-}" \
+          && verify_file "$GAME_EXE" "$TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256"; then
+          say "$TRACKMANIA_MAC_TITLE_NAME $TRACKMANIA_MAC_TITLE_GAME_VERSION is already installed at $GAME_DIR."
+        elif game_exe_finish_pending; then
+          say "Finishing the $TRACKMANIA_MAC_TITLE_NAME installation at $GAME_DIR."
+          finish_after_overlay
+        else
+          say "$TRACKMANIA_MAC_TITLE_NAME is already installed at $GAME_DIR; applying the remaining install steps."
+          stop_prefix_processes
+          apply_title_layers
+        fi
       else
         say "Running the retail installer in the managed prefix: $source"
         say "Choose its game install location; the hub will verify the expected executable when it exits."
         run_wine "$source" || die "The retail installer failed: $source"
         test -f "$GAME_EXE" || die \
           "The installer exited without creating the expected game executable: $GAME_EXE. Check its install location and retry."
+        if title_is_layered; then
+          # Stops anything started from the setup's last page before the next steps run.
+          stop_prefix_processes
+          apply_title_layers
+        fi
       fi
-      if title_has updates; then
-        # Stops anything started from the setup's last page before the updates run.
-        stop_prefix_processes
-        apply_official_updates
-      fi
+      # The import holds the prefix lock; Play links what is left.
+      sync_game_save_links || warn "Some save folders in the game folder are not linked to the saves folder yet."
       ensure_title_icon || warn "Could not extract the game icon for the hub."
       say "$TRACKMANIA_MAC_TITLE game files are installed. Use the hub to install its Game and Settings apps."
       ;;

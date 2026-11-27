@@ -145,7 +145,11 @@ doctor() {
       if verify_file "$GAME_EXE" "$game_expected_sha"; then
         say "$title_short $TRACKMANIA_MAC_TITLE_GAME_VERSION: verified pinned build"
       else
-        warn "$title_short: installed executable is not the pinned build; run update"
+        if test "$TRACKMANIA_MAC_TITLE_INSTALLER" = disk-image; then
+          warn "$title_short: installed executable is not the pinned build; run the retail installer again to finish the install"
+        else
+          warn "$title_short: installed executable is not the pinned build; run update"
+        fi
       fi
     else
       # Retail and trial installs carry only presence coverage until a hash

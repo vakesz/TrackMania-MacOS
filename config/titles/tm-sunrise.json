@@ -20,5 +20,5 @@
   "source_sha256": null,
   "source_size": null,
   "requires_serial": false,
-  "notes": "Use the CLI import command to inspect a retail disk image, then run its copied TmSunriseSetup.exe interactively in the managed prefix. The game is protected by StarForce, which Wine cannot run, so it is not expected to start. Serial keys are entered in the game and never stored."
+  "notes": "Sunrise 1.4.6 on its own is protected by StarForce, which Wine cannot run, so it is not expected to start. To play, choose TrackMania Sunrise eXtreme instead: it installs from the same disc and adds the official updates and a build without StarForce."
 }

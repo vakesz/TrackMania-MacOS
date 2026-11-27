@@ -91,11 +91,20 @@ class ImportFlowTests(unittest.TestCase):
 
     UPDATE_SHA = "179e8d5d2437ff25d92a5fe840bd798df7b5522f7189a4a48e1b7fda8e097844"
     PATCH_SHA = "9e456a76c39f9e528e831512a94c640e58c266190a5bdb6820e2e2a0d70a0f21"
-    # Every step the updates take is recorded in $HOME/steps instead of running.
+    OVERLAY_SHA = "de3ec4cce962ba2d1283bb37fb7458c53be684355fadaf79bcab597d3411f883"
+    # Every step the import takes is recorded in $HOME/steps instead of running.
+    # The game executable has the pinned hash only when $HOME/pinned exists, and
+    # only the NX_COMPAT flag is missing when $HOME/nx-pending exists.
     UPDATE_STUBS = (
         'step() { printf "%s\\n" "$*" >>"$HOME/steps"; }; '
         'download_verified() { step download "${1##*/}" "$3" "$4"; }; '
-        'verify_file() { step verify-file "${1##*/}"; }; '
+        'verify_file() { step verify-file "${1##*/}"; '
+        'if test "$1" = "$GAME_EXE"; then test -f "$HOME/pinned"; fi; }; '
+        "apply_overlay() { step overlay; }; "
+        "apply_nx_compat() { step nx; }; "
+        "verify_installed_game() { step verify-game; }; "
+        'game_exe_finish_pending() { test -f "$HOME/nx-pending"; }; '
+        "sync_game_save_links() { if title_has game-saves; then step save-links; fi; }; "
         'run_wine() { step setup "$1"; mkdir -p "$(dirname "$GAME_EXE")"; touch "$GAME_EXE"; }; '
         "stop_prefix_processes() { step stop; }; "
         'run_released_installer() { step silent "${1##*/}" "$TRACKMANIA_MAC_INNO_DIR"; '
@@ -128,6 +137,9 @@ class ImportFlowTests(unittest.TestCase):
                 [
                     "download TmSunriseExtreme_update.exe {} 417826835".format(self.UPDATE_SHA),
                     "download TmSunriseExtreme_150_to_151.exe {} 21567628".format(self.PATCH_SHA),
+                    "download TrackmaniaSunriseExtreme_Win10Patch.zip {} 135814066".format(
+                        self.OVERLAY_SHA
+                    ),
                     "setup {}".format(source),
                     "stop",
                     "verify-file TmSunriseExtreme_update.exe",
@@ -136,6 +148,10 @@ class ImportFlowTests(unittest.TestCase):
                     "verify-file TmSunriseExtreme_150_to_151.exe",
                     "silent TmSunriseExtreme_150_to_151.exe " + folder,
                     "wait TrackMania Sunrise eXtreme update TmSunriseExtreme_150_to_151.exe",
+                    "overlay",
+                    "nx",
+                    "verify-game",
+                    "save-links",
                 ],
             )
             self.assertEqual(
@@ -173,23 +189,27 @@ class ImportFlowTests(unittest.TestCase):
             self.assertIn("update failed", result.stderr)
             self.assertEqual(self.done_log(home).read_text(), self.UPDATE_SHA + "\n")
 
-    def test_an_installed_game_gets_only_the_remaining_updates(self):
+    def installed_game(self, home):
+        game = (
+            home / "Games With Spaces/tm-sunrise-extreme/prefix/drive_c/"
+            "Program Files (x86)/TrackMania Sunrise/TmSunrise.exe"
+        )
+        game.parent.mkdir(parents=True)
+        game.touch()
+        return game
+
+    def test_an_installed_game_gets_only_the_remaining_steps(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
             source = home / "TmSunriseSetup.exe"
             source.touch()
-            game = (
-                home / "Games With Spaces/tm-sunrise-extreme/prefix/drive_c/"
-                "Program Files (x86)/TrackMania Sunrise/TmSunrise.exe"
-            )
-            game.parent.mkdir(parents=True)
-            game.touch()
+            self.installed_game(home)
             self.done_log(home).write_text(self.UPDATE_SHA + "\n")
             result = self.run_import("tm-sunrise-extreme", source, home, self.UPDATE_STUBS)
             self.assertEqual(result.returncode, 0, result.stderr)
             steps = self.steps(home)
             self.assertNotIn("setup {}".format(source), steps)
-            self.assertIn("applying the remaining official updates", result.stdout)
+            self.assertIn("applying the remaining install steps", result.stdout)
             self.assertIn("already installed", result.stdout)
             self.assertEqual(
                 [step for step in steps if step.startswith("silent")],
@@ -198,9 +218,54 @@ class ImportFlowTests(unittest.TestCase):
                     "C:\\Program Files (x86)\\TrackMania Sunrise"
                 ],
             )
+            self.assertEqual(steps[-4:], ["overlay", "nx", "verify-game", "save-links"])
             self.assertEqual(
                 self.done_log(home).read_text(), self.UPDATE_SHA + "\n" + self.PATCH_SHA + "\n"
             )
+
+    def test_an_import_that_lacks_only_the_nx_flag_sets_only_the_flag(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            source = home / "TmSunriseSetup.exe"
+            source.touch()
+            self.installed_game(home)
+            (home / "nx-pending").touch()
+            result = self.run_import("tm-sunrise-extreme", source, home, self.UPDATE_STUBS)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            steps = [step for step in self.steps(home) if not step.startswith("download")]
+            self.assertEqual(
+                steps, ["verify-file TmSunrise.exe", "nx", "verify-game", "save-links"]
+            )
+            self.assertIn("Finishing", result.stdout)
+
+    def test_a_finished_import_runs_nothing_again(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            source = home / "TmSunriseSetup.exe"
+            source.touch()
+            self.installed_game(home)
+            (home / "pinned").touch()
+            result = self.run_import("tm-sunrise-extreme", source, home, self.UPDATE_STUBS)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            steps = [step for step in self.steps(home) if not step.startswith("download")]
+            self.assertEqual(steps, ["verify-file TmSunrise.exe", "save-links"])
+            self.assertIn("1.5.1 is already installed", result.stdout)
+
+    def test_a_failed_overlay_stops_the_import(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            source = home / "TmSunriseSetup.exe"
+            source.touch()
+            result = self.run_import(
+                "tm-sunrise-extreme",
+                source,
+                home,
+                self.UPDATE_STUBS + 'apply_overlay() { die "overlay failed"; }; ',
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("overlay failed", result.stderr)
+            self.assertNotIn("nx", self.steps(home))
+            self.assertNotIn("game files are installed", result.stdout)
 
     def test_a_retail_title_without_updates_downloads_nothing(self):
         with tempfile.TemporaryDirectory() as directory:

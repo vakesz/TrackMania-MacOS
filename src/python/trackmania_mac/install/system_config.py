@@ -33,6 +33,12 @@ config/game-settings.json, the values the Forever titles' seeded settings use.
 
     python -m trackmania_mac.install.system_config seed GAME_DIR SETTINGS_JSON
 
+`install_key_present` tells the hub whether a game that keeps its registered
+key in this text GBX (registry `cd_key_in_system_config`, Sunrise eXtreme) has
+one: the third token of the top-level chunk 0x0B005012 is the key the game
+launcher registered, and empty before that. Only that the token is not empty is
+reported; the key itself never leaves the function.
+
 The title is TRACKMANIA_MAC_TITLE, read from the registry; a title without the
 field gets nothing. The file is written to a temporary file in the game folder
 and hard-linked into place, so it appears complete or not at all, and an
@@ -61,6 +67,14 @@ FILE_MODE = 0o644
 SKIP = "1397442896"
 END = "facade01"
 TEXT_2006_HEADER = b"GBX\x06\x00TUUE"
+# The settings file the game and its launcher keep in the game folder.
+SYSTEM_CONFIG_FILE = "Default.SystemConfig.Gbx"
+SYSTEM_CONFIG_CLASS = "b005000"
+# The top-level chunk holding the registered key, and the key's token in it.
+KEY_CHUNK = "b005012"
+KEY_TOKEN = 2
+# A real file is about 1 KiB; anything far larger is not one the game wrote.
+MAX_READ = 64 * 1024
 # The launcher's Cpu/Gpu synchro dropdown position for "3 Frames".
 SYNCHRO_3_FRAMES = 1
 # Written by the game after PC3 was chosen in the settings launcher; the
@@ -108,6 +122,55 @@ def generate(format_name: str, settings: typing.Mapping[str, object]) -> bytes:
     if format_name not in GENERATORS:
         raise ValueError(f"Unknown settings format: {format_name}")
     return GENERATORS[format_name](settings)
+
+
+def _read_small_file(path: pathlib.Path) -> typing.Optional[bytes]:
+    """The bytes of a regular file of at most MAX_READ bytes, never through a symlink."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_READ:
+            return None
+        data = os.read(descriptor, MAX_READ + 1)
+    except OSError:
+        return None
+    finally:
+        os.close(descriptor)
+    return data if len(data) <= MAX_READ else None
+
+
+def install_key_present(path: pathlib.Path) -> bool:
+    """True when the text GBX at PATH holds a registered key; see the module docs.
+
+    The top-level chunks are walked by their byte lengths, so a value elsewhere
+    can never pass for the key chunk. Anything unexpected counts as no key.
+    """
+    data = _read_small_file(path)
+    if data is None or not data.startswith(TEXT_2006_HEADER):
+        return False
+    tokens = data[len(TEXT_2006_HEADER) :].split(b"\r\n")
+    if not tokens or tokens[0] != SYSTEM_CONFIG_CLASS.encode():
+        return False
+    index = 4  # The class id, then its three header fields.
+    while index + 2 < len(tokens) and tokens[index] != END.encode():
+        ident, skip, length = tokens[index : index + 3]
+        if skip != SKIP.encode() or not length.isdigit():
+            return False
+        remaining = int(length)
+        index += 3
+        chunk = []
+        while remaining > 0 and index < len(tokens):
+            remaining -= len(tokens[index]) + 2
+            chunk.append(tokens[index])
+            index += 1
+        if remaining != 0:
+            return False
+        if ident == KEY_CHUNK.encode():
+            return len(chunk) > KEY_TOKEN and bool(chunk[KEY_TOKEN].strip())
+    return False
 
 
 def _game_folder(game_dir: str) -> pathlib.Path:

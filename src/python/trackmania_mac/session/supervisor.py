@@ -34,6 +34,17 @@ POLL_SECONDS = 0.05
 # (124) and signals (128+n).
 REDIRECTED = 3
 REDIRECT_EXCEPT = re.compile(r"/[A-Za-z0-9_]{1,64}")
+# Settings launchers that look the GPU up in GfxDevicePerfs.txt by PCI ID, where
+# Apple GPUs are not listed, and the Nvidia device ID each one is told (the
+# wined3d renderers read it from these keys; D9VK from config/dxvk.conf, which
+# must list the same IDs): a GeForce 8800 GT for the 2008 TMF launcher, whose
+# benchmark never completes under Rosetta, and a GeForce 7800 GTX, the fastest
+# card in Sunrise's 2005 list, so its launcher does not benchmark on first start.
+LAUNCHER_GPU_SPOOF = {
+    "TmForeverLauncher.exe": "0x0611",
+    "TmForever.exe": "0x0611",
+    "TmSunriseLauncher.exe": "0x0091",
+}
 EXCEPTION_STATUSES = {
     0x80000003,
     0x80000004,
@@ -448,15 +459,15 @@ def run(
                     ]
                 )
             if settings:
-                # The Nvidia PCI spoof was qualified only for the TMF launcher
-                # family (TMNF and its TMU sibling share the binary). Other
-                # engines must not inherit it by coincidence.
+                # The Nvidia PCI spoof was qualified only for these launchers
+                # (TMNF and its TMU sibling share the binary; Sunrise eXtreme).
+                # Other engines must not inherit it by coincidence.
                 basename = PureWindowsPath(command[0]).name
-                if basename in ("TmForeverLauncher.exe", "TmForever.exe"):
+                if basename in LAUNCHER_GPU_SPOOF:
                     key = "HKCU\\Software\\Wine\\AppDefaults\\{}\\Direct3D".format(basename)
                     for name, value in (
                         ("VideoPciVendorID", "0x10de"),
-                        ("VideoPciDeviceID", "0x0611"),
+                        ("VideoPciDeviceID", LAUNCHER_GPU_SPOOF[basename]),
                     ):
                         preparation.append(
                             ["reg", "add", key, "/v", name, "/t", "REG_DWORD", "/d", value, "/f"]

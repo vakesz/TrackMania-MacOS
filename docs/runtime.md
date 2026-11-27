@@ -235,6 +235,13 @@ renderer identity. The launcher runs with the same environment as the game, so
 a benchmark started from it inherits the D9VK settings and x87sidecar. Its Play
 button is redirected to Play (see the session section above).
 
+Sunrise eXtreme's 2005 launcher, `TmSunriseLauncher.exe`, does the same lookup.
+Its benchmark completes, but it would open "Your video card performance has not
+been found" on first start, so that launcher is told it has a GeForce 7800 GTX
+(`10DE 0091`), the fastest card in its list, the same two ways:
+`LAUNCHER_GPU_SPOOF` in `trackmania_mac/session/supervisor.py` and the
+`[TmSunriseLauncher.exe]` section of `config/dxvk.conf`, which must agree.
+
 The first launch shows the game's own "Network check" dialog, which confirms the
 peer-to-peer firewall test, followed by the account screen. Both are the
 game's normal first-run behavior and are remembered in the SystemConfig.
@@ -429,7 +436,7 @@ registry holds only the offset and the old and new value of the one byte.
 ## Memory protection flag
 
 Applies to: titles whose registry entry sets `nx_compat` (TrackMania Nations
-ESWC today).
+ESWC and Sunrise eXtreme today).
 
 Wine's PE loader turns on `force_exec_prot` as soon as any loaded module lacks
 the `IMAGE_DLLCHARACTERISTICS_NX_COMPAT` flag (0x0100 in `DllCharacteristics`):
@@ -442,6 +449,12 @@ Nations ESWC has three such files: `TmNationsESWC.exe` (from the community
 build) and `binkw32.dll` and `unicows.dll` (from the official setup). In a
 scratch install the menu ran at about 12 fps. With the flag set on all three it
 ran at about 200 fps, with no crashes in the menu and short races.
+
+Sunrise eXtreme has six: `TmSunrise.exe` (from the community build),
+`TmSunriseLauncher.exe`, `binkw32.dll` and `unicows.dll` (from the retail
+setup), and `m4d.dll` and `msvcr71.dll` (from the official updates). In a
+scratch install its menu ran at 0.4 fps without the flag and at 160 to 200 fps
+with it on all six, so the flag is what makes the title playable.
 
 The registry's `nx_compat` field lists the file names. After the overlay,
 install runs `python -m trackmania_mac.install.pe_flags nx-compat GAME_DIR NAME...`,
@@ -457,7 +470,8 @@ and the executable patch): it does not run the official updates or the overlay
 again. The updates that did finish are recorded by checksum in
 `drive_c/trackmania-mac-updates.done` in the prefix, so a repeated install never
 runs an official updater twice. A retail import with pinned updates (Sunrise
-eXtreme) records them in the same file.
+eXtreme) records them in the same file, and importing the setup again finishes
+a retail install in the same way.
 
 ## Nations ESWC particle speed patch
 
@@ -543,7 +557,7 @@ the patch checks before it writes anything.
 ## Saves in the game folder
 
 Applies to: titles whose registry entry sets `game_save_dirs` (TrackMania
-Nations ESWC today).
+Nations ESWC and Sunrise eXtreme today).
 
 Nations ESWC keeps profiles, scores, its own tracks and replays under
 `GameData` in its game folder, inside the Wine prefix, not in Windows
@@ -554,7 +568,10 @@ one is kept at the same path in the title's saves folder, under its
 example, `GameData/Profiles` is kept in
 `saves/tmn-eswc/TmNationsESWC/GameData/Profiles`.
 
-Install (after the game is installed), Play (before Wine starts) and an
+Sunrise eXtreme keeps the same folders under `GameData`, so its entry lists the
+same paths, kept under `saves/tm-sunrise-extreme/TrackMania`.
+
+Install or import (after the game is installed), Play (before Wine starts) and an
 uninstall that keeps saves (once it is confirmed, before it removes anything) run
 `python -m trackmania_mac.install.game_saves link GAME_DIR USERDATA`. A missing
 folder is created in the saves folder and linked. Files the game folder
@@ -575,6 +592,27 @@ including a link whose saves folder is missing or reached through a symlink.
 An uninstall that keeps saves refuses to remove a prefix whose game folder
 still holds files in one of these folders, under any spelling of its name,
 including through a symlink that leads elsewhere inside the prefix.
+
+## Sunrise eXtreme without StarForce
+
+Applies to: TrackMania Sunrise eXtreme (`tm-sunrise-extreme`).
+
+The retail Sunrise disc and both official eXtreme updates ship the game
+protected by StarForce, which Wine cannot run. After the import runs the disc's
+setup and the updates, it unpacks a community build over the game folder (the
+registry's `overlay`, a zip pinned by hash, see `docs/download-links.md`): a
+`TmSunrise.exe` without StarForce and decrypted game files. The build's own
+`d3d9.dll`, a generic Direct3D 9 proxy, is skipped so that D9VK renders, and
+the StarForce files are removed. The overlay tool reads zip archives with the
+same checks as tar: it refuses symlinks (also those recorded in a zip entry's
+Unix attributes), encrypted entries and compression other than stored or
+deflate. The six files then get the memory protection flag (see above).
+
+The game asks for a player key in its launcher, like United Forever, and keeps
+the registered key in `Default.SystemConfig.Gbx` in the game folder. Install
+never writes that file for this title, and an uninstall removes it with the
+prefix even when saves are kept, so the key has to be registered again after a
+new install.
 
 ## Troubleshooting
 

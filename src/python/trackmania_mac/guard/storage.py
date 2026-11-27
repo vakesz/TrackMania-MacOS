@@ -210,10 +210,9 @@ def plan_downloads(
     root = managed_paths.safe_path(str(cache))
     planned: typing.List[typing.Tuple[str, Entry]] = []
     for title in entries:
-        target = uninstall.installer_cache_path(title, root)
-        if target is None:
-            continue
         roles = {path.name: role for path, role in uninstall.download_cache_paths(title, root)}
+        if not roles:
+            continue
         for entry in uninstall.cache_entries(title, root):
             planned.append((_installer_label(entry, roles, title), entry))
     now = time.time()

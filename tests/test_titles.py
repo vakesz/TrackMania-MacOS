@@ -37,6 +37,8 @@ class TitleRegistryTests(unittest.TestCase):
                 "tmnf",
                 "tmu",
                 "tm-original",
+                "tm-sunrise",
+                "tm-sunrise-extreme",
                 "tm-canyon",
                 "tm-turbo",
                 "tmn-eswc",
@@ -59,6 +61,8 @@ class TitleRegistryTests(unittest.TestCase):
             [title.id for title in titles],
             [
                 "tm-original",
+                "tm-sunrise",
+                "tm-sunrise-extreme",
                 "tmn-eswc",
                 "tmnf",
                 "tmu",
@@ -79,6 +83,8 @@ class TitleRegistryTests(unittest.TestCase):
                 "tmnf": "supported",
                 "tmu": "supported",
                 "tm-original": "unsupported",
+                "tm-sunrise": "unsupported",
+                "tm-sunrise-extreme": "unsupported",
                 "tm-canyon": "unsupported",
                 "tm-turbo": "unsupported",
                 "tmn-eswc": "provisional",
@@ -592,8 +598,9 @@ class TitleRegistryTests(unittest.TestCase):
                 "game-system-config",
             ),
         )
-        for title_id in ("tm-canyon", "tm-turbo", "tm-original"):
+        for title_id in ("tm-canyon", "tm-turbo", "tm-original", "tm-sunrise"):
             self.assertEqual(components[title_id], (), title_id)
+        self.assertEqual(components["tm-sunrise-extreme"], ("updates",))
 
     def test_layered_downloads_are_exported(self):
         registry = load_registry()
@@ -1010,6 +1017,68 @@ class RegistryValidationTests(unittest.TestCase):
             self.layered(overlay=None)
         with self.assertRaises(self.registry.RegistryError):
             self.layered(source_interactive="yes")
+
+    def retail(self, **changes):
+        """A disk-image title (no pinned installer) with CHANGES."""
+        data = {
+            key: value
+            for key, value in self.data.items()
+            if key not in ("source_url", "source_sha256", "source_size", "creative_openal_sha256")
+        }
+        data.update(installer="disk-image", needs_tmloader=False, game_exe="Game.exe")
+        data.update(changes)
+        return self.registry._validate(data, Path("/x/tmu.json"))
+
+    def test_retail_titles_may_carry_official_updates(self):
+        updates = [
+            {"url": "https://example.com/u/update.exe", "sha256": "1" * 64, "size": 5},
+            {"url": "https://example.com/u/patch.exe", "sha256": "2" * 64, "size": 7},
+        ]
+        title = self.retail(updates=updates)
+        self.assertEqual(title.components, ("updates",))
+        self.assertEqual([update.size for update in title.updates], [5, 7])
+        self.assertEqual(title.download_size, 12)
+        self.assertFalse(title.downloads)
+        self.assertIsNone(self.retail().download_size)
+        names = dict(self.registry.shell_assignments(title))
+        self.assertEqual(names["TRACKMANIA_MAC_TITLE_UPDATE_COUNT"], "2")
+        self.assertEqual(
+            names["TRACKMANIA_MAC_TITLE_UPDATE_2_URL"], "https://example.com/u/patch.exe"
+        )
+        # The update names still share the title's cache folder.
+        with self.assertRaisesRegex(self.registry.RegistryError, "distinct file names"):
+            self.retail(updates=[updates[0], dict(updates[1], url=updates[0]["url"])])
+
+    def test_updates_need_a_kind_whose_flow_runs_them(self):
+        update = {"url": "https://example.com/u/update.exe", "sha256": "1" * 64, "size": 5}
+        for installer in ("steam-copy", "online-retail", "online-trial"):
+            with (
+                self.subTest(installer=installer),
+                self.assertRaisesRegex(
+                    self.registry.RegistryError,
+                    "updates requires installer kind online or disk-image",
+                ),
+            ):
+                if installer == "steam-copy":
+                    self.retail(installer=installer, updates=[update])
+                else:
+                    self.validate(installer=installer, updates=[update])
+
+    def test_retail_titles_get_no_other_layered_steps(self):
+        overlay = {"url": "https://example.com/o/overlay.tar.gz", "sha256": "2" * 64, "size": 7}
+        for changes in (
+            {"overlay": overlay},
+            {"nx_compat": ["Game.exe"]},
+            {"source_interactive": True},
+            {"game_system_config": {"format": "text-2006", "file": "Default.SystemConfig.Gbx"}},
+        ):
+            with (
+                self.subTest(changes=changes),
+                self.assertRaisesRegex(
+                    self.registry.RegistryError, "requires installer kind online"
+                ),
+            ):
+                self.retail(**changes)
 
     def test_nx_compat_is_a_list_of_plain_file_names(self):
         title = self.layered(nx_compat=["a.exe", "B.dll"])

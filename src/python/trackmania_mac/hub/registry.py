@@ -31,6 +31,9 @@ from trackmania_mac.install import modloader
 
 ONLINE_INSTALLERS = ("online", "online-retail", "online-trial")
 INSTALLERS = frozenset(ONLINE_INSTALLERS + ("steam-copy", "disk-image"))
+# Installer kinds whose flow runs pinned official updates after the base setup:
+# the direct download (install) and a retail setup (import).
+UPDATE_INSTALLERS = ("online", "disk-image")
 ENGINES = frozenset({"tmf-classic", "maniaplanet", "turbo", "ubiservices"})
 # supported: developed and checked against. provisional: installs, not yet
 # qualified under Wine. unsupported: listed, not expected to run yet.
@@ -102,7 +105,8 @@ _FIELDS: typing.Tuple[_Field, ...] = (
     # {header_sha256, edits: [{offset, before, after}], sha256_after}
     # (trackmania_mac.install.setup_patch).
     _Field("source_patch", "source_patch", False),
-    # Official update installers, run silently in order after the base setup.
+    # Official update installers, run silently in order after the base setup
+    # (the pinned download, or a retail setup for disk-image titles).
     _Field("updates", "downloads", False),
     # One archive unpacked over the game folder after the updates, and the
     # files it makes obsolete.
@@ -307,10 +311,12 @@ class Title(typing.NamedTuple):
 
     @property
     def download_size(self) -> typing.Optional[int]:
-        """Bytes of every pinned download, or None while the installer size is unknown."""
-        if self.source_size is None:
+        """Bytes of every pinned download, or None while the installer size is unknown
+        or the title downloads nothing (a retail disc without updates)."""
+        if self.source_url and self.source_size is None:
             return None
-        return self.source_size + sum(extra.size for extra in self.extra_downloads)
+        total = (self.source_size or 0) + sum(extra.size for extra in self.extra_downloads)
+        return total or None
 
     @property
     def downloads(self) -> bool:
@@ -587,12 +593,14 @@ def _validate(data: object, path: pathlib.Path) -> Title:
     # The direct "online" flow verifies the installed executable against its pin.
     if values["installer"] == "online" and not values["game_exe_sha256"]:
         raise RegistryError(f"{path}: installer kind online requires game_exe_sha256")
-    # Only the direct "online" flow runs an interactive setup, updates, an overlay,
-    # the NX_COMPAT step, the executable patch or the settings seed.
+    # Official updates also follow a retail setup (disk-image import).
+    if values["updates"] and values["installer"] not in UPDATE_INSTALLERS:
+        raise RegistryError(f"{path}: updates requires installer kind online or disk-image")
+    # Only the direct "online" flow runs an interactive setup, an overlay, the
+    # NX_COMPAT step, the executable patch or the settings seed.
     for layered in (
         "source_interactive",
         "source_patch",
-        "updates",
         "overlay",
         "nx_compat",
         "game_exe_patch",

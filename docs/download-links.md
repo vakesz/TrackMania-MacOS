@@ -12,8 +12,9 @@ Dates are YYYY-MM-DD.
 The `source_url` and `source_sha256` of `config/titles/tmnf.json` and
 `config/titles/tmu.json` match the TMNF and TMUF entries below, and
 `config/titles/tmn-eswc.json` matches the ESWC entry, including its update and
-community build. The registry is the source of truth; this page is background
-only.
+community build. The updates of `config/titles/tm-sunrise-extreme.json` match
+the Sunrise eXtreme entry. The registry is the source of truth; this page is
+background only.
 
 ## Game installers
 
@@ -95,6 +96,48 @@ only.
   - TMU box keys don't work on the Steam version.
   - "Upgrade to United" in TMNF opens http://smarturl.it/TMUF?affilie=N2U,
     which leads to a store (gamesload.com) that no longer sells TMUF.
+
+### TrackMania Sunrise eXtreme (TMSX)
+
+Not a Stadium game, listed here because the hub pins its updates. The hub
+installs Sunrise from your own retail disc (`TmSunriseSetup.exe`, installs to
+`TrackMania Sunrise`) and pins no installer for it.
+
+- eXtreme was a free expansion update for Sunrise. The official updates are no
+  longer on a Nadeo host. The hub downloads them from a community mirror on
+  archive.org (https://archive.org/details/tm-sunrise-extreme-update), which is
+  unofficial and trusted only through the pinned hashes:
+  - `TmSunriseExtreme_update.exe`, "TrackMania Sunrise Extreme 1.5.0" (Inno
+    Setup, setup data 5.1.2):
+    https://archive.org/download/tm-sunrise-extreme-update/TmSunriseExtreme_update.exe
+    - 417826835 bytes
+    - SHA-1 `F3D59B269A6AEF167BA095548AD424C3425E5EEF`
+    - SHA-256 `179E8D5D2437FF25D92A5FE840BD798DF7B5522F7189A4A48E1B7FDA8E097844`
+    - Its setup script reads the Sunrise install from the `TmSunrise_is1`
+      uninstall key and expects Sunrise version 0.1.4.6. A retail disc with an
+      older build may first need an official Sunrise patch; this has not been
+      checked.
+  - `TmSunriseExtreme_150_to_151.exe`, "TrackMania Sunrise 1.5.1" (Inno Setup,
+    setup data 5.1.10):
+    https://archive.org/download/tm-sunrise-extreme-update/TmSunriseExtreme_150_to_151.exe
+    - 21567628 bytes
+    - SHA-1 `605DB655F6F7AF025DD8709C155CC80205660677`
+    - SHA-256 `9E456A76C39F9E528E831512A94C640E58C266190A5BDB6820E2E2A0D70A0F21`
+  - Both ship `tms.exe`, `tms.dll` and `tms.dat` or `tms.msg`: the game is
+    protected by StarForce, which Wine cannot run. Whether both run with the
+    silent Inno Setup switches has not been checked with a real install.
+- The same archive.org item has `TrackmaniaSunriseExtreme_Win10Patch.zip`
+  (135814066 bytes, SHA-256
+  `DE3EC4CCE962BA2D1283BB37FB7458C53BE684355FADAF79BCAB597D3411F883`). The hub
+  does not use it. It is an unofficial build of unknown origin: a
+  StarForce-free `TmSunrise.exe` (SHA-256
+  `E59DFC7EAA5314E85B2B0DF6F40EF7BA01A23BD5A9525F84407F5DFF301DF4FE`), about
+  4,240 decrypted GameData and Resource files, and a third-party proxy
+  `d3d9.dll` (SHA-256
+  `B5674754A1F5D7A4A900FEA0522A7E7C99ACA6B2CB1A8BDC10F48369CB776566`) that
+  would sit in front of D9VK. Its readme says to copy it over the game folder
+  after the updates. The item also has a binary `Default.SystemConfig.Gbx`
+  settings preset, which the hub does not use either.
 
 ### Other
 

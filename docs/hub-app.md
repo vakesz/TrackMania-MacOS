@@ -226,6 +226,8 @@ is now `local.trackmania-mac.hub`.
 | Nations Forever (`tmnf`) | free Nadeo download | Competition Patch and CoreMod | supported |
 | United Forever (`tmu`) | pinned official retail installer; asks for a serial key | Competition Patch and CoreMod | supported |
 | Original (`tm-original`) | user-owned retail disk image or setup executable | its own game executable | unsupported |
+| Sunrise (`tm-sunrise`) | user-owned retail disk image or setup executable | its own game executable | unsupported |
+| Sunrise eXtreme (`tm-sunrise-extreme`) | user-owned retail Sunrise disk image or setup executable, then the pinned official eXtreme 1.5.0 update and 1.5.1 patch | its own game executable | unsupported |
 | TrackMania 2 Canyon (`tm-canyon`) | pinned official ManiaPlanet trial | its own game executable | unsupported |
 | Turbo (`tm-turbo`) | existing Steam game folder | its own game executable | unsupported |
 | Nations ESWC (`tmn-eswc`) | pinned official free installer (you click through its setup), official 1.7.9 update and community StarForce-free 1.8.0 build | its own game executable | provisional |
@@ -279,6 +281,15 @@ read-only and inspect its contents, copy `Setup.exe` to a stable location, then
 select that file in the hub. Steam copies are copied into the managed prefix
 without following symlinks. Serial keys are entered in the game and are never
 stored by this project.
+
+A retail title with pinned official updates in its registry entry (Sunrise
+eXtreme) downloads and verifies them before the setup starts, so a failed
+download costs no clicks. When the setup closes, the updates run silently in
+order, and each one that finishes is recorded in
+`drive_c/trackmania-mac-updates.done` in the prefix. If an update stops, the
+game state says the updates are not finished and the hub offers the retail
+installer again: choose the same setup file, and the import skips the setup
+and runs only the updates that are not recorded yet.
 
 The hub keeps the sequence explicit: it offers shared-platform setup until the
 runtime, prefix, DirectX and renderer are ready; it then offers import. Once

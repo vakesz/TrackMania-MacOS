@@ -456,7 +456,8 @@ flag. Running install again then runs only the steps after the overlay (this one
 and the executable patch): it does not run the official updates or the overlay
 again. The updates that did finish are recorded by checksum in
 `drive_c/trackmania-mac-updates.done` in the prefix, so a repeated install never
-runs an official updater twice.
+runs an official updater twice. A retail import with pinned updates (Sunrise
+eXtreme) records them in the same file.
 
 ## Nations ESWC particle speed patch
 

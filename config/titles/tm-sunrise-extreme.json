@@ -1,0 +1,36 @@
+{
+  "id": "tm-sunrise-extreme",
+  "name": "TrackMania Sunrise eXtreme",
+  "short_name": "TMSX",
+  "engine": "tmf-classic",
+  "installer": "disk-image",
+  "status": "unsupported",
+  "release_date": "2005-11-14",
+  "app_name": "TrackMania Sunrise eXtreme.app",
+  "settings_app_name": "TrackMania Sunrise eXtreme Settings.app",
+  "bundle_id_game": "local.trackmania-mac.tm-sunrise-extreme.game",
+  "bundle_id_settings": "local.trackmania-mac.tm-sunrise-extreme.settings",
+  "game_dir_name": "TrackMania Sunrise",
+  "game_exe": "TmSunrise.exe",
+  "launcher_exe": "TmSunriseLauncher.exe",
+  "user_subdir": "TrackMania",
+  "save_dirs": ["TrackMania"],
+  "needs_tmloader": false,
+  "source_url": null,
+  "source_sha256": null,
+  "source_size": null,
+  "updates": [
+    {
+      "url": "https://archive.org/download/tm-sunrise-extreme-update/TmSunriseExtreme_update.exe",
+      "sha256": "179e8d5d2437ff25d92a5fe840bd798df7b5522f7189a4a48e1b7fda8e097844",
+      "size": 417826835
+    },
+    {
+      "url": "https://archive.org/download/tm-sunrise-extreme-update/TmSunriseExtreme_150_to_151.exe",
+      "sha256": "9e456a76c39f9e528e831512a94c640e58c266190a5bdb6820e2e2a0d70a0f21",
+      "size": 21567628
+    }
+  ],
+  "requires_serial": false,
+  "notes": "Use the CLI import command to inspect a retail Sunrise disk image, then run its copied TmSunriseSetup.exe interactively in the managed prefix. When the setup closes, the official eXtreme 1.5.0 update and the 1.5.1 patch (from an archive.org mirror, checked by hash) run silently. The update expects Sunrise 1.4.6. The game is protected by StarForce, which Wine cannot run, so it is not expected to start. Serial keys are entered in the game and never stored."
+}

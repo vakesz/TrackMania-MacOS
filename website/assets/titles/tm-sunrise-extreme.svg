@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">Sunrise eXtreme</title>
+  <desc id="description">An original icon of a road leaving a ramp, jumping a gap past a low sun and landing beyond it, in red and magenta over near-black purple.</desc>
+  <defs>
+    <linearGradient id="backdrop" x1="130" y1="80" x2="900" y2="980" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2A0B3A"/>
+      <stop offset="0.55" stop-color="#14061F"/>
+      <stop offset="1" stop-color="#070310"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="120" y1="880" x2="900" y2="360" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF8A5C"/>
+      <stop offset="0.5" stop-color="#FF2E7E"/>
+      <stop offset="1" stop-color="#C21FD8"/>
+    </linearGradient>
+    <linearGradient id="spark" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#FFD27A"/>
+      <stop offset="1" stop-color="#FF4D4D"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.05" r="0.95">
+      <stop stop-color="#FF2E7E" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#FF2E7E" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+    <clipPath id="tile"><rect x="48" y="48" width="928" height="928" rx="218"/></clipPath>
+  </defs>
+
+  <rect x="48" y="48" width="928" height="928" rx="218" fill="url(#backdrop)"/>
+  <rect x="62" y="62" width="900" height="900" rx="204" fill="none" stroke="#FFC2DA" stroke-opacity="0.22" stroke-width="8"/>
+  <ellipse cx="512" cy="210" rx="425" ry="340" fill="url(#glow)" clip-path="url(#tile)"/>
+  <rect x="48" y="520" width="928" height="456" fill="#05020C" fill-opacity="0.6" clip-path="url(#tile)"/>
+  <g filter="url(#shadow)" fill="none" stroke-linecap="butt" stroke-linejoin="round">
+    <path d="M392 520 A150 150 0 0 1 692 520 Z" fill="url(#spark)" stroke="none"/>
+    <path d="M542 330 V270 M424 372 L382 330 M660 372 L702 330" stroke="#FFB27A" stroke-width="22"/>
+    <path d="M180 800 C300 800 380 770 440 600 M650 690 C720 700 790 740 845 800" stroke="#05020C" stroke-width="170"/>
+    <path d="M180 800 C300 800 380 770 440 600 M650 690 C720 700 790 740 845 800" stroke="url(#accent)" stroke-width="120"/>
+    <path d="M180 800 C300 800 380 770 440 600 M650 690 C720 700 790 740 845 800" stroke="#220A33" stroke-width="64"/>
+    <path d="M180 800 C300 800 380 770 440 600 M650 690 C720 700 790 740 845 800" stroke="#FFE3EE" stroke-opacity="0.85" stroke-width="10" stroke-dasharray="38 34"/>
+    <path d="M470 500 Q545 380 625 520" stroke="#220A33" stroke-width="20" stroke-linecap="round" stroke-dasharray="1 46"/>
+  </g>
+</svg>

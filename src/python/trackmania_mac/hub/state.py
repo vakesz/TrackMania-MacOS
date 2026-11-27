@@ -147,9 +147,33 @@ def _competition_patch_ready(prefix: pathlib.Path) -> Probe:
     )
 
 
+# Where install and import record each official update that finished, by its
+# SHA-256 (apply_official_updates in src/shell/lib/install/game.sh).
+UPDATES_DONE = "trackmania-mac-updates.done"
+
+
+def updates_pending(title: registry.Title, prefix: pathlib.Path) -> bool:
+    """True when one of the title's pinned updates is not recorded as finished."""
+    if not title.updates:
+        return False
+    try:
+        done = set((prefix / "drive_c" / UPDATES_DONE).read_text().split())
+    except (OSError, UnicodeDecodeError):
+        done = set()
+    return any(update.sha256 not in done for update in title.updates)
+
+
 def _game_ready(title: registry.Title, paths: hub_paths.TitlePaths, prefix: pathlib.Path) -> Probe:
     if not paths.game_exe.is_file():
         return Probe(False, f"{title.name} is not installed yet")
+    # A retail import whose official updates stopped: importing again skips
+    # the setup and finishes them. The download flow finishes them on install.
+    if title.installer == "disk-image" and updates_pending(title, prefix):
+        return Probe(
+            False,
+            "Installed; the official updates are not finished. "
+            "Run the retail installer again to finish them.",
+        )
     if "competition-patch" in title.components:
         return _competition_patch_ready(prefix)
     if title.requires_serial:

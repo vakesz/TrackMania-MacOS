@@ -481,15 +481,16 @@ def cache_entries(title: registry.Title, cache: Path) -> typing.List[Entry]:
     tmnf's installer sits directly in the shared cache. Other installers, and
     every title's updates and overlay, download to `games/<id>`, which carries
     no ownership marker, so only the known files in it are removed and the
-    folder itself only once it is empty.
+    folder itself only once it is empty. A retail title downloads only its
+    updates, if any.
     """
     target = installer_cache_path(title, cache)
-    if target is None or not os.path.lexists(cache) or cache.is_symlink():
-        return []
-    name = target.name
     extras = [path.name for path, role in download_cache_paths(title, cache) if role != "installer"]
+    if (target is None and not extras) or not os.path.lexists(cache) or cache.is_symlink():
+        return []
+    name = target.name if target is not None else None
     entries: typing.List[Entry] = []
-    names = [name] + extras
+    names = ([name] if name else []) + extras
     if title.id == "tmnf":
         if not name or name in shared_cache_names():
             raise ValueError("The cached installer name {!r} is shared by every title".format(name))
@@ -508,7 +509,7 @@ def cache_entries(title: registry.Title, cache: Path) -> typing.List[Entry]:
         return entries + [_keep("cache", folder, "not this game's cache folder")]
     for download in names:
         entries += _installer_files(resolved, download)
-    if name in names:
+    if name is not None and name in names:
         # unpack_inner_inno stages `${installer%.exe}.inner` next to the installer.
         staging = (name[: -len(".exe")] if name.endswith(".exe") else name) + ".inner"
         inner = resolved / staging

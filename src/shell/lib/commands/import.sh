@@ -5,9 +5,19 @@
 # Local owned media only. Serial keys are entered inside the game and are
 # never stored. An import does not change a title's registry status; it stays
 # provisional or unsupported until user media is inventoried.
+#
+# A retail title with pinned official updates (the updates component) gets
+# them after its setup, run silently by apply_official_updates from
+# install/game.sh: they are downloaded and verified before the setup, so a
+# failed download costs no clicks, and each finished update is recorded in
+# drive_c/trackmania-mac-updates.done. When the game is already installed, an
+# import of such a title skips the setup and runs only the updates not yet
+# recorded, which finishes an import whose updates stopped.
 
 # shellcheck source=src/shell/lib/apps/icons.sh
 . "${TRACKMANIA_MAC_PROJECT_DIR}/src/shell/lib/apps/icons.sh"
+# shellcheck source=src/shell/lib/install/game.sh
+. "${TRACKMANIA_MAC_PROJECT_DIR}/src/shell/lib/install/game.sh"
 
 import_source() {
   local source="$1"
@@ -55,11 +65,23 @@ import_source() {
       rm -rf "$mount"
       ;;
     *.exe|*.EXE)
-      say "Running the retail installer in the managed prefix: $source"
-      say "Choose its game install location; the hub will verify the expected executable when it exits."
-      run_wine "$source" || die "The retail installer failed: $source"
-      test -f "$GAME_EXE" || die \
-        "The installer exited without creating the expected game executable: $GAME_EXE. Check its install location and retry."
+      if title_has updates; then
+        download_title_extras
+      fi
+      if title_has updates && test -f "$GAME_EXE"; then
+        say "$TRACKMANIA_MAC_TITLE_NAME is already installed at $GAME_DIR; applying the remaining official updates."
+      else
+        say "Running the retail installer in the managed prefix: $source"
+        say "Choose its game install location; the hub will verify the expected executable when it exits."
+        run_wine "$source" || die "The retail installer failed: $source"
+        test -f "$GAME_EXE" || die \
+          "The installer exited without creating the expected game executable: $GAME_EXE. Check its install location and retry."
+      fi
+      if title_has updates; then
+        # Stops anything started from the setup's last page before the updates run.
+        stop_prefix_processes
+        apply_official_updates
+      fi
       ensure_title_icon || warn "Could not extract the game icon for the hub."
       say "$TRACKMANIA_MAC_TITLE game files are installed. Use the hub to install its Game and Settings apps."
       ;;

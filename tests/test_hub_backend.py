@@ -127,10 +127,50 @@ class HubBackendTests(unittest.TestCase):
             self.assertEqual(eswc["kind"], "online")
             self.assertEqual(eswc["sourceSize"], 278695200 + 19194902 + 67468269)
             self.assertEqual(titles["tmnf"]["sourceSize"], None)
+            # A retail title downloads only its updates; without any, nothing.
+            self.assertEqual(titles["tm-sunrise-extreme"]["sourceSize"], 417826835 + 21567628)
+            self.assertEqual(titles["tm-sunrise-extreme"]["kind"], "disk-image")
+            self.assertEqual(titles["tm-original"]["sourceSize"], None)
             self.assertEqual(
                 [(action["id"], action["label"]) for action in eswc["actions"]],
                 [("install", "Install or repair")],
             )
+
+    def test_retail_game_is_not_ready_until_its_updates_are_recorded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            drive_c = home / "Library/TrackManiaMacOS/games/tm-sunrise-extreme/prefix/drive_c"
+            game = drive_c / "Program Files (x86)/TrackMania Sunrise/TmSunrise.exe"
+            game.parent.mkdir(parents=True)
+            game.touch()
+            title = registry.get("tm-sunrise-extreme")
+            done = drive_c / state.UPDATES_DONE
+
+            def game_state():
+                result = self.run_hub("snapshot", home=home)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                titles = {entry["id"]: entry for entry in json.loads(result.stdout)["titles"]}
+                return titles["tm-sunrise-extreme"]["state"]["game"]
+
+            pending = game_state()
+            self.assertFalse(pending["ready"])
+            self.assertIn("official updates are not finished", pending["note"])
+            done.write_text(title.updates[0].sha256 + "\n")
+            self.assertFalse(game_state()["ready"])
+            done.write_text("".join(update.sha256 + "\n" for update in title.updates))
+            self.assertEqual(game_state(), {"ready": True, "note": "Installed"})
+
+    def test_updates_done_log_name_matches_the_shell(self):
+        game_sh = (ROOT / "src/shell/lib/install/game.sh").read_text()
+        self.assertIn('/drive_c/{}"'.format(state.UPDATES_DONE), game_sh)
+        title = registry.get("tm-sunrise-extreme")
+        with tempfile.TemporaryDirectory() as directory:
+            prefix = Path(directory)
+            self.assertTrue(state.updates_pending(title, prefix))
+            (prefix / "drive_c").mkdir()
+            (prefix / "drive_c" / state.UPDATES_DONE).write_bytes(b"\xff\xfe")
+            self.assertTrue(state.updates_pending(title, prefix))
+            self.assertFalse(state.updates_pending(registry.get("tm-sunrise"), prefix))
 
     def test_cd_key_gate_reads_install_key_for_united_forever_only(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -358,6 +398,8 @@ class HubBackendTests(unittest.TestCase):
             self.assertEqual(
                 [title.id for title in loaded],
                 [
+                    "tm-sunrise",
+                    "tm-sunrise-extreme",
                     "tmn-eswc",
                     "tmnf",
                     "tmu",

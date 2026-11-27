@@ -159,6 +159,26 @@ class StorageTests(unittest.TestCase):
         self.assertGreater(self.clean("downloads"), 0)
         self.assertFalse(eswc.exists())
 
+    def test_updates_of_a_retail_title_are_cleaned_too(self):
+        # A disk-image title pins no installer, only its official updates.
+        folder = self.cache / "games/tm-sunrise-extreme"
+        self.file(folder / "TmSunriseExtreme_update.exe", "1234")
+        self.file(folder / "TmSunriseExtreme_150_to_151.exe", "12")
+        self.file(folder / "TmSunriseExtreme_update.exe.partial.AbC123", "1")
+        downloads = storage.preview()["downloads"]
+        self.assertEqual(
+            sorted((item["label"], item["bytes"]) for item in downloads["items"]),
+            sorted(
+                [
+                    ("TrackMania Sunrise eXtreme update", 4),
+                    ("TrackMania Sunrise eXtreme update", 2),
+                    (storage.UNFINISHED, 1),
+                ]
+            ),
+        )
+        self.assertGreater(self.clean("downloads"), 0)
+        self.assertFalse(folder.exists())
+
     def test_a_running_operation_blocks_downloads_and_runtimes(self):
         installer = self.file(self.cache / "directx_Jun2010_redist.exe")
         stale = self.runtime_folder("0.1.0")

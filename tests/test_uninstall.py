@@ -457,6 +457,35 @@ class GuardPlanTests(unittest.TestCase):
         uninstall.remove(self.plan("tmn-eswc"), report=lambda line: None)
         self.assertFalse(eswc.exists())
 
+    def test_retail_title_cache_folder_holds_only_its_updates(self):
+        self.fx.install("tm-sunrise-extreme", apps=False)
+        folder = self.fx.cache / "games/tm-sunrise-extreme"
+        folder.mkdir(parents=True)
+        names = [
+            "TmSunriseExtreme_update.exe",
+            "TmSunriseExtreme_update.exe.partial.Ab12Cd",
+            "TmSunriseExtreme_150_to_151.exe",
+            "TmSunriseSetup.exe",
+        ]
+        for name in names:
+            (folder / name).write_text("x")
+        self.assertEqual(
+            [
+                role
+                for _path, role in uninstall.download_cache_paths(
+                    TITLES["tm-sunrise-extreme"], self.fx.cache
+                )
+            ],
+            ["update", "update"],
+        )
+        uninstall.remove(self.plan("tm-sunrise-extreme"), report=lambda line: None)
+        # Only the pinned downloads go; a file the hub did not download stays.
+        self.assertEqual(sorted(os.listdir(folder)), ["TmSunriseSetup.exe"])
+        (folder / "TmSunriseSetup.exe").unlink()
+        (folder / "TmSunriseExtreme_150_to_151.exe").write_text("x")
+        uninstall.remove(self.plan("tm-sunrise-extreme"), report=lambda line: None)
+        self.assertFalse(folder.exists())
+
     def test_extra_downloads_of_a_title_whose_installer_is_shared_sit_in_its_folder(self):
         update = registry.Download("https://example.com/u/update.exe", "1" * 64, 5)
         title = TITLES["tmnf"]._replace(updates=(update,))
@@ -1275,7 +1304,11 @@ class ShellUninstallTests(unittest.TestCase):
 
     def test_shell_and_python_agree_on_extra_downloads(self):
         for title in TITLES.values():
-            extras = uninstall.download_cache_paths(title, self.fx.cache)[1:]
+            extras = [
+                (path, role)
+                for path, role in uninstall.download_cache_paths(title, self.fx.cache)
+                if role != "installer"
+            ]
             if not extras:
                 continue
             with self.subTest(title=title.id):

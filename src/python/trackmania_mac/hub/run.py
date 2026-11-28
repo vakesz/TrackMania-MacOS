@@ -137,7 +137,7 @@ def run(
         if not source:
             die(
                 "Import requires --source ABSOLUTE_PATH (a folder for Steam copies, "
-                "a disk image for retail imports)"
+                "a disc image, disc folder or setup program for retail imports)"
             )
         if not source.startswith("/"):
             die(f"Import source must be an absolute path: {source}")

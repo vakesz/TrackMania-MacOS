@@ -276,6 +276,95 @@ class ImportFlowTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(self.steps(home), ["setup {}".format(source)])
 
+    def disc_folder(self, home, *names):
+        disc = home / "Disc Copy"
+        disc.mkdir()
+        for name in names:
+            (disc / name).touch()
+        return disc
+
+    def test_a_disc_folder_runs_its_setup_program(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            disc = self.disc_folder(home, "CdAutoRun.exe", "TmSunriseSetup.exe", "TmSunrise.ico")
+            result = self.run_import("tm-sunrise", disc, home, self.UPDATE_STUBS)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(self.steps(home), ["setup {}".format(disc / "TmSunriseSetup.exe")])
+
+    def test_a_disc_folder_needs_exactly_one_setup_program(self):
+        for names, message in (
+            (("CdAutoRun.exe",), "No setup program"),
+            (("Setup.exe", "TmSetup.EXE"), "More than one setup program"),
+        ):
+            with self.subTest(names=names), tempfile.TemporaryDirectory() as directory:
+                home = Path(directory)
+                disc = self.disc_folder(home, *names)
+                result = self.run_import("tm-sunrise", disc, home, self.UPDATE_STUBS)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(self.steps(home), [])
+
+    def test_a_disc_folder_ignores_a_symlinked_setup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            disc = self.disc_folder(home)
+            (home / "elsewhere.exe").touch()
+            (disc / "Setup.exe").symlink_to(home / "elsewhere.exe")
+            result = self.run_import("tm-sunrise", disc, home, self.UPDATE_STUBS)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("No setup program", result.stderr)
+
+    # attach makes the mount point hold a setup program; detach records itself.
+    HDIUTIL_STUB = (
+        'hdiutil() { case "$1" in '
+        'attach) step attach "${@: -1}"; mkdir -p "${@: -2:1}"; '
+        'touch "${@: -2:1}/TmSunriseSetup.exe";; '
+        'detach) step detach; rm -rf -- "$2";; esac; }; '
+    )
+
+    def test_a_disc_image_is_mounted_for_the_whole_import(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            image = home / "TM-Sunrise.iso"
+            image.touch()
+            result = self.run_import(
+                "tm-sunrise", image, home, self.UPDATE_STUBS + self.HDIUTIL_STUB
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            steps = self.steps(home)
+            self.assertEqual(steps[0], "attach {}".format(image))
+            self.assertRegex(steps[1], r"^setup .*/import-mount\.\w+/TmSunriseSetup\.exe$")
+            self.assertEqual(steps[2:], ["detach"])
+            self.assertEqual(list((home / "Cache").glob("import-mount.*")), [])
+
+    def test_a_failed_setup_still_unmounts_the_disc_image(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            image = home / "TM-Sunrise.iso"
+            image.touch()
+            result = self.run_import(
+                "tm-sunrise",
+                image,
+                home,
+                self.UPDATE_STUBS + self.HDIUTIL_STUB + "run_wine() { return 1; }; ",
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("retail installer failed", result.stderr)
+            self.assertEqual(self.steps(home)[-1], "detach")
+            self.assertEqual(list((home / "Cache").glob("import-mount.*")), [])
+
+    def test_steam_copy_titles_take_only_a_folder(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            source = home / "setup.exe"
+            source.touch()
+            result = self.run_import(
+                "tm-turbo", source, home, 'run_wine() { touch "$HOME/wine-ran"; }'
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("imports from its Steam game folder", result.stderr)
+            self.assertFalse((home / "wine-ran").exists())
+
     def steam_fixture(self, home):
         source = home / "Steam Game"
         source.mkdir()

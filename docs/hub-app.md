@@ -280,13 +280,15 @@ reads the registry; Swift only renders the machine-readable snapshot.
 
 ## Retail import
 
-The native app uses macOS's file picker for a retail `Setup.exe`, or a folder
-for a Steam copy, then passes its absolute path to the backend. The retail
-installer runs interactively in that title's managed prefix; choose its game
-install location and the hub checks for the expected executable when setup
-closes. To use a `.iso` or `.dmg`, run the CLI import command to mount it
-read-only and inspect its contents, copy `Setup.exe` to a stable location, then
-select that file in the hub. Steam copies are copied into the managed prefix
+The native app uses macOS's file picker, then passes the chosen absolute path
+to the backend. A retail title takes its disc image (`.iso` or `.dmg`), a
+folder with the disc's files (a copy, or the mounted disc itself) or the
+setup program. The backend mounts an image read-only for the whole import and
+runs the one setup program (`*setup*.exe`, any case) at the top of the disc;
+it stops when it finds none or more than one, so choose the `.exe` then. The
+retail installer runs interactively in that title's managed prefix; choose its
+game install location and the hub checks for the expected executable when
+setup closes. A Steam copy takes its game folder. Steam copies are copied into the managed prefix
 without following symlinks. Serial keys are entered in the game and are never
 stored by this project.
 
@@ -296,7 +298,7 @@ download costs no clicks. When the setup closes, the updates run silently in
 order, and each one that finishes is recorded in
 `drive_c/trackmania-mac-updates.done` in the prefix. If an update stops, the
 game state says the updates are not finished and the hub offers the retail
-installer again: choose the same setup file, and the import skips the setup
+installer again: choose the same disc or setup file, and the import skips the setup
 and runs only the updates that are not recorded yet.
 
 A retail title may also have an overlay and files to mark with the memory

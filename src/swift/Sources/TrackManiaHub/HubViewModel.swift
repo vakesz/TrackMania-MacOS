@@ -249,19 +249,20 @@ final class HubViewModel: ObservableObject {
 
     func chooseImportSource(for title: HubTitle, action: HubAction) {
         let panel = NSOpenPanel()
-        let isFolderImport = title.kind == .steamCopy
-        panel.canChooseDirectories = isFolderImport
-        panel.canChooseFiles = !isFolderImport
-        if !isFolderImport, let executable = UTType(filenameExtension: "exe") {
-            panel.allowedContentTypes = [executable]
-        }
         panel.allowsMultipleSelection = false
         switch title.kind {
         case .steamCopy:
+            panel.canChooseDirectories = true
+            panel.canChooseFiles = false
             panel.message = String(localized: "Choose the TrackMania game folder inside steamapps/common")
             panel.prompt = String(localized: "Copy Game")
         case .online, .onlineRetail, .onlineTrial, .diskImage, .unknown, nil:
-            panel.message = String(localized: "Choose the retail Setup.exe. Copy it out of the disk image first.")
+            // The backend mounts a disc image and finds the setup in a disc folder.
+            panel.canChooseDirectories = true
+            panel.canChooseFiles = true
+            panel.allowedContentTypes = ["iso", "dmg", "exe"].compactMap { UTType(filenameExtension: $0) }
+                + [.folder]
+            panel.message = String(localized: "Choose the game disc image (.iso or .dmg), a folder with the disc's files, or its Setup.exe")
             panel.prompt = String(localized: "Run Installer")
         }
         guard panel.runModal() == .OK, let url = panel.url else { return }

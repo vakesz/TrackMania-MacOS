@@ -466,6 +466,7 @@ class GuardPlanTests(unittest.TestCase):
             "TmSunriseExtreme_update.exe.partial.Ab12Cd",
             "TmSunriseExtreme_150_to_151.exe",
             "TrackmaniaSunriseExtreme_Win10Patch.zip",
+            "CustomChallengesTMSX.zip",
             "TmSunriseSetup.exe",
         ]
         for name in names:
@@ -477,7 +478,7 @@ class GuardPlanTests(unittest.TestCase):
                     TITLES["tm-sunrise-extreme"], self.fx.cache
                 )
             ],
-            ["update", "update", "overlay"],
+            ["update", "update", "overlay", "track-pack"],
         )
         uninstall.remove(self.plan("tm-sunrise-extreme"), report=lambda line: None)
         # Only the pinned downloads go; a file the hub did not download stays.
@@ -1315,6 +1316,7 @@ class ShellUninstallTests(unittest.TestCase):
             with self.subTest(title=title.id):
                 urls = [update.url for update in title.updates]
                 urls += [title.overlay.url] if title.overlay else []
+                urls += [title.track_pack.url] if title.track_pack else []
                 script = (
                     'die() { echo "$*" >&2; exit 1; }; . "$1/src/shell/lib/titles.sh"; '
                     'shift; for url in "$@"; do _cache_download_path "$TRACKMANIA_MAC_TITLE" "$url"; done'

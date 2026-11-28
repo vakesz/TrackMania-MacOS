@@ -17,6 +17,15 @@
 # executable is the pinned build, sets only the NX_COMPAT flag when that is all
 # that is left, and otherwise repeats the steps (the updates not yet recorded,
 # the overlay, the flag), which finishes an import that stopped.
+#
+# A title with a track pack (title_has track-pack) also gets it when
+# TRACKMANIA_MAC_TRACK_PACK=on. It is off by default, so a plain CLI import never
+# downloads third-party tracks; the hub passes the choice from its prompt
+# (hub run TITLE import --track-pack on|off). The pack downloads with the other
+# extras before the setup and unpacks after the save folders are linked, into
+# the saves folder (install/game.sh apply_track_pack). A failed download or
+# unpack only warns. An import of an installed game with the pack on adds just
+# the pack, unless the saves folder records it already.
 
 # shellcheck source=src/shell/lib/apps/icons.sh
 . "${TRACKMANIA_MAC_PROJECT_DIR}/src/shell/lib/apps/icons.sh"
@@ -27,6 +36,10 @@ import_source() {
   local source="$1" setup
 
   validate_launch_options
+  case "${TRACKMANIA_MAC_TRACK_PACK:-off}" in
+    on|off) ;;
+    *) die "Unknown TRACKMANIA_MAC_TRACK_PACK: $TRACKMANIA_MAC_TRACK_PACK (use on or off)" ;;
+  esac
   test -n "${source:-}" || die "Usage: trackmania-mac import <.iso|.dmg|setup.exe|disc-folder|steam-game-folder>"
   case "$TRACKMANIA_MAC_TITLE_INSTALLER" in
     online|online-retail|online-trial)
@@ -92,9 +105,16 @@ import_disc_image() {
 
 # import_setup SETUP — runs a retail setup program, then the title's layers.
 import_setup() {
-  local source="$1"
+  local source="$1" pack=false
   if title_has updates || title_has overlay; then
     download_title_extras
+  fi
+  if track_pack_wanted; then
+    if download_track_pack; then
+      pack=true
+    else
+      warn "Could not download the community tracks; the game installs without them."
+    fi
   fi
   if title_is_layered && test -f "$GAME_EXE"; then
     if test -n "${TRACKMANIA_MAC_TITLE_GAME_EXE_SHA256:-}" \
@@ -122,6 +142,9 @@ import_setup() {
   fi
   # The import holds the prefix lock; Play links what is left.
   sync_game_save_links || warn "Some save folders in the game folder are not linked to the saves folder yet."
+  if $pack; then
+    apply_track_pack || warn "Could not add the community tracks; import the game again to retry."
+  fi
   ensure_title_icon || warn "Could not extract the game icon for the hub."
   say "$TRACKMANIA_MAC_TITLE game files are installed. Use the hub to install its Game and Settings apps."
 }

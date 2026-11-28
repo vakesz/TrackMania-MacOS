@@ -165,6 +165,7 @@ class StorageTests(unittest.TestCase):
         self.file(folder / "TmSunriseExtreme_update.exe", "1234")
         self.file(folder / "TmSunriseExtreme_150_to_151.exe", "12")
         self.file(folder / "TmSunriseExtreme_update.exe.partial.AbC123", "1")
+        self.file(folder / "CustomChallengesTMSX.zip", "123")
         downloads = storage.preview()["downloads"]
         self.assertEqual(
             sorted((item["label"], item["bytes"]) for item in downloads["items"]),
@@ -172,6 +173,7 @@ class StorageTests(unittest.TestCase):
                 [
                     ("TrackMania Sunrise eXtreme update", 4),
                     ("TrackMania Sunrise eXtreme update", 2),
+                    ("TrackMania Sunrise eXtreme community tracks", 3),
                     (storage.UNFINISHED, 1),
                 ]
             ),

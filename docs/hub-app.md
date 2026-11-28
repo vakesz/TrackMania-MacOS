@@ -50,6 +50,7 @@ trackmania-mac hub snapshot
 trackmania-mac hub run TITLE ACTION [--source ABSOLUTE_PATH] [--runtime download|build] [--include-saves]
 trackmania-mac hub run TITLE set-defaults [--window-size fullscreen|WxH] [--audio on|off] [--x87 on|off]
 trackmania-mac hub run TITLE rename-apps --app-name=NAME | --reset-app-name
+trackmania-mac hub run TITLE import --source ABSOLUTE_PATH [--track-pack on|off]
 trackmania-mac hub migrate
 trackmania-mac hub clean downloads|runtimes|logs
 ```
@@ -65,7 +66,10 @@ which is never inherited from the hub's environment. Only the `uninstall`
 action accepts `--include-saves`, and only `set-defaults` accepts
 `--window-size`, `--audio` and `--x87` (see [Settings](#settings)), and only
 `rename-apps` accepts `--app-name` or `--reset-app-name`, exactly one of them
-(see [App names](#app-names)). `migrate` and
+(see [App names](#app-names)). Only `import` accepts `--track-pack`, and only
+for a title with a track pack (see [Retail import](#retail-import)); it is the
+only way `run` sets `TRACKMANIA_MAC_TRACK_PACK`, which is never inherited from
+the hub's environment and is off when the flag is left out. `migrate` and
 `clean` are the commands that are not per title.
 
 `run`, `migrate` and `clean` print plain progress lines on stdout. They exit
@@ -234,7 +238,6 @@ is now `local.trackmania-mac.hub`.
 | Nations Forever (`tmnf`) | free Nadeo download | Competition Patch and CoreMod | supported |
 | United Forever (`tmu`) | pinned official retail installer; asks for a serial key | Competition Patch and CoreMod | supported |
 | Original (`tm-original`) | user-owned retail disk image or setup executable | its own game executable | unsupported |
-| Sunrise (`tm-sunrise`) | user-owned retail disk image or setup executable | its own game executable | unsupported |
 | Sunrise eXtreme (`tm-sunrise-extreme`) | user-owned retail Sunrise disk image or setup executable, then the pinned official eXtreme 1.5.0 update and 1.5.1 patch and a community StarForce-free build; asks for a serial key | its own game executable | provisional |
 | TrackMania 2 Canyon (`tm-canyon`) | pinned official ManiaPlanet trial | its own game executable | unsupported |
 | Turbo (`tm-turbo`) | existing Steam game folder | its own game executable | unsupported |
@@ -274,6 +277,12 @@ else the first supported one.
 Each title entry's `sourceSize` is the total size in bytes of the title's pinned
 downloads: the installer, its updates and its overlay.
 
+Each title entry's `trackPack` is `{"label", "size"}` for a title whose
+registry entry has a `track_pack`, and `null` otherwise. `label` names the
+tracks (for example `about 9,000 community tracks`) and `size` is the
+download's size in bytes; neither is part of `sourceSize`, because the pack is
+optional.
+
 `config/titles/*.json` is the sole authority for title paths, app names and
 bundle identifiers; each title's prefix marker is derived from its id. The shell
 reads the registry; Swift only renders the machine-readable snapshot.
@@ -308,6 +317,20 @@ checks the game executable against the registry's pinned build. Until the
 executable is that build, the game state says the remaining install steps are
 not finished and the hub offers the retail installer again; that import skips
 the setup too and repeats only the steps after it.
+
+A retail title may also have a track pack (Sunrise eXtreme: about 9,000
+community tracks from TM Track Exchange, a 70 MB zip on archive.org pinned by
+hash, see `docs/download-links.md`). For such a title the hub asks after the
+file picker, with a checkbox that is checked by default, whether to install the
+tracks too, and runs the import with `--track-pack on` or `off`; Cancel stops
+the import. The backend downloads the pack with the other downloads before the
+setup and, after the game's save folders are linked, unpacks only the track
+files into the saves folder that the game folder's `Tracks/Challenges/Downloaded`
+links to. It never replaces a file, and it records the pack in that folder, so
+importing again does not bring back tracks you deleted; an import of an
+installed game with the box checked adds just the pack. A failed download or
+unpack is a warning: the game installs without the tracks. The command line
+leaves the pack out unless `TRACKMANIA_MAC_TRACK_PACK=on` is set.
 
 The hub keeps the sequence explicit: it offers shared-platform setup until the
 runtime, prefix, DirectX and renderer are ready; it then offers import. Once

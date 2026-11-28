@@ -623,6 +623,50 @@ window keeps a normal title bar, but the window is always 640x480: the game
 sizes it once when it starts and never resizes it. On an M1 Pro a race ran at
 about 110 to 160 fps in a 640x480 window.
 
+### Community tracks
+
+Sunrise eXtreme's import can also add about 9,000 community tracks (the
+registry's `track_pack`, a zip pinned by hash, see `docs/download-links.md`).
+`trackmania_mac.install.track_pack` unpacks them after the save folders are
+linked, through the one link the title's `into` folder must be (the link
+`trackmania_mac.install.game_saves` made), into the saves folder. It reads the
+zip with the same entry checks as the overlay and unpacks only the files under
+the pack's root folder whose names end with its suffix, in any case. It never
+replaces a file or a name that differs only in case, writes each file under a
+temporary name and renames it into place, and never follows a symlink inside
+the saves folder. A track whose own path cannot be written (a symlink or file
+where one of its folders goes, a name the volume refuses) is skipped with a
+warning instead of stopping the pack. When it is done it writes `.trackmania-mac-track-pack`, holding the pack's
+SHA-256, in that folder, and an import that finds the marker neither downloads
+nor unpacks the pack again, so deleted tracks stay deleted. On an M1 Pro the
+pack unpacks in about 5 seconds to 88 MB.
+
+The pinned hash fixes which bytes arrive, not what they contain. The tracks
+are files players made, which the 2005 game reads under Wine as your user:
+the same trust as any track the game downloads itself.
+
+## Why plain Sunrise is not offered
+
+TrackMania Sunrise 1.4.6, the retail game, protects its executable with
+StarForce, which needs a Windows kernel driver. Wine cannot load kernel
+drivers, so the game stops at the protection check.
+
+A search on 2026-11-28 found no official or community build of Sunrise 1.4.6
+without StarForce. archive.org's own copy of the Sunrise disc
+(https://archive.org/details/TMSunrise) says that a crack is needed on Windows 7
+and later, and the only other builds are no-CD cracks on crack sites. This
+project does not pin cracks.
+
+Sunrise eXtreme is the free official update of the same game. It keeps
+Sunrise's Island, Bay and Coast environments, tracks and modes and adds more,
+it installs from the same Sunrise disc, and a community build without StarForce,
+pinned by hash, exists for it (the overlay above). So the hub offers only
+eXtreme. What you give up is the exact 1.4.6 version and network play with
+plain Sunrise 1.4.6 players, whose official servers are offline anyway.
+
+Plain Sunrise was briefly in the hub as an unsupported title (#58) and was
+removed before any release, so no install needs to move.
+
 ## Troubleshooting
 
 Start with `make doctor`, which checks the title in `TRACKMANIA_MAC_TITLE` (default

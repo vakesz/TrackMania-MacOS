@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ImportFlowTests(unittest.TestCase):
-    def run_import(self, title, source, home, wine_script):
+    def run_import(self, title, source, home, wine_script, track_pack=None):
         script = f"""
         . {str(ROOT / "src/shell/lib/common.sh")!r}
         . {str(ROOT / "src/shell/lib/commands/import.sh")!r}
@@ -29,6 +29,9 @@ class ImportFlowTests(unittest.TestCase):
                 "PATH": "/usr/bin:/bin",
             }
         )
+        env.pop("TRACKMANIA_MAC_TRACK_PACK", None)
+        if track_pack is not None:
+            env["TRACKMANIA_MAC_TRACK_PACK"] = track_pack
         return subprocess.run(
             ["/bin/bash", "-euc", script, "import-test", str(source)],
             cwd=ROOT,
@@ -251,6 +254,140 @@ class ImportFlowTests(unittest.TestCase):
             self.assertEqual(steps, ["verify-file TmSunrise.exe", "save-links"])
             self.assertIn("1.5.1 is already installed", result.stdout)
 
+    PACK_SHA = "3c34c28b4dd195064663b85d40457880164fa354dde02691e20334a92bab3abf"
+    PACK_DOWNLOAD = "download CustomChallengesTMSX.zip {} 70062938".format(PACK_SHA)
+    PACK_STUBS = "apply_track_pack() { step pack; }; "
+
+    def pack_marker(self, home):
+        return (
+            home
+            / "Games With Spaces/tm-sunrise-extreme/UserData/TrackMania"
+            / "GameData/Tracks/Challenges/Downloaded/.trackmania-mac-track-pack"
+        )
+
+    def test_the_track_pack_downloads_before_the_setup_and_unpacks_after_the_links(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            source = home / "TmSunriseSetup.exe"
+            source.touch()
+            result = self.run_import(
+                "tm-sunrise-extreme",
+                source,
+                home,
+                self.UPDATE_STUBS + self.PACK_STUBS,
+                track_pack="on",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            steps = self.steps(home)
+            self.assertEqual(steps[3], self.PACK_DOWNLOAD)
+            self.assertEqual(steps[4], "setup {}".format(source))
+            self.assertEqual(steps[-2:], ["save-links", "pack"])
+
+    def test_the_track_pack_is_off_unless_asked_for(self):
+        for value in (None, "off"):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
+                home = Path(directory)
+                source = home / "TmSunriseSetup.exe"
+                source.touch()
+                result = self.run_import(
+                    "tm-sunrise-extreme",
+                    source,
+                    home,
+                    self.UPDATE_STUBS + self.PACK_STUBS,
+                    track_pack=value,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn(self.PACK_DOWNLOAD, self.steps(home))
+                self.assertNotIn("pack", self.steps(home))
+
+    def test_an_unknown_track_pack_value_stops_the_import(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            source = home / "TmSunriseSetup.exe"
+            source.touch()
+            result = self.run_import(
+                "tm-sunrise-extreme", source, home, self.UPDATE_STUBS, track_pack="yes"
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Unknown TRACKMANIA_MAC_TRACK_PACK", result.stderr)
+            self.assertEqual(self.steps(home), [])
+
+    def test_a_failed_track_pack_only_warns(self):
+        for stubs, message in (
+            (
+                'download_verified() { case "$1" in *CustomChallenges*) return 1 ;; esac; '
+                'step download "${1##*/}"; }; ',
+                "Could not download the community tracks",
+            ),
+            ("apply_track_pack() { step pack; return 1; }; ", "Could not add the community tracks"),
+        ):
+            with self.subTest(message=message), tempfile.TemporaryDirectory() as directory:
+                home = Path(directory)
+                source = home / "TmSunriseSetup.exe"
+                source.touch()
+                result = self.run_import(
+                    "tm-sunrise-extreme",
+                    source,
+                    home,
+                    self.UPDATE_STUBS + self.PACK_STUBS + stubs,
+                    track_pack="on",
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(message, result.stderr)
+                self.assertIn("game files are installed", result.stdout)
+                self.assertIn("setup {}".format(source), self.steps(home))
+
+    def test_a_finished_import_with_the_pack_on_adds_only_the_pack(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            source = home / "TmSunriseSetup.exe"
+            source.touch()
+            self.installed_game(home)
+            (home / "pinned").touch()
+            result = self.run_import(
+                "tm-sunrise-extreme",
+                source,
+                home,
+                self.UPDATE_STUBS + self.PACK_STUBS,
+                track_pack="on",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(self.PACK_DOWNLOAD, self.steps(home))
+            steps = [step for step in self.steps(home) if not step.startswith("download")]
+            self.assertEqual(steps, ["verify-file TmSunrise.exe", "save-links", "pack"])
+
+    def test_a_recorded_pack_is_not_downloaded_again(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            source = home / "TmSunriseSetup.exe"
+            source.touch()
+            self.installed_game(home)
+            (home / "pinned").touch()
+            marker = self.pack_marker(home)
+            marker.parent.mkdir(parents=True)
+            marker.write_text(self.PACK_SHA + "\n")
+            result = self.run_import(
+                "tm-sunrise-extreme",
+                source,
+                home,
+                self.UPDATE_STUBS + self.PACK_STUBS,
+                track_pack="on",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn(self.PACK_DOWNLOAD, self.steps(home))
+            self.assertNotIn("pack", self.steps(home))
+
+    def test_a_title_without_a_pack_ignores_the_choice(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            source = home / "Setup.exe"
+            source.touch()
+            result = self.run_import(
+                "tm-original", source, home, self.UPDATE_STUBS + self.PACK_STUBS, track_pack="on"
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(self.steps(home), ["setup {}".format(source)])
+
     def test_a_failed_overlay_stops_the_import(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
@@ -270,9 +407,9 @@ class ImportFlowTests(unittest.TestCase):
     def test_a_retail_title_without_updates_downloads_nothing(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
-            source = home / "TmSunriseSetup.exe"
+            source = home / "Setup.exe"
             source.touch()
-            result = self.run_import("tm-sunrise", source, home, self.UPDATE_STUBS)
+            result = self.run_import("tm-original", source, home, self.UPDATE_STUBS)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(self.steps(home), ["setup {}".format(source)])
 
@@ -286,10 +423,10 @@ class ImportFlowTests(unittest.TestCase):
     def test_a_disc_folder_runs_its_setup_program(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
-            disc = self.disc_folder(home, "CdAutoRun.exe", "TmSunriseSetup.exe", "TmSunrise.ico")
-            result = self.run_import("tm-sunrise", disc, home, self.UPDATE_STUBS)
+            disc = self.disc_folder(home, "CdAutoRun.exe", "Setup.exe", "TrackMania.ico")
+            result = self.run_import("tm-original", disc, home, self.UPDATE_STUBS)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(self.steps(home), ["setup {}".format(disc / "TmSunriseSetup.exe")])
+            self.assertEqual(self.steps(home), ["setup {}".format(disc / "Setup.exe")])
 
     def test_a_disc_folder_needs_exactly_one_setup_program(self):
         for names, message in (
@@ -299,7 +436,7 @@ class ImportFlowTests(unittest.TestCase):
             with self.subTest(names=names), tempfile.TemporaryDirectory() as directory:
                 home = Path(directory)
                 disc = self.disc_folder(home, *names)
-                result = self.run_import("tm-sunrise", disc, home, self.UPDATE_STUBS)
+                result = self.run_import("tm-original", disc, home, self.UPDATE_STUBS)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(message, result.stderr)
                 self.assertEqual(self.steps(home), [])
@@ -310,7 +447,7 @@ class ImportFlowTests(unittest.TestCase):
             disc = self.disc_folder(home)
             (home / "elsewhere.exe").touch()
             (disc / "Setup.exe").symlink_to(home / "elsewhere.exe")
-            result = self.run_import("tm-sunrise", disc, home, self.UPDATE_STUBS)
+            result = self.run_import("tm-original", disc, home, self.UPDATE_STUBS)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("No setup program", result.stderr)
 
@@ -318,32 +455,32 @@ class ImportFlowTests(unittest.TestCase):
     HDIUTIL_STUB = (
         'hdiutil() { case "$1" in '
         'attach) step attach "${@: -1}"; mkdir -p "${@: -2:1}"; '
-        'touch "${@: -2:1}/TmSunriseSetup.exe";; '
+        'touch "${@: -2:1}/Setup.exe";; '
         'detach) step detach; rm -rf -- "$2";; esac; }; '
     )
 
     def test_a_disc_image_is_mounted_for_the_whole_import(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
-            image = home / "TM-Sunrise.iso"
+            image = home / "TM-Original.iso"
             image.touch()
             result = self.run_import(
-                "tm-sunrise", image, home, self.UPDATE_STUBS + self.HDIUTIL_STUB
+                "tm-original", image, home, self.UPDATE_STUBS + self.HDIUTIL_STUB
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             steps = self.steps(home)
             self.assertEqual(steps[0], "attach {}".format(image))
-            self.assertRegex(steps[1], r"^setup .*/import-mount\.\w+/TmSunriseSetup\.exe$")
+            self.assertRegex(steps[1], r"^setup .*/import-mount\.\w+/Setup\.exe$")
             self.assertEqual(steps[2:], ["detach"])
             self.assertEqual(list((home / "Cache").glob("import-mount.*")), [])
 
     def test_a_failed_setup_still_unmounts_the_disc_image(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
-            image = home / "TM-Sunrise.iso"
+            image = home / "TM-Original.iso"
             image.touch()
             result = self.run_import(
-                "tm-sunrise",
+                "tm-original",
                 image,
                 home,
                 self.UPDATE_STUBS + self.HDIUTIL_STUB + "run_wine() { return 1; }; ",

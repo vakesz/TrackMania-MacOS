@@ -242,6 +242,33 @@ download_title_extras() {
   fi
 }
 
+# track_pack_wanted — the user asked for the title's track pack
+# (TRACKMANIA_MAC_TRACK_PACK=on; the hub passes the choice from its prompt) and
+# the saves folder does not already record it (trackmania_mac.install.track_pack).
+track_pack_wanted() {
+  test "${TRACKMANIA_MAC_TRACK_PACK:-off}" = on || return 1
+  title_has track-pack || return 1
+  ! TRACKMANIA_MAC_TITLE="$TRACKMANIA_MAC_TITLE" TRACKMANIA_MAC_TITLES_DIR="$TRACKMANIA_MAC_TITLES_DIR" \
+    trackmania_mac_python -m trackmania_mac.install.track_pack installed "$TRACKMANIA_MAC_USERDATA"
+}
+
+# download_track_pack — fetch and verify the title's pinned track pack.
+download_track_pack() {
+  download_verified "$TRACKMANIA_MAC_TITLE_TRACK_PACK_URL" \
+    "$(_cache_download_path "$TRACKMANIA_MAC_TITLE" "$TRACKMANIA_MAC_TITLE_TRACK_PACK_URL")" \
+    "$TRACKMANIA_MAC_TITLE_TRACK_PACK_SHA256" "$TRACKMANIA_MAC_TITLE_TRACK_PACK_SIZE"
+}
+
+# apply_track_pack — unpack the downloaded track pack into the saves folder the
+# game folder links to. Run after sync_game_save_links; never overwrites a file.
+apply_track_pack() {
+  say "Adding the community tracks"
+  TRACKMANIA_MAC_TITLE="$TRACKMANIA_MAC_TITLE" TRACKMANIA_MAC_TITLES_DIR="$TRACKMANIA_MAC_TITLES_DIR" \
+    trackmania_mac_python -m trackmania_mac.install.track_pack apply \
+    "$(_cache_download_path "$TRACKMANIA_MAC_TITLE" "$TRACKMANIA_MAC_TITLE_TRACK_PACK_URL")" \
+    "$GAME_DIR" "$TRACKMANIA_MAC_USERDATA"
+}
+
 # apply_official_updates — run each pinned update installer silently, in order.
 # An update that finished is recorded by its SHA-256 in trackmania-mac-updates.done
 # and skipped next time: an official updater refuses to run twice.

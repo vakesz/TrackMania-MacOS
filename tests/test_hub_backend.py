@@ -1,3 +1,4 @@
+import contextlib
 import hashlib
 import io
 import json
@@ -202,7 +203,7 @@ class HubBackendTests(unittest.TestCase):
             (prefix / "drive_c").mkdir()
             (prefix / "drive_c" / state.UPDATES_DONE).write_bytes(b"\xff\xfe")
             self.assertTrue(state.updates_pending(title, prefix))
-            self.assertFalse(state.updates_pending(registry.get("tm-sunrise"), prefix))
+            self.assertFalse(state.updates_pending(registry.get("tm-original"), prefix))
 
     def test_cd_key_gate_reads_install_key_for_united_forever_only(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -467,7 +468,6 @@ class HubBackendTests(unittest.TestCase):
             self.assertEqual(
                 [title.id for title in loaded],
                 [
-                    "tm-sunrise",
                     "tm-sunrise-extreme",
                     "tmn-eswc",
                     "tmnf",
@@ -842,6 +842,74 @@ class HubBackendTests(unittest.TestCase):
             ):
                 hub_run.run("tmnf", action, None, include_saves=True)
             execve.assert_not_called()
+
+    def test_track_pack_flag_sets_env_only_for_import(self):
+        with tempfile.NamedTemporaryFile(suffix=".iso") as source:
+            for value in ("on", "off", None):
+                with (
+                    self.subTest(value=value),
+                    mock.patch.dict(os.environ, {"TRACKMANIA_MAC_TRACK_PACK": "on"}),
+                    mock.patch.object(hub_run, "available_action_ids", return_value={"import"}),
+                    mock.patch.object(
+                        hub_run.os, "execve", side_effect=KeyboardInterrupt
+                    ) as execve,
+                    self.assertRaises(KeyboardInterrupt),
+                ):
+                    hub_run.run("tm-sunrise-extreme", "import", source.name, track_pack=value)
+                command, env = execve.call_args.args[1], execve.call_args.args[2]
+                self.assertEqual(command[2:], ["import", source.name])
+                # An inherited value never reaches the shell; only the flag sets it.
+                self.assertEqual(env.get("TRACKMANIA_MAC_TRACK_PACK"), value)
+            for title_id, action, value, message in (
+                ("tm-sunrise-extreme", "doctor", "on", "does not accept --track-pack"),
+                ("tm-original", "import", "on", "has no track pack"),
+                ("tm-sunrise-extreme", "import", "yes", "expected on or off"),
+                ("tm-sunrise-extreme", "import", "", "expected on or off"),
+            ):
+                stderr = io.StringIO()
+                with (
+                    self.subTest(title=title_id, action=action, value=value),
+                    mock.patch.object(hub_run.os, "execve") as execve,
+                    contextlib.redirect_stderr(stderr),
+                    self.assertRaises(SystemExit),
+                ):
+                    hub_run.run(
+                        title_id,
+                        action,
+                        source.name if action == "import" else None,
+                        track_pack=value,
+                    )
+                execve.assert_not_called()
+                self.assertIn(message, stderr.getvalue())
+
+    def test_cli_parses_track_pack(self):
+        from trackmania_mac.hub import __main__ as hub_main
+
+        with mock.patch.object(hub_main.hub_run, "run", side_effect=SystemExit(0)) as run:
+            with self.assertRaises(SystemExit):
+                hub_main.main(
+                    ["run", "tm-sunrise-extreme", "import", "--source", "/x", "--track-pack", "off"]
+                )
+            with self.assertRaises(SystemExit):
+                hub_main.main(["run", "tm-sunrise-extreme", "import", "--source", "/x"])
+        self.assertEqual([call.kwargs["track_pack"] for call in run.call_args_list], ["off", None])
+
+    def test_track_pack_is_an_object_or_null(self):
+        tmsx = registry.get("tm-sunrise-extreme")
+        self.assertEqual(
+            snapshot._track_pack(tmsx),
+            {"label": "about 9,000 community tracks", "size": 70062938},
+        )
+        self.assertIsNone(snapshot._track_pack(registry.get("tmnf")))
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_hub("snapshot", home=directory)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            packs = {t["id"]: t["trackPack"] for t in json.loads(result.stdout)["titles"]}
+            self.assertEqual(packs["tm-sunrise-extreme"], snapshot._track_pack(tmsx))
+            self.assertEqual(
+                {title_id for title_id, pack in packs.items() if pack is not None},
+                {"tm-sunrise-extreme"},
+            )
 
     def test_cli_parses_include_saves(self):
         from trackmania_mac.hub import __main__ as hub_main

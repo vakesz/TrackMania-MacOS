@@ -54,9 +54,18 @@
     "GameData/Tracks/Replays/MediaTrackerGhosts",
     "GameData/Tracks/Replays/Downloaded"
   ],
+  "track_pack": {
+    "url": "https://archive.org/download/tmsx-portable/CustomChallengesTMSX.zip",
+    "sha256": "3c34c28b4dd195064663b85d40457880164fa354dde02691e20334a92bab3abf",
+    "size": 70062938,
+    "root": "Downloaded",
+    "into": "GameData/Tracks/Challenges/Downloaded",
+    "suffix": ".Challenge.Gbx",
+    "label": "about 9,000 community tracks"
+  },
   "game_version": "1.5.1",
   "game_exe_sha256": "37d8158c92480918d4b3cccae22620d1cb8fb0e65b1cc3f346cfb0dcc7dfecce",
   "requires_serial": true,
   "cd_key_in_system_config": true,
-  "notes": "Installs from your own Sunrise disc: import its TmSunriseSetup.exe and click through the setup. The official eXtreme 1.5.0 update and 1.5.1 patch then run silently, and a community build without StarForce copy protection, which Wine cannot run, replaces the game files. Six game files are then marked as compatible with memory protection, which Wine needs to run the game at full speed. Enter your CD key with Register player key; Play stays off until the game has it."
+  "notes": "Installs from your own Sunrise disc: choose its disc image (or its TmSunriseSetup.exe) and click through the setup. The official eXtreme 1.5.0 update and 1.5.1 patch then run silently, and a community build without StarForce copy protection, which Wine cannot run, replaces the game files. Six game files are then marked as compatible with memory protection, which Wine needs to run the game at full speed. The hub also offers about 9,000 community tracks. Enter your CD key with Register player key; Play stays off until the game has it."
 }

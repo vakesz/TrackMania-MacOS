@@ -225,6 +225,20 @@ struct HubLink: Decodable, Equatable {
     }
 }
 
+/// Community tracks the backend can add when the title is imported.
+struct HubTrackPack: Decodable, Equatable {
+    /// How the tracks are named, such as "about 9,000 community tracks".
+    let label: String
+    /// Download size in bytes.
+    let size: Int64
+
+    /// The import prompt's checkbox text.
+    var checkboxTitle: String {
+        let size = ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
+        return String(localized: "Also install \(label) (\(size) download)")
+    }
+}
+
 struct HubTitle: Decodable, Equatable, Identifiable {
     let id: String
     let name: String
@@ -241,6 +255,8 @@ struct HubTitle: Decodable, Equatable, Identifiable {
     let error: String?
     let requiresSerial: Bool?
     let sourceSize: Int64?
+    /// Community tracks import can add; nil when the title has none.
+    let trackPack: HubTrackPack?
     let locations: HubLocations?
     let sessionActive: Bool
     let state: HubInstallationState
@@ -255,7 +271,7 @@ struct HubTitle: Decodable, Equatable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, shortName, status, releaseDate, notes, link, engine, kind, icon, iconSource, error
-        case requiresSerial, sourceSize, locations, sessionActive, state, apps, removal, actions, launchOptions, appNames
+        case requiresSerial, sourceSize, trackPack, locations, sessionActive, state, apps, removal, actions, launchOptions, appNames
     }
 
     init(from decoder: Decoder) throws {
@@ -274,6 +290,7 @@ struct HubTitle: Decodable, Equatable, Identifiable {
         error = try? c.decodeIfPresent(String.self, forKey: .error)
         requiresSerial = try? c.decodeIfPresent(Bool.self, forKey: .requiresSerial)
         sourceSize = try? c.decodeIfPresent(Int64.self, forKey: .sourceSize)
+        trackPack = (try? c.decodeIfPresent(HubTrackPack.self, forKey: .trackPack)) ?? nil
         locations = try? c.decodeIfPresent(HubLocations.self, forKey: .locations)
         sessionActive = (try? c.decodeIfPresent(Bool.self, forKey: .sessionActive)) ?? false
         state = (try? c.decodeIfPresent(HubInstallationState.self, forKey: .state)) ?? .empty
@@ -287,14 +304,15 @@ struct HubTitle: Decodable, Equatable, Identifiable {
     init(id: String, name: String, shortName: String? = nil, status: TitleStatus = .supported,
          releaseDate: String? = nil, notes: String = "", link: HubLink? = nil, engine: String? = nil, kind: InstallerKind? = nil, icon: String? = nil,
          iconSource: IconSource? = nil, error: String? = nil, requiresSerial: Bool? = nil,
-         sourceSize: Int64? = nil, locations: HubLocations? = nil, sessionActive: Bool = false,
+         sourceSize: Int64? = nil, trackPack: HubTrackPack? = nil, locations: HubLocations? = nil,
+         sessionActive: Bool = false,
          state: HubInstallationState = .empty, apps: HubApps = HubApps(game: "", settings: ""),
          removal: HubRemoval? = nil, actions: [HubAction] = [], launchOptions: HubLaunchOptions? = nil,
          appNames: HubAppNames? = nil) {
         self.id = id; self.name = name; self.shortName = shortName; self.status = status
         self.releaseDate = releaseDate; self.notes = notes; self.link = link; self.engine = engine; self.kind = kind; self.icon = icon
         self.iconSource = iconSource; self.error = error; self.requiresSerial = requiresSerial
-        self.sourceSize = sourceSize; self.locations = locations; self.sessionActive = sessionActive
+        self.sourceSize = sourceSize; self.trackPack = trackPack; self.locations = locations; self.sessionActive = sessionActive
         self.state = state; self.apps = apps; self.removal = removal; self.actions = actions
         self.launchOptions = launchOptions
         self.appNames = appNames

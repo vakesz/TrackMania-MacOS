@@ -18,7 +18,7 @@ trackmania_mac_title_is_known() {
 # The registry derives the list (Title.components); an unknown name is a bug.
 title_has() {
   case "$1" in
-    competition-patch|openal|system-config|source-patch|updates|overlay|nx-compat|game-exe-patch|game-saves|game-system-config) ;;
+    competition-patch|openal|system-config|source-patch|updates|overlay|nx-compat|game-exe-patch|game-saves|game-system-config|track-pack) ;;
     *) die "Unknown title component: $1" ;;
   esac
   case " ${TRACKMANIA_MAC_TITLE_COMPONENTS-} " in

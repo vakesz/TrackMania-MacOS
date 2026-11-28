@@ -143,6 +143,21 @@ installs Sunrise from your own retail disc (`TmSunriseSetup.exe`, installs to
   `tms.dll`, `tms.dat`, `tms.msg`, `tmsunrise.dll`, `tmsunrise.dat`). The game
   runs without them. The item also has a binary `Default.SystemConfig.Gbx`
   settings preset, which the hub does not use.
+- The track pack the import offers (the title's `track_pack`) is
+  `CustomChallengesTMSX.zip` from another archive.org item:
+  https://archive.org/download/tmsx-portable/CustomChallengesTMSX.zip
+  - 70062938 bytes
+  - SHA-1 `1CF08AA3218A80378B597ABFD45B796765516E1F`
+  - SHA-256 `3C34C28B4DD195064663B85D40457880164FA354DDE02691E20334A92BAB3ABF`
+  - Tracks made by players and shared on TM Track Exchange, archived by a third
+    party. It is unofficial and trusted only through its pinned hash.
+  - 9,116 entries. The hub unpacks only the 8,975 `.Challenge.Gbx` files (any
+    case) under `Downloaded/`, keeping their folders such as `RACE/Island/TOP500`,
+    into the saves folder's `GameData/Tracks/Challenges/Downloaded`. It skips the
+    other files there (web pages, videos) and the `www.trackmania-design.de`
+    folder.
+- Plain Sunrise is not in the hub: see "Why plain Sunrise is not offered" in
+  `docs/runtime.md`.
 
 ### Other
 

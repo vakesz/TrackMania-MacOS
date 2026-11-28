@@ -148,7 +148,12 @@ def _total(sizes: typing.Iterable[typing.Optional[int]]) -> typing.Optional[int]
 
 
 # How a title's pinned download is named, by its role (uninstall.download_cache_paths).
-DOWNLOAD_LABELS = {"installer": "{} installer", "update": "{} update", "overlay": "{} game files"}
+DOWNLOAD_LABELS = {
+    "installer": "{} installer",
+    "update": "{} update",
+    "overlay": "{} game files",
+    "track-pack": "{} community tracks",
+}
 
 
 def _installer_label(entry: Entry, roles: typing.Dict[str, str], title: registry.Title) -> str:

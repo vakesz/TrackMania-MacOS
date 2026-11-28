@@ -217,6 +217,13 @@ def _link(title: registry.Title) -> typing.Optional[dict]:
     return {"label": title.link_label, "url": title.link_url}
 
 
+def _track_pack(title: registry.Title) -> typing.Optional[dict]:
+    """What the hub's import prompt shows about the title's track pack, or None."""
+    if title.track_pack is None:
+        return None
+    return {"label": title.track_pack.label, "size": title.track_pack.size}
+
+
 def title_payload(
     title: registry.Title, paths: typing.Optional[hub_paths.TitlePaths] = None
 ) -> dict:
@@ -239,6 +246,7 @@ def title_payload(
         "link": _link(title),
         "requiresSerial": title.requires_serial,
         "sourceSize": title.download_size,
+        "trackPack": _track_pack(title),
         "locations": _locations(resolved),
         "sessionActive": active,
         "error": None,

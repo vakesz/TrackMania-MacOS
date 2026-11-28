@@ -31,8 +31,9 @@ from trackmania_mac.install import modloader
 
 ONLINE_INSTALLERS = ("online", "online-retail", "online-trial")
 INSTALLERS = frozenset(ONLINE_INSTALLERS + ("steam-copy", "disk-image"))
-# Installer kinds whose flow runs pinned official updates after the base setup:
-# the direct download (install) and a retail setup (import).
+# Installer kinds whose flow runs pinned official updates, an overlay and the
+# NX_COMPAT step after the base setup: the direct download (install) and a
+# retail setup (import).
 UPDATE_INSTALLERS = ("online", "disk-image")
 ENGINES = frozenset({"tmf-classic", "maniaplanet", "turbo", "ubiservices"})
 # supported: developed and checked against. provisional: installs, not yet
@@ -53,6 +54,7 @@ COMPONENTS = (
     "game-exe-patch",
     "game-saves",
     "game-system-config",
+    "track-pack",
 )
 # Settings-file formats install can seed into a game folder
 # (trackmania_mac.install.system_config). text-2006: the text GBX that
@@ -108,7 +110,9 @@ _FIELDS: typing.Tuple[_Field, ...] = (
     # Official update installers, run silently in order after the base setup
     # (the pinned download, or a retail setup for disk-image titles).
     _Field("updates", "downloads", False),
-    # One archive unpacked over the game folder after the updates, and the
+    # One archive (tar or zip) unpacked over the game folder after the updates:
+    # {url, sha256, size, remove, root, skip}. root is the archive folder holding
+    # the game files, skip the files in it never unpacked, remove the game
     # files it makes obsolete.
     _Field("overlay", "overlay", False),
     # Game-folder files that install marks as compatible with memory protection
@@ -125,6 +129,10 @@ _FIELDS: typing.Tuple[_Field, ...] = (
     # A default settings file install writes into the game folder when none
     # exists: {format, file} (trackmania_mac.install.system_config).
     _Field("game_system_config", "system_config", False),
+    # An optional zip of community tracks import offers to unpack into one of
+    # game_save_dirs: {url, sha256, size, root, into, suffix, label}
+    # (trackmania_mac.install.track_pack).
+    _Field("track_pack", "track_pack", False),
     # Per-title release pins; set only where the exact build is known.
     _Field("game_version", "version", False),
     _Field("game_exe_sha256", "sha", False),
@@ -133,6 +141,9 @@ _FIELDS: typing.Tuple[_Field, ...] = (
     # The hub keeps Play off until Nadeo.ini in the game folder holds a real
     # InstallKey (United Forever).
     _Field("cd_key_in_nadeo_ini", "bool", False),
+    # The hub keeps Play off until the game folder's text Default.SystemConfig.Gbx
+    # holds a registered key (Sunrise eXtreme; trackmania_mac.install.system_config).
+    _Field("cd_key_in_system_config", "bool", False),
     _Field("notes", "notes", False),
     # An optional related page the hub shows under the notes; both or neither.
     _Field("link_url", "url", False),
@@ -152,6 +163,9 @@ _EXE_PATCH_FILE = re.compile(r"^[a-z0-9-]+/[a-z0-9][a-z0-9-]*\.json$")
 _HEX_OFFSET = re.compile(r"^0x[0-9a-f]{1,8}$")
 _HEX_BYTES = re.compile(r"^(?:[0-9a-f]{2}){1,16}$")
 _DOWNLOAD_KEYS = frozenset({"url", "sha256", "size"})
+_TRACK_PACK_KEYS = frozenset({"root", "into", "suffix", "label"})
+# A file-name ending such as ".Challenge.Gbx", matched ignoring case.
+_SUFFIX = re.compile(r"^\.[A-Za-z0-9][A-Za-z0-9.]*$")
 _LABEL_MAX = 60
 _PIN_SHA_KEYS = (
     "directx_sha256",
@@ -187,12 +201,33 @@ class Download(typing.NamedTuple):
 
 
 class Overlay(typing.NamedTuple):
-    """An archive unpacked over the game folder, and the files it makes obsolete."""
+    """An archive unpacked over the game folder, and the files it makes obsolete.
+
+    root is the archive folder the game files are in ("" for the top), and skip
+    the files in it, relative to root, that are never unpacked."""
 
     url: str
     sha256: str
     size: int
     remove: typing.Tuple[str, ...]
+    root: str = ""
+    skip: typing.Tuple[str, ...] = ()
+
+
+class TrackPack(typing.NamedTuple):
+    """A zip of community tracks unpacked into one of the title's save folders.
+
+    root is the archive folder holding the tracks, into the game_save_dirs entry
+    they go to, suffix the file-name ending (any case) of the files unpacked,
+    and label how the hub names the pack."""
+
+    url: str
+    sha256: str
+    size: int
+    root: str
+    into: str
+    suffix: str
+    label: str
 
 
 class GameSystemConfig(typing.NamedTuple):
@@ -258,11 +293,13 @@ class Title(typing.NamedTuple):
     game_exe_patch: typing.Optional[GameExePatch]
     game_save_dirs: typing.Tuple[str, ...]
     game_system_config: typing.Optional[GameSystemConfig]
+    track_pack: typing.Optional[TrackPack]
     game_version: typing.Optional[str]
     game_exe_sha256: typing.Optional[str]
     creative_openal_sha256: typing.Optional[str]
     requires_serial: bool
     cd_key_in_nadeo_ini: typing.Optional[bool]
+    cd_key_in_system_config: typing.Optional[bool]
     notes: str
     link_url: typing.Optional[str]
     link_label: typing.Optional[str]
@@ -286,6 +323,7 @@ class Title(typing.NamedTuple):
         game-exe-patch: install patches the game executable (game_exe_patch).
         game-saves: save folders in the game folder live in the saves folder (game_save_dirs).
         game-system-config: install seeds a settings file in the game folder (game_system_config).
+        track-pack: import can unpack community tracks into a save folder (track_pack).
         """
         present = {
             "competition-patch": self.needs_tmloader,
@@ -298,6 +336,7 @@ class Title(typing.NamedTuple):
             "game-exe-patch": self.game_exe_patch is not None,
             "game-saves": bool(self.game_save_dirs),
             "game-system-config": self.game_system_config is not None,
+            "track-pack": self.track_pack is not None,
         }
         return tuple(name for name in COMPONENTS if present[name])
 
@@ -441,6 +480,37 @@ def _check_source_patch(value: object, name: str, path: pathlib.Path) -> SourceP
     return SourcePatch(value["header_sha256"], tuple(edits), value["sha256_after"])
 
 
+def _check_track_pack(value: object, name: str, path: pathlib.Path) -> TrackPack:
+    """A download with a root folder, a target save folder, a suffix and a label."""
+    item = _check_download(value, name, path, _TRACK_PACK_KEYS)
+    missing = sorted(_TRACK_PACK_KEYS - set(item))
+    if missing:
+        raise RegistryError(f"{path}: {name} needs {', '.join(missing)}")
+    for key in ("root", "into"):
+        entry = item[key]
+        if not isinstance(entry, str) or not all(
+            _plain_name(part) and part == part.strip() for part in entry.split("/")
+        ):
+            raise RegistryError(f"{path}: {name} {key} must be a relative folder path")
+    suffix = item["suffix"]
+    if not isinstance(suffix, str) or not _SUFFIX.fullmatch(suffix):
+        raise RegistryError(f"{path}: {name} suffix must be a file-name ending like .Challenge.Gbx")
+    label = item["label"]
+    if (
+        not isinstance(label, str)
+        or not label
+        or len(label) > _LABEL_MAX
+        or label != label.strip()
+        or any(ord(char) < 32 or ord(char) == 127 for char in label)
+    ):
+        raise RegistryError(
+            f"{path}: {name} label must be one line of at most {_LABEL_MAX} characters"
+        )
+    return TrackPack(
+        item["url"], item["sha256"], item["size"], item["root"], item["into"], suffix, label
+    )
+
+
 def _check_value(field: _Field, value: object, path: pathlib.Path) -> object:
     """The validated value of one present key, or None for an empty optional one."""
     kind, name = field.kind, field.name
@@ -452,7 +522,7 @@ def _check_value(field: _Field, value: object, path: pathlib.Path) -> object:
             for item in (_check_download(entry, name, path) for entry in value)
         )
     if kind == "overlay":
-        item = _check_download(value, name, path, frozenset({"remove"}))
+        item = _check_download(value, name, path, frozenset({"remove", "root", "skip"}))
         remove = item.get("remove", [])
         if not isinstance(remove, list) or not all(
             isinstance(entry, str) and _FILE_NAME.fullmatch(entry) for entry in remove
@@ -460,7 +530,23 @@ def _check_value(field: _Field, value: object, path: pathlib.Path) -> object:
             raise RegistryError(f"{path}: {name} remove must be a list of plain file names")
         if len({entry.casefold() for entry in remove}) != len(remove):
             raise RegistryError(f"{path}: {name} remove lists a file twice")
-        return Overlay(item["url"], item["sha256"], item["size"], tuple(remove))
+        root = item.get("root", "")
+        if not isinstance(root, str) or (
+            root and not all(_plain_name(part) and part == part.strip() for part in root.split("/"))
+        ):
+            raise RegistryError(f"{path}: {name} root must be a relative folder path")
+        skip = item.get("skip", [])
+        # Parts are plain file names (no spaces), so the shell splits the list on spaces.
+        if not isinstance(skip, list) or not all(
+            isinstance(entry, str) and all(_FILE_NAME.fullmatch(part) for part in entry.split("/"))
+            for entry in skip
+        ):
+            raise RegistryError(f"{path}: {name} skip must be a list of relative file paths")
+        if len({entry.casefold() for entry in skip}) != len(skip):
+            raise RegistryError(f"{path}: {name} skip lists a file twice")
+        return Overlay(item["url"], item["sha256"], item["size"], tuple(remove), root, tuple(skip))
+    if kind == "track_pack":
+        return _check_track_pack(value, name, path)
     if kind == "file_names":
         if (
             not isinstance(value, list)
@@ -586,8 +672,16 @@ def _validate(data: object, path: pathlib.Path) -> Title:
         raise RegistryError(f"{path}: installer kind {values['installer']} must not carry pins")
     if values["needs_tmloader"] and values["game_exe"] != FOREVER_EXE:
         raise RegistryError(f"{path}: needs_tmloader requires game_exe {FOREVER_EXE}")
-    if values["cd_key_in_nadeo_ini"] and not values["requires_serial"]:
-        raise RegistryError(f"{path}: cd_key_in_nadeo_ini requires requires_serial")
+    for key_field in ("cd_key_in_nadeo_ini", "cd_key_in_system_config"):
+        if values[key_field] and not values["requires_serial"]:
+            raise RegistryError(f"{path}: {key_field} requires requires_serial")
+    # The seeded settings file would carry no key, or replace the registered one.
+    if values["cd_key_in_system_config"] and values["game_system_config"]:
+        raise RegistryError(f"{path}: cd_key_in_system_config and game_system_config are exclusive")
+    if values["cd_key_in_nadeo_ini"] and values["cd_key_in_system_config"]:
+        raise RegistryError(
+            f"{path}: cd_key_in_nadeo_ini and cd_key_in_system_config are exclusive"
+        )
     if values["game_exe_sha256"] and not values["game_version"]:
         raise RegistryError(f"{path}: game_exe_sha256 requires game_version")
     # The direct "online" flow verifies the installed executable against its pin.
@@ -596,13 +690,15 @@ def _validate(data: object, path: pathlib.Path) -> Title:
     # Official updates also follow a retail setup (disk-image import).
     if values["updates"] and values["installer"] not in UPDATE_INSTALLERS:
         raise RegistryError(f"{path}: updates requires installer kind online or disk-image")
-    # Only the direct "online" flow runs an interactive setup, an overlay, the
-    # NX_COMPAT step, the executable patch or the settings seed.
+    # An overlay and the NX_COMPAT step also follow a retail setup (disk-image import).
+    for layered in ("overlay", "nx_compat"):
+        if values[layered] and values["installer"] not in UPDATE_INSTALLERS:
+            raise RegistryError(f"{path}: {layered} requires installer kind online or disk-image")
+    # Only the direct "online" flow runs an interactive setup, a patched setup,
+    # the executable patch or the settings seed.
     for layered in (
         "source_interactive",
         "source_patch",
-        "overlay",
-        "nx_compat",
         "game_exe_patch",
         "game_system_config",
     ):
@@ -624,6 +720,10 @@ def _validate(data: object, path: pathlib.Path) -> Title:
         entry.casefold() for entry in overlay.remove
     }:
         raise RegistryError(f"{path}: overlay remove must not list game_exe")
+    if overlay is not None and str(values["game_exe"]).casefold() in {
+        entry.casefold() for entry in overlay.skip
+    }:
+        raise RegistryError(f"{path}: overlay skip must not list game_exe")
     if overlay is not None and {entry.casefold() for entry in overlay.remove} & {
         entry.casefold() for entry in typing.cast(tuple, values["nx_compat"])
     }:
@@ -650,8 +750,19 @@ def _validate(data: object, path: pathlib.Path) -> Title:
     names += [url_file_name(extra.url) for extra in typing.cast(tuple, values["updates"])]
     if overlay is not None:
         names.append(url_file_name(overlay.url))
+    track_pack = typing.cast(typing.Optional[TrackPack], values["track_pack"])
+    if track_pack is not None:
+        names.append(url_file_name(track_pack.url))
     if len({entry.casefold() for entry in names}) != len(names):
-        raise RegistryError(f"{path}: the installer, updates and overlay need distinct file names")
+        raise RegistryError(
+            f"{path}: the installer, updates, overlay and track pack need distinct file names"
+        )
+    # Only import (disk-image) offers the pack, and it lands in a linked save folder.
+    if track_pack is not None:
+        if values["installer"] != "disk-image":
+            raise RegistryError(f"{path}: track_pack requires installer kind disk-image")
+        if track_pack.into not in typing.cast(tuple, values["game_save_dirs"]):
+            raise RegistryError(f"{path}: track_pack into must be one of game_save_dirs")
 
     if bool(values["link_url"]) != bool(values["link_label"]):
         raise RegistryError(f"{path}: link_url and link_label go together")
@@ -792,7 +903,8 @@ def _shell_value(value: object) -> str:
 
 
 def _layer_assignments(title: Title) -> typing.List[typing.Tuple[str, str]]:
-    """Updates as TRACKMANIA_MAC_TITLE_UPDATE_<n>_*, the overlay as _OVERLAY_*; always defined.
+    """Updates as TRACKMANIA_MAC_TITLE_UPDATE_<n>_*, the overlay as _OVERLAY_* and the
+    track pack's download as _TRACK_PACK_*; always defined.
 
     nx_compat is exported by the generic loop as one space-separated scalar.
     """
@@ -804,12 +916,19 @@ def _layer_assignments(title: Title) -> typing.List[typing.Tuple[str, str]]:
             (f"TRACKMANIA_MAC_TITLE_UPDATE_{index}_SIZE", str(update.size)),
         ]
     overlay = title.overlay
+    pack = title.track_pack
     # File names are plain (_FILE_NAME), so the remove list splits on spaces.
     pairs += [
         ("TRACKMANIA_MAC_TITLE_OVERLAY_URL", overlay.url if overlay else ""),
         ("TRACKMANIA_MAC_TITLE_OVERLAY_SHA256", overlay.sha256 if overlay else ""),
         ("TRACKMANIA_MAC_TITLE_OVERLAY_SIZE", str(overlay.size) if overlay else ""),
         ("TRACKMANIA_MAC_TITLE_OVERLAY_REMOVE", " ".join(overlay.remove) if overlay else ""),
+        ("TRACKMANIA_MAC_TITLE_OVERLAY_ROOT", overlay.root if overlay else ""),
+        ("TRACKMANIA_MAC_TITLE_OVERLAY_SKIP", " ".join(overlay.skip) if overlay else ""),
+        # root, into and suffix are read by trackmania_mac.install.track_pack itself.
+        ("TRACKMANIA_MAC_TITLE_TRACK_PACK_URL", pack.url if pack else ""),
+        ("TRACKMANIA_MAC_TITLE_TRACK_PACK_SHA256", pack.sha256 if pack else ""),
+        ("TRACKMANIA_MAC_TITLE_TRACK_PACK_SIZE", str(pack.size) if pack else ""),
     ]
     return pairs
 
@@ -823,7 +942,7 @@ def shell_assignments(title: typing.Optional[Title]) -> typing.List[typing.Tuple
         # trackmania_mac.install.game_saves, .system_config, .exe_patch and
         # .setup_patch read game_save_dirs, game_system_config, game_exe_patch and
         # source_patch themselves.
-        # updates and overlay are spelled out below as scalars.
+        # updates, overlay and the track pack's download are spelled out below as scalars.
         pairs = [
             (f"TRACKMANIA_MAC_TITLE_{field.upper()}", _shell_value(getattr(title, field)))
             for field in Title._fields
@@ -836,6 +955,7 @@ def shell_assignments(title: typing.Optional[Title]) -> typing.List[typing.Tuple
                 "source_patch",
                 "updates",
                 "overlay",
+                "track_pack",
             )
         ]
         pairs.append(("TRACKMANIA_MAC_TITLE_PREFIX_MARKER", title.prefix_marker))

@@ -203,11 +203,11 @@ def installer_cache_path(title: registry.Title, cache: Path) -> typing.Optional[
 def download_cache_paths(
     title: registry.Title, cache: Path
 ) -> typing.List[typing.Tuple[Path, str]]:
-    """(path, role) of every pinned download: the installer, then updates and overlay.
+    """(path, role) of every pinned download: the installer, updates, overlay, track pack.
 
     Mirrors _cache_installer_path and _cache_download_path in
     src/shell/lib/titles.sh (parity-tested). Extra downloads always sit in
-    `games/<id>`; role is installer, update or overlay.
+    `games/<id>`; role is installer, update, overlay or track-pack.
     """
     paths: typing.List[typing.Tuple[Path, str]] = []
     installer = installer_cache_path(title, cache)
@@ -217,6 +217,8 @@ def download_cache_paths(
     paths += [(folder / registry.url_file_name(update.url), "update") for update in title.updates]
     if title.overlay is not None:
         paths.append((folder / registry.url_file_name(title.overlay.url), "overlay"))
+    if title.track_pack is not None:
+        paths.append((folder / registry.url_file_name(title.track_pack.url), "track-pack"))
     return paths
 
 

@@ -33,6 +33,14 @@ is not ready, the hub shows Play disabled with "CD key required" and a link to
 Titles without the item, such as Nations Forever, are never gated. The gate is
 in the hub only; the Game app and `trackmania-mac play` don't check the key.
 
+A title with `cd_key_in_system_config` (Sunrise eXtreme) carries the same
+`cdKey` item. Its launcher stores the registered key in the text
+`Default.SystemConfig.Gbx` in the game folder, as the third value of the
+settings chunk 0x0B005012, which is empty until a key is registered. The item
+is ready when that value is not empty. The hub reads the file only to check
+this, never through a symlink, and the snapshot never includes the key. No
+installer step writes this file for the title, so the key is never replaced.
+
 ## Backend contract
 
 The Swift interface is an adapter over four shell commands:
@@ -42,6 +50,7 @@ trackmania-mac hub snapshot
 trackmania-mac hub run TITLE ACTION [--source ABSOLUTE_PATH] [--runtime download|build] [--include-saves]
 trackmania-mac hub run TITLE set-defaults [--window-size fullscreen|WxH] [--audio on|off] [--x87 on|off]
 trackmania-mac hub run TITLE rename-apps --app-name=NAME | --reset-app-name
+trackmania-mac hub run TITLE import --source ABSOLUTE_PATH [--track-pack on|off]
 trackmania-mac hub migrate
 trackmania-mac hub clean downloads|runtimes|logs
 ```
@@ -57,7 +66,10 @@ which is never inherited from the hub's environment. Only the `uninstall`
 action accepts `--include-saves`, and only `set-defaults` accepts
 `--window-size`, `--audio` and `--x87` (see [Settings](#settings)), and only
 `rename-apps` accepts `--app-name` or `--reset-app-name`, exactly one of them
-(see [App names](#app-names)). `migrate` and
+(see [App names](#app-names)). Only `import` accepts `--track-pack`, and only
+for a title with a track pack (see [Retail import](#retail-import)); it is the
+only way `run` sets `TRACKMANIA_MAC_TRACK_PACK`, which is never inherited from
+the hub's environment and is off when the flag is left out. `migrate` and
 `clean` are the commands that are not per title.
 
 `run`, `migrate` and `clean` print plain progress lines on stdout. They exit
@@ -226,8 +238,7 @@ is now `local.trackmania-mac.hub`.
 | Nations Forever (`tmnf`) | free Nadeo download | Competition Patch and CoreMod | supported |
 | United Forever (`tmu`) | pinned official retail installer; asks for a serial key | Competition Patch and CoreMod | supported |
 | Original (`tm-original`) | user-owned retail disk image or setup executable | its own game executable | unsupported |
-| Sunrise (`tm-sunrise`) | user-owned retail disk image or setup executable | its own game executable | unsupported |
-| Sunrise eXtreme (`tm-sunrise-extreme`) | user-owned retail Sunrise disk image or setup executable, then the pinned official eXtreme 1.5.0 update and 1.5.1 patch | its own game executable | unsupported |
+| Sunrise eXtreme (`tm-sunrise-extreme`) | user-owned retail Sunrise disk image or setup executable, then the pinned official eXtreme 1.5.0 update and 1.5.1 patch and a community StarForce-free build; asks for a serial key | its own game executable | provisional |
 | TrackMania 2 Canyon (`tm-canyon`) | pinned official ManiaPlanet trial | its own game executable | unsupported |
 | Turbo (`tm-turbo`) | existing Steam game folder | its own game executable | unsupported |
 | Nations ESWC (`tmn-eswc`) | pinned official free installer (you click through its setup), official 1.7.9 update and community StarForce-free 1.8.0 build | its own game executable | provisional |
@@ -266,19 +277,27 @@ else the first supported one.
 Each title entry's `sourceSize` is the total size in bytes of the title's pinned
 downloads: the installer, its updates and its overlay.
 
+Each title entry's `trackPack` is `{"label", "size"}` for a title whose
+registry entry has a `track_pack`, and `null` otherwise. `label` names the
+tracks (for example `about 9,000 community tracks`) and `size` is the
+download's size in bytes; neither is part of `sourceSize`, because the pack is
+optional.
+
 `config/titles/*.json` is the sole authority for title paths, app names and
 bundle identifiers; each title's prefix marker is derived from its id. The shell
 reads the registry; Swift only renders the machine-readable snapshot.
 
 ## Retail import
 
-The native app uses macOS's file picker for a retail `Setup.exe`, or a folder
-for a Steam copy, then passes its absolute path to the backend. The retail
-installer runs interactively in that title's managed prefix; choose its game
-install location and the hub checks for the expected executable when setup
-closes. To use a `.iso` or `.dmg`, run the CLI import command to mount it
-read-only and inspect its contents, copy `Setup.exe` to a stable location, then
-select that file in the hub. Steam copies are copied into the managed prefix
+The native app uses macOS's file picker, then passes the chosen absolute path
+to the backend. A retail title takes its disc image (`.iso` or `.dmg`), a
+folder with the disc's files (a copy, or the mounted disc itself) or the
+setup program. The backend mounts an image read-only for the whole import and
+runs the one setup program (`*setup*.exe`, any case) at the top of the disc;
+it stops when it finds none or more than one, so choose the `.exe` then. The
+retail installer runs interactively in that title's managed prefix; choose its
+game install location and the hub checks for the expected executable when
+setup closes. A Steam copy takes its game folder. Steam copies are copied into the managed prefix
 without following symlinks. Serial keys are entered in the game and are never
 stored by this project.
 
@@ -288,8 +307,30 @@ download costs no clicks. When the setup closes, the updates run silently in
 order, and each one that finishes is recorded in
 `drive_c/trackmania-mac-updates.done` in the prefix. If an update stops, the
 game state says the updates are not finished and the hub offers the retail
-installer again: choose the same setup file, and the import skips the setup
+installer again: choose the same disc or setup file, and the import skips the setup
 and runs only the updates that are not recorded yet.
+
+A retail title may also have an overlay and files to mark with the memory
+protection flag (Sunrise eXtreme: a community build without StarForce, then six
+files, see `docs/runtime.md`). The import runs them after the updates and then
+checks the game executable against the registry's pinned build. Until the
+executable is that build, the game state says the remaining install steps are
+not finished and the hub offers the retail installer again; that import skips
+the setup too and repeats only the steps after it.
+
+A retail title may also have a track pack (Sunrise eXtreme: about 9,000
+community tracks from TM Track Exchange, a 70 MB zip on archive.org pinned by
+hash, see `docs/download-links.md`). For such a title the hub asks after the
+file picker, with a checkbox that is checked by default, whether to install the
+tracks too, and runs the import with `--track-pack on` or `off`; Cancel stops
+the import. The backend downloads the pack with the other downloads before the
+setup and, after the game's save folders are linked, unpacks only the track
+files into the saves folder that the game folder's `Tracks/Challenges/Downloaded`
+links to. It never replaces a file, and it records the pack in that folder, so
+importing again does not bring back tracks you deleted; an import of an
+installed game with the box checked adds just the pack. A failed download or
+unpack is a warning: the game installs without the tracks. The command line
+leaves the pack out unless `TRACKMANIA_MAC_TRACK_PACK=on` is set.
 
 The hub keeps the sequence explicit: it offers shared-platform setup until the
 runtime, prefix, DirectX and renderer are ready; it then offers import. Once

@@ -12,8 +12,8 @@ Dates are YYYY-MM-DD.
 The `source_url` and `source_sha256` of `config/titles/tmnf.json` and
 `config/titles/tmu.json` match the TMNF and TMUF entries below, and
 `config/titles/tmn-eswc.json` matches the ESWC entry, including its update and
-community build. The updates of `config/titles/tm-sunrise-extreme.json` match
-the Sunrise eXtreme entry. The registry is the source of truth; this page is
+community build. The updates and overlay of
+`config/titles/tm-sunrise-extreme.json` match the Sunrise eXtreme entry. The registry is the source of truth; this page is
 background only.
 
 ## Game installers
@@ -99,7 +99,8 @@ background only.
 
 ### TrackMania Sunrise eXtreme (TMSX)
 
-Not a Stadium game, listed here because the hub pins its updates. The hub
+Not a Stadium game, listed here because the hub pins its updates and community
+build. The hub
 installs Sunrise from your own retail disc (`TmSunriseSetup.exe`, installs to
 `TrackMania Sunrise`) and pins no installer for it.
 
@@ -124,20 +125,39 @@ installs Sunrise from your own retail disc (`TmSunriseSetup.exe`, installs to
     - SHA-1 `605DB655F6F7AF025DD8709C155CC80205660677`
     - SHA-256 `9E456A76C39F9E528E831512A94C640E58C266190A5BDB6820E2E2A0D70A0F21`
   - Both ship `tms.exe`, `tms.dll` and `tms.dat` or `tms.msg`: the game is
-    protected by StarForce, which Wine cannot run. Whether both run with the
-    silent Inno Setup switches has not been checked with a real install.
+    protected by StarForce, which Wine cannot run. Both run with the silent
+    Inno Setup switches after the retail setup.
 - The same archive.org item has `TrackmaniaSunriseExtreme_Win10Patch.zip`
   (135814066 bytes, SHA-256
-  `DE3EC4CCE962BA2D1283BB37FB7458C53BE684355FADAF79BCAB597D3411F883`). The hub
-  does not use it. It is an unofficial build of unknown origin: a
+  `DE3EC4CCE962BA2D1283BB37FB7458C53BE684355FADAF79BCAB597D3411F883`), which
+  the hub unpacks over the game folder after the updates (the title's
+  `overlay`). It is an unofficial build of unknown origin, trusted only through
+  its pinned hash. Everything in it is in the folder `Windows 10 patch`: a
   StarForce-free `TmSunrise.exe` (SHA-256
-  `E59DFC7EAA5314E85B2B0DF6F40EF7BA01A23BD5A9525F84407F5DFF301DF4FE`), about
-  4,240 decrypted GameData and Resource files, and a third-party proxy
+  `E59DFC7EAA5314E85B2B0DF6F40EF7BA01A23BD5A9525F84407F5DFF301DF4FE`), 3,899
+  decrypted GameData and Resource files, a `readme.txt` and a third-party proxy
   `d3d9.dll` (SHA-256
-  `B5674754A1F5D7A4A900FEA0522A7E7C99ACA6B2CB1A8BDC10F48369CB776566`) that
-  would sit in front of D9VK. Its readme says to copy it over the game folder
-  after the updates. The item also has a binary `Default.SystemConfig.Gbx`
-  settings preset, which the hub does not use either.
+  `B5674754A1F5D7A4A900FEA0522A7E7C99ACA6B2CB1A8BDC10F48369CB776566`). The hub
+  skips the readme and the `d3d9.dll`, which would sit in front of D9VK, and
+  then removes the StarForce files of the disc and the updates (`tms.exe`,
+  `tms.dll`, `tms.dat`, `tms.msg`, `tmsunrise.dll`, `tmsunrise.dat`). The game
+  runs without them. The item also has a binary `Default.SystemConfig.Gbx`
+  settings preset, which the hub does not use.
+- The track pack the import offers (the title's `track_pack`) is
+  `CustomChallengesTMSX.zip` from another archive.org item:
+  https://archive.org/download/tmsx-portable/CustomChallengesTMSX.zip
+  - 70062938 bytes
+  - SHA-1 `1CF08AA3218A80378B597ABFD45B796765516E1F`
+  - SHA-256 `3C34C28B4DD195064663B85D40457880164FA354DDE02691E20334A92BAB3ABF`
+  - Tracks made by players and shared on TM Track Exchange, archived by a third
+    party. It is unofficial and trusted only through its pinned hash.
+  - 9,116 entries. The hub unpacks only the 8,975 `.Challenge.Gbx` files (any
+    case) under `Downloaded/`, keeping their folders such as `RACE/Island/TOP500`,
+    into the saves folder's `GameData/Tracks/Challenges/Downloaded`. It skips the
+    other files there (web pages, videos) and the `www.trackmania-design.de`
+    folder.
+- Plain Sunrise is not in the hub: see "Why plain Sunrise is not offered" in
+  `docs/runtime.md`.
 
 ### Other
 

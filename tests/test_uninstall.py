@@ -457,7 +457,7 @@ class GuardPlanTests(unittest.TestCase):
         uninstall.remove(self.plan("tmn-eswc"), report=lambda line: None)
         self.assertFalse(eswc.exists())
 
-    def test_retail_title_cache_folder_holds_only_its_updates(self):
+    def test_retail_title_cache_folder_holds_only_its_pinned_downloads(self):
         self.fx.install("tm-sunrise-extreme", apps=False)
         folder = self.fx.cache / "games/tm-sunrise-extreme"
         folder.mkdir(parents=True)
@@ -465,6 +465,8 @@ class GuardPlanTests(unittest.TestCase):
             "TmSunriseExtreme_update.exe",
             "TmSunriseExtreme_update.exe.partial.Ab12Cd",
             "TmSunriseExtreme_150_to_151.exe",
+            "TrackmaniaSunriseExtreme_Win10Patch.zip",
+            "CustomChallengesTMSX.zip",
             "TmSunriseSetup.exe",
         ]
         for name in names:
@@ -476,7 +478,7 @@ class GuardPlanTests(unittest.TestCase):
                     TITLES["tm-sunrise-extreme"], self.fx.cache
                 )
             ],
-            ["update", "update"],
+            ["update", "update", "overlay", "track-pack"],
         )
         uninstall.remove(self.plan("tm-sunrise-extreme"), report=lambda line: None)
         # Only the pinned downloads go; a file the hub did not download stays.
@@ -1314,6 +1316,7 @@ class ShellUninstallTests(unittest.TestCase):
             with self.subTest(title=title.id):
                 urls = [update.url for update in title.updates]
                 urls += [title.overlay.url] if title.overlay else []
+                urls += [title.track_pack.url] if title.track_pack else []
                 script = (
                     'die() { echo "$*" >&2; exit 1; }; . "$1/src/shell/lib/titles.sh"; '
                     'shift; for url in "$@"; do _cache_download_path "$TRACKMANIA_MAC_TITLE" "$url"; done'

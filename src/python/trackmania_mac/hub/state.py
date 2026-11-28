@@ -15,7 +15,7 @@ import typing
 from . import paths as hub_paths
 from . import registry
 from trackmania_mac.guard import managed_paths, operation_guard, uninstall
-from trackmania_mac.install import modloader
+from trackmania_mac.install import modloader, system_config
 
 __all__ = ["install_key", "probe", "session_active"]
 
@@ -174,6 +174,19 @@ def _game_ready(title: registry.Title, paths: hub_paths.TitlePaths, prefix: path
             "Installed; the official updates are not finished. "
             "Run the retail installer again to finish them.",
         )
+    # The overlay and NX_COMPAT steps end with the pinned executable; until then
+    # importing again finishes them (src/shell/lib/commands/import.sh).
+    if (
+        title.installer == "disk-image"
+        and (title.overlay is not None or title.nx_compat)
+        and title.game_exe_sha256
+        and not _pin_ok(paths.game_exe, title.game_exe_sha256)
+    ):
+        return Probe(
+            False,
+            "Installed; the remaining install steps are not finished. "
+            "Run the retail installer again to finish them.",
+        )
     if "competition-patch" in title.components:
         return _competition_patch_ready(prefix)
     if title.requires_serial:
@@ -225,8 +238,16 @@ def _launcher_key_registered(title: registry.Title, paths: hub_paths.TitlePaths)
 
 
 def _cd_key_ready(title: registry.Title, paths: hub_paths.TitlePaths) -> Probe:
-    """Whether the game has a CD key: a real InstallKey in Nadeo.ini (Steam
-    copies) or a key registered in the game launcher. The key is never reported."""
+    """Whether the game has a CD key. The key is never read into a result.
+
+    cd_key_in_system_config: the key the launcher registered in the game folder's
+    Default.SystemConfig.Gbx. cd_key_in_nadeo_ini: a real InstallKey in Nadeo.ini
+    (Steam copies) or a key registered in the game launcher."""
+    if title.cd_key_in_system_config:
+        settings = paths.game_dir / system_config.SYSTEM_CONFIG_FILE
+        if system_config.install_key_present(settings):
+            return Probe(True, "CD key present")
+        return Probe(False, "CD key required")
     if _launcher_key_registered(title, paths):
         return Probe(True, "CD key present")
     ini = paths.game_dir / "Nadeo.ini"
@@ -276,7 +297,7 @@ def probe(
         "gameApp": Probe(_app_ready(resolved.app), ""),
         "settingsApp": Probe(_app_ready(resolved.settings_app), ""),
     }
-    if title.cd_key_in_nadeo_ini and resolved.game_exe.is_file():
+    if (title.cd_key_in_nadeo_ini or title.cd_key_in_system_config) and resolved.game_exe.is_file():
         items["cdKey"] = _cd_key_ready(title, resolved)
     return items
 

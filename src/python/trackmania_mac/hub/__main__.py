@@ -27,6 +27,7 @@ def main(argv=None) -> int:
         sub_run.add_argument(flag, default=None)
     sub_run.add_argument("--app-name", default=None)
     sub_run.add_argument("--reset-app-name", action="store_true")
+    sub_run.add_argument("--track-pack", default=None)
     sub_clean = subparsers.add_parser(
         "clean", help="Remove cached downloads, unused runtimes or logs not in use"
     )
@@ -62,6 +63,7 @@ def main(argv=None) -> int:
             },
             app_name=arguments.app_name,
             reset_app_name=arguments.reset_app_name,
+            track_pack=arguments.track_pack,
         )
     except registry.RegistryError as error:
         print(f"error: {error}", file=sys.stderr)

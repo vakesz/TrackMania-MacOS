@@ -78,6 +78,9 @@ final class HubViewModel: ObservableObject {
 
     /// Called when a run ends and the UI is idle again (the quit flow waits on it).
     var onIdle: (() -> Void)?
+    /// Asks whether to add a title's community tracks: true or false, or nil to cancel the
+    /// import. Replaced in tests.
+    var confirmTrackPack: (HubTitle, HubTrackPack) -> Bool? = { HubViewModel.askTrackPack(for: $0, pack: $1) }
 
     /// Names the running Settings operation (not tied to a title) for the quit prompt.
     private var settingsOperationLabel: String?
@@ -152,7 +155,7 @@ final class HubViewModel: ObservableObject {
     /// `label` names the chosen dialog button in the activity card and notifications.
     func run(_ action: HubAction, for title: HubTitle, source: URL? = nil, runtime: RuntimeSource? = nil,
              includeSaves: Bool = false, label: String? = nil, opensReportForm: Bool = false,
-             appName: String? = nil, resetAppName: Bool = false) {
+             appName: String? = nil, resetAppName: Bool = false, trackPack: Bool? = nil) {
         guard let backend, runningAction == nil else { return }
         if action.kind == .install || action.kind == .import { Notifier.requestAuthorizationOnce() }
         runningAction = action.id
@@ -172,6 +175,7 @@ final class HubViewModel: ObservableObject {
         resetLog()
         let flags = (runtime.map { " --runtime \($0.rawValue)" } ?? "") + (includeSaves ? " --include-saves" : "")
             + (appName.map { " --app-name=\($0)" } ?? "") + (resetAppName ? " --reset-app-name" : "")
+            + (trackPack.map { " --track-pack \($0 ? "on" : "off")" } ?? "")
         enqueue("$ trackmania-mac hub run \(title.id) \(action.id)\(flags)\n")
         Task { [weak self] in
             guard let self else { return }
@@ -180,7 +184,8 @@ final class HubViewModel: ObservableObject {
             do {
                 output = try await backend.run(titleID: title.id, actionID: action.id, source: source, runtime: runtime,
                                                includeSaves: includeSaves, appName: appName,
-                                               resetAppName: resetAppName, handle: handle) { [weak self] chunk in
+                                               resetAppName: resetAppName, trackPack: trackPack,
+                                               handle: handle) { [weak self] chunk in
                     Task { @MainActor [weak self] in
                         guard self?.activityToken == token else { return }
                         self?.enqueue(chunk)
@@ -245,27 +250,6 @@ final class HubViewModel: ObservableObject {
 
     var runningActionLabel: String? {
         runningAction == nil ? nil : (settingsOperationLabel ?? lastRun?.actionLabel)
-    }
-
-    func chooseImportSource(for title: HubTitle, action: HubAction) {
-        let panel = NSOpenPanel()
-        let isFolderImport = title.kind == .steamCopy
-        panel.canChooseDirectories = isFolderImport
-        panel.canChooseFiles = !isFolderImport
-        if !isFolderImport, let executable = UTType(filenameExtension: "exe") {
-            panel.allowedContentTypes = [executable]
-        }
-        panel.allowsMultipleSelection = false
-        switch title.kind {
-        case .steamCopy:
-            panel.message = String(localized: "Choose the TrackMania game folder inside steamapps/common")
-            panel.prompt = String(localized: "Copy Game")
-        case .online, .onlineRetail, .onlineTrial, .diskImage, .unknown, nil:
-            panel.message = String(localized: "Choose the retail Setup.exe. Copy it out of the disk image first.")
-            panel.prompt = String(localized: "Run Installer")
-        }
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        run(action, for: title, source: url)
     }
 
     func openApp(at path: String, for title: HubTitle) {
@@ -337,6 +321,60 @@ final class HubViewModel: ObservableObject {
 
     func run(for title: HubTitle) -> RunRecord? {
         lastRun?.titleID == title.id ? lastRun : nil
+    }
+}
+
+// MARK: Import
+
+extension HubViewModel {
+    func chooseImportSource(for title: HubTitle, action: HubAction) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        switch title.kind {
+        case .steamCopy:
+            panel.canChooseDirectories = true
+            panel.canChooseFiles = false
+            panel.message = String(localized: "Choose the TrackMania game folder inside steamapps/common")
+            panel.prompt = String(localized: "Copy Game")
+        case .online, .onlineRetail, .onlineTrial, .diskImage, .unknown, nil:
+            // The backend mounts a disc image and finds the setup in a disc folder.
+            panel.canChooseDirectories = true
+            panel.canChooseFiles = true
+            panel.allowedContentTypes = ["iso", "dmg", "exe"].compactMap { UTType(filenameExtension: $0) }
+                + [.folder]
+            panel.message = String(localized: "Choose the game disc image (.iso or .dmg), a folder with the disc's files, or its Setup.exe")
+            panel.prompt = String(localized: "Run Installer")
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard case .run(let trackPack) = importChoice(for: title) else { return }
+        run(action, for: title, source: url, trackPack: trackPack)
+    }
+
+    enum ImportChoice: Equatable {
+        case cancel
+        /// Run the import; `trackPack` is nil for a title without community tracks.
+        case run(trackPack: Bool?)
+    }
+
+    /// Whether to run an import, and with or without the title's community tracks.
+    func importChoice(for title: HubTitle) -> ImportChoice {
+        guard let pack = title.trackPack else { return .run(trackPack: nil) }
+        guard let choice = confirmTrackPack(title, pack) else { return .cancel }
+        return .run(trackPack: choice)
+    }
+
+    /// The prompt after the file picker: a checkbox for the tracks, checked by default.
+    static func askTrackPack(for title: HubTitle, pack: HubTrackPack) -> Bool? {
+        let alert = NSAlert()
+        alert.messageText = String(localized: "Install \(title.name)")
+        alert.informativeText = String(localized: "The tracks were shared by players on TM Track Exchange. They download from a copy on archive.org and go into your saves folder.")
+        let checkbox = NSButton(checkboxWithTitle: pack.checkboxTitle, target: nil, action: nil)
+        checkbox.state = .on
+        alert.accessoryView = checkbox
+        alert.addButton(withTitle: String(localized: "Install"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        return checkbox.state == .on
     }
 }
 

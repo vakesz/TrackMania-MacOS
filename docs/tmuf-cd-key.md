@@ -1,7 +1,9 @@
 # Get your TrackMania United Forever CD key
 
-TrackMania United Forever needs a CD key. The hub keeps **Play** turned off
-until the game folder has one. Nations Forever is free and needs no key.
+Some games need a CD key: TrackMania United Forever and TrackMania Sunrise
+eXtreme. The hub keeps **Play** turned off until the game has one. Nations
+Forever is free and needs no key. For Sunrise eXtreme, see
+[TrackMania Sunrise eXtreme](#trackmania-sunrise-extreme) below.
 
 If you bought the game on Steam, the key belongs to your Steam account. Use one
 of the ways below to see it.
@@ -53,3 +55,17 @@ InstallKey=YOUR-CD-KEY
 The hub only checks that a key is there: the line above, or the key file the
 launcher saves when you register (`pkey.dat` in the game's `Config` folder). It
 never reads the key out, stores it or sends it anywhere.
+
+## TrackMania Sunrise eXtreme
+
+The key for Sunrise eXtreme is the one that came with your Sunrise disc,
+usually on the case or its manual.
+
+1. In the hub, select TrackMania Sunrise eXtreme.
+2. Click **Register player key** and enter the key in the game's launcher.
+3. Back in the hub, choose **View › Refresh** (⌘R). **Play** turns on once the
+   key is found.
+
+The launcher saves the key in `Default.SystemConfig.Gbx` in the game folder.
+The hub only checks that a key is there. It never reads the key out, stores it
+or sends it anywhere.

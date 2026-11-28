@@ -407,6 +407,49 @@ class SessionTests(unittest.TestCase):
                 self.assertNotIn("--private-argument", result.stderr)
                 self.assertNotIn("fixture-secret-override", result.stderr)
 
+    def test_sunrise_launcher_gets_its_own_gpu_spoof(self):
+        result = self.cli(
+            options=["--audio", "on", "--settings", "--startup-timeout", "3"],
+            target=[r"C:\Program Files (x86)\TrackMania Sunrise\TmSunriseLauncher.exe"],
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        gpu_key = r"HKCU\Software\Wine\AppDefaults\TmSunriseLauncher.exe\Direct3D"
+        gpu_calls = [call["args"] for call in self.wine_calls() if gpu_key in call["args"]]
+        self.assertEqual(
+            [(args[4], args[8]) for args in gpu_calls],
+            [("VideoPciVendorID", "0x10de"), ("VideoPciDeviceID", "0x0091")],
+        )
+
+    def test_other_launchers_get_no_gpu_spoof(self):
+        result = self.cli(
+            options=["--audio", "on", "--settings", "--startup-timeout", "3"],
+            target=[r"C:\Games\ManiaPlanetLauncher.exe"],
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(
+            [call for call in self.wine_calls() if "AppDefaults" in " ".join(call["args"])]
+        )
+
+    def test_dxvk_conf_reports_the_same_gpu_to_each_launcher(self):
+        # D9VK reads config/dxvk.conf; the wined3d renderers read the supervisor's keys.
+        conf = Path(__file__).resolve().parents[1] / "config" / "dxvk.conf"
+        sections: dict = {}
+        current = None
+        for line in conf.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("[") and line.endswith("]"):
+                current = sections.setdefault(line[1:-1], {})
+            elif current is not None and "=" in line and not line.startswith("#"):
+                name, value = (part.strip() for part in line.split("=", 1))
+                current[name] = value
+        for exe, device in session.LAUNCHER_GPU_SPOOF.items():
+            if exe not in sections:  # TmForever.exe itself keeps its real adapter under D9VK.
+                continue
+            with self.subTest(exe=exe):
+                self.assertEqual(sections[exe].get("d3d9.customVendorId"), "10de")
+                self.assertEqual(int(sections[exe]["d3d9.customDeviceId"], 16), int(device, 16))
+        self.assertEqual(set(sections) - set(session.LAUNCHER_GPU_SPOOF), set())
+
     def test_audio_and_settings_flags_are_independent(self):
         for options, count in ((["--audio", "off"], 1), (["--settings"], 2)):
             with self.subTest(options=options):

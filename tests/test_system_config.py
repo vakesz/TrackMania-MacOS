@@ -213,5 +213,89 @@ class SeedTests(unittest.TestCase):
         self.assertEqual(os.listdir(self.game), [])
 
 
+# Synthetic stand-in for a registered key: the shape the launcher writes (23
+# characters), never a real key.
+FAKE_KEY = "TEST0-FAKE0-KEY00-00000"
+
+
+def sunrise_config(key: str = FAKE_KEY) -> bytes:
+    """A text GBX shaped like the one the Sunrise eXtreme launcher writes.
+
+    Chunk 0x0B005012 is ["", "", key, False, 0]: 16 bytes long when the key is
+    empty (before registration) and 39 with a 23-character key. A nested node
+    and chunks on both sides make the walk follow the lengths."""
+    chunk = system_config._chunk
+    tokens = ["b005000", "0", "1", "0"]
+    tokens += chunk("b005008", ["en"])
+    tokens += chunk("b005009", ["", "", "", "", "", ""])
+    tokens += chunk("b005012", ["", "", key, "False", "0"])
+    display = chunk("b013001", ["800", "600", "0", "1", "0", "0", "False", "True"])
+    tokens += chunk("b005020", ["False"] + display + ["facade01"])
+    tokens += chunk("b005031", ["False", "", "", "2350", "0", "False", "", "3", "False"])
+    tokens += ["facade01", ""]
+    return system_config.TEXT_2006_HEADER + "\r\n".join(tokens).encode("ascii")
+
+
+class InstallKeyTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.path = Path(temporary.name) / NAME
+
+    def present(self, data: bytes) -> bool:
+        self.path.write_bytes(data)
+        result = system_config.install_key_present(self.path)
+        self.assertIs(type(result), bool)
+        return result
+
+    def test_fixture_matches_the_launcher_files(self):
+        tokens = sunrise_config("").split(b"\r\n")
+        index = tokens.index(b"b005012")
+        self.assertEqual(tokens[index + 2], b"16")
+        tokens = sunrise_config().split(b"\r\n")
+        self.assertEqual(tokens[index + 2], b"39")
+
+    def test_a_registered_key_is_present(self):
+        self.assertTrue(self.present(sunrise_config()))
+
+    def test_an_empty_key_token_is_not_a_key(self):
+        self.assertFalse(self.present(sunrise_config("")))
+        self.assertFalse(self.present(sunrise_config(" ")))
+
+    def test_the_key_chunk_is_found_only_by_walking_the_lengths(self):
+        data = sunrise_config("")
+        # A value elsewhere that looks like the key chunk id does not count.
+        self.assertFalse(self.present(data.replace(b"\r\nen\r\n", b"\r\nb005012\r\n")))
+        # Without the key chunk there is no key.
+        self.assertFalse(self.present(sunrise_config().replace(b"b005012", b"b005013")))
+
+    def test_malformed_files_have_no_key(self):
+        good = sunrise_config()
+        for data in (
+            b"",
+            good.replace(b"TUUE", b"BUCE"),
+            good.replace(b"b005000", b"b005001", 1),
+            good.replace(b"\r\n39\r\n", b"\r\n38\r\n"),
+            good.replace(b"\r\n39\r\n", b"\r\n4x\r\n"),
+            good.replace(b"1397442896\r\n39", b"1397442895\r\n39"),
+            good[: good.index(FAKE_KEY.encode())],
+        ):
+            with self.subTest(data=data[:40]):
+                self.assertFalse(self.present(data))
+
+    def test_only_a_small_regular_file_is_read(self):
+        self.assertFalse(system_config.install_key_present(self.path))
+        real = self.path.with_name("real.Gbx")
+        real.write_bytes(sunrise_config())
+        self.path.symlink_to(real)
+        self.assertFalse(system_config.install_key_present(self.path))
+        self.path.unlink()
+        self.path.mkdir()
+        self.assertFalse(system_config.install_key_present(self.path))
+        self.path.rmdir()
+        padded = sunrise_config().replace(b"\r\nen\r\n", b"\r\n" + b"e" * 70000 + b"\r\n")
+        self.assertFalse(self.present(padded))
+
+
 if __name__ == "__main__":
     unittest.main()

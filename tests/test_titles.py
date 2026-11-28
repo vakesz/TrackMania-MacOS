@@ -37,7 +37,6 @@ class TitleRegistryTests(unittest.TestCase):
                 "tmnf",
                 "tmu",
                 "tm-original",
-                "tm-sunrise",
                 "tm-sunrise-extreme",
                 "tm-canyon",
                 "tm-turbo",
@@ -61,7 +60,6 @@ class TitleRegistryTests(unittest.TestCase):
             [title.id for title in titles],
             [
                 "tm-original",
-                "tm-sunrise",
                 "tm-sunrise-extreme",
                 "tmn-eswc",
                 "tmnf",
@@ -83,8 +81,7 @@ class TitleRegistryTests(unittest.TestCase):
                 "tmnf": "supported",
                 "tmu": "supported",
                 "tm-original": "unsupported",
-                "tm-sunrise": "unsupported",
-                "tm-sunrise-extreme": "unsupported",
+                "tm-sunrise-extreme": "provisional",
                 "tm-canyon": "unsupported",
                 "tm-turbo": "unsupported",
                 "tmn-eswc": "provisional",
@@ -598,9 +595,12 @@ class TitleRegistryTests(unittest.TestCase):
                 "game-system-config",
             ),
         )
-        for title_id in ("tm-canyon", "tm-turbo", "tm-original", "tm-sunrise"):
+        for title_id in ("tm-canyon", "tm-turbo", "tm-original"):
             self.assertEqual(components[title_id], (), title_id)
-        self.assertEqual(components["tm-sunrise-extreme"], ("updates",))
+        self.assertEqual(
+            components["tm-sunrise-extreme"],
+            ("updates", "overlay", "nx-compat", "game-saves", "track-pack"),
+        )
 
     def test_layered_downloads_are_exported(self):
         registry = load_registry()
@@ -611,7 +611,12 @@ class TitleRegistryTests(unittest.TestCase):
             "TRACKMANIA_MAC_TITLE_OVERLAY_SHA256",
             "TRACKMANIA_MAC_TITLE_OVERLAY_SIZE",
             "TRACKMANIA_MAC_TITLE_OVERLAY_REMOVE",
+            "TRACKMANIA_MAC_TITLE_OVERLAY_ROOT",
+            "TRACKMANIA_MAC_TITLE_OVERLAY_SKIP",
             "TRACKMANIA_MAC_TITLE_NX_COMPAT",
+            "TRACKMANIA_MAC_TITLE_TRACK_PACK_URL",
+            "TRACKMANIA_MAC_TITLE_TRACK_PACK_SHA256",
+            "TRACKMANIA_MAC_TITLE_TRACK_PACK_SIZE",
         )
         for title in registry.load_all(TITLES):
             with self.subTest(title=title.id):
@@ -634,6 +639,7 @@ class TitleRegistryTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 values = result.stdout.split("\0")[:-1]
                 overlay = title.overlay
+                pack = title.track_pack
                 expected = [
                     "true" if title.source_interactive else "",
                     str(len(title.updates)),
@@ -641,7 +647,12 @@ class TitleRegistryTests(unittest.TestCase):
                     overlay.sha256 if overlay else "",
                     str(overlay.size) if overlay else "",
                     " ".join(overlay.remove) if overlay else "",
+                    overlay.root if overlay else "",
+                    " ".join(overlay.skip) if overlay else "",
                     " ".join(title.nx_compat),
+                    pack.url if pack else "",
+                    pack.sha256 if pack else "",
+                    str(pack.size) if pack else "",
                 ]
                 for update in title.updates:
                     expected += [update.url, update.sha256, str(update.size)]
@@ -925,6 +936,31 @@ class RegistryValidationTests(unittest.TestCase):
         with self.assertRaises(self.registry.RegistryError):
             self.validate(cd_key_in_nadeo_ini="yes")
 
+    def test_cd_key_in_system_config_is_a_registry_fact_of_serial_titles(self):
+        data = {key: value for key, value in self.data.items() if key != "cd_key_in_nadeo_ini"}
+        data["cd_key_in_system_config"] = True
+        title = self.registry._validate(data, Path("/x/tmu.json"))
+        self.assertTrue(title.cd_key_in_system_config)
+        self.assertIsNone(title.cd_key_in_nadeo_ini)
+        self.assertIsNone(self.validate().cd_key_in_system_config)
+        with self.assertRaisesRegex(self.registry.RegistryError, "requires requires_serial"):
+            self.registry._validate(dict(data, requires_serial=False), Path("/x/tmu.json"))
+        with self.assertRaisesRegex(self.registry.RegistryError, "exclusive"):
+            self.validate(cd_key_in_system_config=True)
+        seeded = dict(
+            data,
+            installer="online",
+            game_version="1.0",
+            game_exe_sha256="0" * 64,
+            game_system_config={"format": "text-2006", "file": "Default.SystemConfig.Gbx"},
+        )
+        with self.assertRaisesRegex(
+            self.registry.RegistryError, "game_system_config are exclusive"
+        ):
+            self.registry._validate(seeded, Path("/x/tmu.json"))
+        with self.assertRaises(self.registry.RegistryError):
+            self.registry._validate(dict(data, cd_key_in_system_config=1), Path("/x/tmu.json"))
+
     def test_online_installer_requires_an_exe_pin(self):
         with self.assertRaisesRegex(self.registry.RegistryError, "requires game_exe_sha256"):
             self.validate(installer="online")
@@ -958,7 +994,7 @@ class RegistryValidationTests(unittest.TestCase):
         self.assertEqual(
             title.overlay,
             self.registry.Overlay(
-                "https://example.com/o/overlay.tar.gz", "2" * 64, 7, ("old.exe", "old.dat")
+                "https://example.com/o/overlay.tar.gz", "2" * 64, 7, ("old.exe", "old.dat"), "", ()
             ),
         )
         self.assertEqual(title.components[-2:], ("updates", "overlay"))
@@ -969,6 +1005,14 @@ class RegistryValidationTests(unittest.TestCase):
         self.assertEqual(title.download_size, (title.source_size or 0) + 12)
         overlay = dict(url="https://example.com/o/overlay.tar.gz", sha256="2" * 64, size=7)
         self.assertEqual(self.layered(overlay=overlay).overlay.remove, ())
+        nested = self.layered(
+            overlay=dict(overlay, root="Windows 10 patch", skip=["d3d9.dll", "Docs/readme.txt"])
+        )
+        self.assertEqual(nested.overlay.root, "Windows 10 patch")
+        self.assertEqual(nested.overlay.skip, ("d3d9.dll", "Docs/readme.txt"))
+        names = dict(self.registry.shell_assignments(nested))
+        self.assertEqual(names["TRACKMANIA_MAC_TITLE_OVERLAY_ROOT"], "Windows 10 patch")
+        self.assertEqual(names["TRACKMANIA_MAC_TITLE_OVERLAY_SKIP"], "d3d9.dll Docs/readme.txt")
         self.assertIsNone(self.layered(source_size=None).download_size)
 
     def test_layered_install_fields_are_validated(self):
@@ -1013,6 +1057,20 @@ class RegistryValidationTests(unittest.TestCase):
                 self.layered(overlay=dict(overlay, remove=remove))
         with self.assertRaisesRegex(self.registry.RegistryError, "must not list game_exe"):
             self.layered(overlay=dict(overlay, remove=[self.data["game_exe"].upper()]))
+        with self.assertRaisesRegex(self.registry.RegistryError, "skip must not list game_exe"):
+            self.layered(overlay=dict(overlay, skip=[self.data["game_exe"].lower()]))
+        for root in ("../x", "/abs", "a//b", " lead", "a/", 5, "a\\b"):
+            with (
+                self.subTest(root=root),
+                self.assertRaisesRegex(self.registry.RegistryError, "root must be"),
+            ):
+                self.layered(overlay=dict(overlay, root=root))
+        for skip in ("d3d9.dll", ["a b.txt"], ["../x"], ["a//b"], [""], ["a.dll", "A.DLL"], [5]):
+            with (
+                self.subTest(skip=skip),
+                self.assertRaisesRegex(self.registry.RegistryError, "skip"),
+            ):
+                self.layered(overlay=dict(overlay, skip=skip))
         with self.assertRaises(self.registry.RegistryError):
             self.layered(overlay=None)
         with self.assertRaises(self.registry.RegistryError):
@@ -1064,11 +1122,108 @@ class RegistryValidationTests(unittest.TestCase):
                 else:
                     self.validate(installer=installer, updates=[update])
 
+    def test_retail_titles_may_carry_an_overlay_and_the_nx_flag(self):
+        overlay = {"url": "https://example.com/o/overlay.zip", "sha256": "2" * 64, "size": 7}
+        title = self.retail(overlay=overlay, nx_compat=["Game.exe"])
+        self.assertEqual(title.components, ("overlay", "nx-compat"))
+        for installer in ("steam-copy", "online-retail", "online-trial"):
+            for changes in ({"overlay": overlay}, {"nx_compat": ["Game.exe"]}):
+                with (
+                    self.subTest(installer=installer, changes=changes),
+                    self.assertRaisesRegex(
+                        self.registry.RegistryError, "requires installer kind online or disk-image"
+                    ),
+                ):
+                    if installer == "steam-copy":
+                        self.retail(installer=installer, **changes)
+                    else:
+                        self.validate(installer=installer, **changes)
+
+    TRACK_PACK = {
+        "url": "https://example.com/t/tracks.zip",
+        "sha256": "3" * 64,
+        "size": 9,
+        "root": "Downloaded",
+        "into": "GameData/Tracks/Downloaded",
+        "suffix": ".Challenge.Gbx",
+        "label": "some community tracks",
+    }
+
+    def packed(self, **pack):
+        """A retail title with a save folder and a track pack changed by PACK."""
+        return self.retail(
+            game_save_dirs=["GameData/Profiles", "GameData/Tracks/Downloaded"],
+            track_pack=dict(self.TRACK_PACK, **pack),
+        )
+
+    def test_retail_titles_may_carry_a_track_pack(self):
+        title = self.packed()
+        self.assertEqual(title.components, ("game-saves", "track-pack"))
+        self.assertEqual(title.track_pack.into, "GameData/Tracks/Downloaded")
+        self.assertEqual(title.track_pack.suffix, ".Challenge.Gbx")
+        # Optional: the pack is not part of the title's own download size.
+        self.assertIsNone(title.download_size)
+        names = dict(self.registry.shell_assignments(title))
+        self.assertEqual(
+            names["TRACKMANIA_MAC_TITLE_TRACK_PACK_URL"], "https://example.com/t/tracks.zip"
+        )
+        self.assertEqual(names["TRACKMANIA_MAC_TITLE_TRACK_PACK_SHA256"], "3" * 64)
+        self.assertEqual(names["TRACKMANIA_MAC_TITLE_TRACK_PACK_SIZE"], "9")
+        self.assertNotIn("TRACKMANIA_MAC_TITLE_TRACK_PACK", names)
+        plain = dict(self.registry.shell_assignments(self.retail()))
+        self.assertEqual(plain["TRACKMANIA_MAC_TITLE_TRACK_PACK_URL"], "")
+
+    def test_track_pack_fields_are_checked(self):
+        for key, values in (
+            ("url", ["http://example.com/t/tracks.zip", "https://example.com/t/", 5]),
+            ("sha256", ["A" * 64, "3" * 63, None]),
+            ("size", [0, -1, True, "9"]),
+            ("root", ["", "/Downloaded", "a//b", "../x", "Down/", " Downloaded", 5]),
+            ("into", ["GameData/Scores", "GameData/Tracks", "GameData/Tracks/Downloaded/x"]),
+            ("suffix", ["", "Gbx", ".Challenge Gbx", ".*", "./x", 5]),
+            ("label", ["", " tracks", "two\nlines", "x" * 61, 5]),
+        ):
+            for value in values:
+                with (
+                    self.subTest(key=key, value=value),
+                    self.assertRaises(self.registry.RegistryError),
+                ):
+                    self.packed(**{key: value})
+        for key in ("root", "into", "suffix", "label", "url"):
+            pack = dict(self.TRACK_PACK)
+            del pack[key]
+            with self.subTest(missing=key), self.assertRaises(self.registry.RegistryError):
+                self.retail(game_save_dirs=["GameData/Tracks/Downloaded"], track_pack=pack)
+        with self.assertRaisesRegex(self.registry.RegistryError, "unknown keys"):
+            self.packed(extra=1)
+        with self.assertRaisesRegex(self.registry.RegistryError, "one of game_save_dirs"):
+            self.retail(track_pack=self.TRACK_PACK)
+
+    def test_track_pack_needs_a_retail_import(self):
+        with self.assertRaisesRegex(
+            self.registry.RegistryError, "requires installer kind disk-image"
+        ):
+            self.retail(
+                installer="steam-copy",
+                game_save_dirs=["GameData/Tracks/Downloaded"],
+                track_pack=self.TRACK_PACK,
+            )
+        with self.assertRaisesRegex(
+            self.registry.RegistryError, "requires installer kind disk-image"
+        ):
+            self.validate(game_save_dirs=["GameData/Tracks/Downloaded"], track_pack=self.TRACK_PACK)
+
+    def test_track_pack_shares_the_cache_folder(self):
+        update = {"url": "https://example.com/u/tracks.zip", "sha256": "1" * 64, "size": 5}
+        with self.assertRaisesRegex(self.registry.RegistryError, "distinct file names"):
+            self.retail(
+                updates=[update],
+                game_save_dirs=["GameData/Tracks/Downloaded"],
+                track_pack=self.TRACK_PACK,
+            )
+
     def test_retail_titles_get_no_other_layered_steps(self):
-        overlay = {"url": "https://example.com/o/overlay.tar.gz", "sha256": "2" * 64, "size": 7}
         for changes in (
-            {"overlay": overlay},
-            {"nx_compat": ["Game.exe"]},
             {"source_interactive": True},
             {"game_system_config": {"format": "text-2006", "file": "Default.SystemConfig.Gbx"}},
         ):

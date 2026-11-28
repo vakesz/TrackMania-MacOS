@@ -11,6 +11,8 @@ Only set-defaults accepts --window-size, --audio and --x87; it records them in
 the title's installed launcher (trackmania-mac defaults), which checks them.
 Only rename-apps accepts --app-name NAME or --reset-app-name, exactly one of
 them; it renames the title's installed apps (trackmania-mac rename-apps).
+Only import accepts --track-pack on|off, and only for a title with a track pack;
+it sets TRACKMANIA_MAC_TRACK_PACK, which is otherwise never inherited (off).
 No action runs while files of an earlier release wait to move; `migrate` moves
 them (trackmania-mac migrate), and it and `clean` (trackmania-mac clean) are the
 only commands that are not per title.
@@ -41,10 +43,16 @@ RUNTIME_ENV = (
     "TRACKMANIA_MAC_RUNTIME_SOURCE",
     "TRACKMANIA_MAC_RUNTIME_ARCHIVE",
     "TRACKMANIA_MAC_RUNTIME_SHA256",
+    "TRACKMANIA_MAC_TRACK_PACK",
 )
+TRACK_PACK_CHOICES = ("on", "off")
 
 
-def _scrubbed_env(title_id: str, runtime: typing.Optional[str] = None) -> typing.Dict[str, str]:
+def _scrubbed_env(
+    title_id: str,
+    runtime: typing.Optional[str] = None,
+    track_pack: typing.Optional[str] = None,
+) -> typing.Dict[str, str]:
     # The same allowlist paths.compute ignores, so hub state and actions agree.
     env = {
         key: value
@@ -54,6 +62,8 @@ def _scrubbed_env(title_id: str, runtime: typing.Optional[str] = None) -> typing
     env["TRACKMANIA_MAC_TITLE"] = title_id
     if runtime is not None:
         env["TRACKMANIA_MAC_RUNTIME_SOURCE"] = runtime
+    if track_pack is not None:
+        env["TRACKMANIA_MAC_TRACK_PACK"] = track_pack
     return env
 
 
@@ -67,9 +77,10 @@ def _exec(
     argv: typing.List[str],
     title_id: str,
     runtime: typing.Optional[str] = None,
+    track_pack: typing.Optional[str] = None,
 ) -> typing.NoReturn:
     command = ["/bin/bash", str(script), *argv]
-    os.execve("/bin/bash", command, _scrubbed_env(title_id, runtime))
+    os.execve("/bin/bash", command, _scrubbed_env(title_id, runtime, track_pack))
 
 
 def _shared_env() -> typing.Dict[str, str]:
@@ -128,6 +139,7 @@ def run(
     launch_options: typing.Optional[typing.Dict[str, str]] = None,
     app_name: typing.Optional[str] = None,
     reset_app_name: bool = False,
+    track_pack: typing.Optional[str] = None,
 ) -> typing.NoReturn:
     title = registry.get(title_id)  # Registry-level validation with a precise message.
     options = {flag: value for flag, value in (launch_options or {}).items() if value is not None}
@@ -137,7 +149,7 @@ def run(
         if not source:
             die(
                 "Import requires --source ABSOLUTE_PATH (a folder for Steam copies, "
-                "a disk image for retail imports)"
+                "a disc image, disc folder or setup program for retail imports)"
             )
         if not source.startswith("/"):
             die(f"Import source must be an absolute path: {source}")
@@ -150,6 +162,13 @@ def run(
             die(f"Action {action_id} does not accept --runtime.")
         if runtime not in RUNTIME_SOURCES:
             die(f"Invalid --runtime '{runtime}': expected download or build.")
+    if track_pack is not None:
+        if action_id != "import":
+            die(f"Action {action_id} does not accept --track-pack.")
+        if title.track_pack is None:
+            die(f"{title.name} has no track pack.")
+        if track_pack not in TRACK_PACK_CHOICES:
+            die(f"Invalid --track-pack '{track_pack}': expected on or off.")
     if include_saves and action_id != "uninstall":
         die(f"Action {action_id} does not accept --include-saves.")
     if options and action_id != "set-defaults":
@@ -186,7 +205,7 @@ def run(
     if action_id == "install-apps":
         _exec(cli, ["app"], title_id)
     if action_id == "import":
-        _exec(cli, ["import", source], title_id)  # type: ignore[list-item]  # validated non-empty above
+        _exec(cli, ["import", source], title_id, track_pack=track_pack)  # type: ignore[list-item]  # validated non-empty above
     if action_id == "doctor":
         _exec(cli, ["doctor"], title_id)
     if action_id == "diagnostics":

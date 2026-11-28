@@ -14,6 +14,9 @@ INITIALIZING = ".trackmania-mac-initializing"
 PROFILE_BASELINE = ".trackmania-mac-profile-baseline"
 DIRECTX = ".trackmania-mac-directx-jun2010"
 OPENAL = ".trackmania-mac-openal"
+# In the saves folder a title's track pack fills (text: the pack's SHA-256), so a
+# later import does not bring back tracks the player deleted.
+TRACK_PACK = ".trackmania-mac-track-pack"
 # In an app wrapper's Contents and in a launcher folder.
 APP = ".trackmania-mac-app"
 LAUNCHER = ".trackmania-mac-launcher"
